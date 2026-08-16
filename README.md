@@ -28,4 +28,27 @@ In this work, we present a benchmark study encompassing 16 cell segmentation met
 
 ## Dataset
 In this work, We benchmark the 16 cell segmentation methods on 27 datasets, include Xenium (10x Genomics), Cosmx, Merfish and so on, which provide multimodal in situ spatial transcriptomics data—including high-resolution fluorescence images and spatially resolved gene expression profiles. The following datasets are as follows:
-- [Pancreatic Cancer with Xenium Human Multi-Tissue and Cancer Panel](https://www.10xgenomics.com/datasets/pancreatic-cancer-with-xenium-human-multi-tissue-and-cancer-panel-1-standard)
+- **Xenium**
+  - [Pancreatic Cancer with Xenium Human Multi-Tissue and Cancer Panel](https://www.10xgenomics.com/datasets/pancreatic-cancer-with-xenium-human-multi-tissue-and-cancer-panel-1-standard)
+  - [Xenium v1 Human Breast FFPE with Biomarkers & Housekeeping Genes Custom Panel](https://www.10xgenomics.com/datasets/xenium-ffpe-human-breast-biomarkers)
+  - [FFPE Human Lymph Node with 5K Pan Tissue and Pathways Panel](https://www.10xgenomics.com/datasets/preview-data-xenium-prime-gene-expression)
+  - [Fresh Frozen Mouse Brain Hemisphere with 5K Mouse Pan Tissue and Pathways Panel](https://www.10xgenomics.com/datasets/xenium-prime-fresh-frozen-mouse-brain)
+  - [Human Liver Data with Xenium Human Multi-Tissue and Cancer Panel](https://www.10xgenomics.com/datasets/human-liver-data-xenium-human-multi-tissue-and-cancer-panel-1-standard)
+  - [Fresh Frozen Mouse Colon with Xenium Multimodal Cell Segmentation](https://www.10xgenomics.com/datasets/fresh-frozen-mouse-colon-with-xenium-multimodal-cell-segmentation-1-standard)
+
+- **CosMx**
+  - [Cosmx-FFPE-Pancreas-dataset-flat-files](https://brukerspatialbiology.com/resources/cosmx-ffpe-pancreas-dataset-flat-files/)
+  - [Cosmx-Human-Lymph-Node-FFPE-dataset-flat-files](https://brukerspatialbiology.com/resources/cosmx-human-lymph-node-ffpe-dataset-flat-files/)
+
+- **Stereo-seq**
+  - [MOSTA: Mouse Organogenesis Spatiotemporal Transcriptomic Atlas](https://db.cngb.org/stomics/datasets/STDS0000058/data)
+  - [Spatial Gene Expression of Mouse Embryo Fresh Frozen Tissue](https://en.stomics.tech/col1370/index.html)
+
+- **MERFISH**
+  - [Vizgen MERFISH Mouse Brain Receptor Map](https://info.vizgen.com/mouse-brain-data)
+  - [Merscope FFPE Human Immuno-Oncology Data Liver cancer 1](https://info.vizgen.com/ffpe-showcase)
+  - [Merscope FFPE Human Immuno-Oncology Data Liver cancer 2](https://info.vizgen.com/ffpe-showcase)
+  - [Merscope FFPE Human Immuno-Oncology Data Lung cancer 1](https://info.vizgen.com/ffpe-showcase)
+
+- **StarMap**
+  - [STARmap Mouse VISp 1020 genes](https://github.com/wanglab-broad/ClusterMap/tree/main/datasets/STARmap_V1_1020)
