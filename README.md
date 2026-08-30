@@ -36,10 +36,12 @@ In this work, We benchmark the 16 cell segmentation methods on 27 datasets, incl
   - [Human Liver Data with Xenium Human Multi-Tissue and Cancer Panel](https://www.10xgenomics.com/datasets/human-liver-data-xenium-human-multi-tissue-and-cancer-panel-1-standard)
   - [Fresh Frozen Mouse Colon with Xenium Multimodal Cell Segmentation](https://www.10xgenomics.com/datasets/fresh-frozen-mouse-colon-with-xenium-multimodal-cell-segmentation-1-standard)
   - [Preview Data: FFPE Human Prostate Adenocarcinoma with 5K Human Pan Tissue and Pathways Panel](https://www.10xgenomics.com/datasets/xenium-prime-ffpe-human-prostate)
+  - [FFPE Human Cervical Cancer with 5K Human Pan Tissue and Pathways Panel plus 100 Custom Genes](https://www.10xgenomics.com/datasets/xenium-prime-ffpe-human-cervical-cancer)
 
 - **CosMx**
   - [Cosmx-FFPE-Pancreas-dataset-flat-files](https://brukerspatialbiology.com/resources/cosmx-ffpe-pancreas-dataset-flat-files/)
   - [Cosmx-Human-Lymph-Node-FFPE-dataset-flat-files](https://brukerspatialbiology.com/resources/cosmx-human-lymph-node-ffpe-dataset-flat-files/)
+  - [CosMx Human Whole Transcriptome Brain Dataset](https://objects.liquidweb.services/smi-public/wtx_manuscript/brain_hippocampus/index_hippocampus.html)
 
 - **Stereo-seq**
   - [MOSTA: Mouse Organogenesis Spatiotemporal Transcriptomic Atlas](https://db.cngb.org/stomics/datasets/STDS0000058/data)
