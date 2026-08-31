@@ -44,7 +44,9 @@ In this work, We benchmark the 16 cell segmentation methods on 27 datasets, incl
   - [CosMx Human Whole Transcriptome Brain Dataset](https://objects.liquidweb.services/smi-public/wtx_manuscript/brain_hippocampus/index_hippocampus.html)
 
 - **Stereo-seq**
-  - [MOSTA: Mouse Organogenesis Spatiotemporal Transcriptomic Atlas](https://db.cngb.org/stomics/datasets/STDS0000058/data)
+  - [MOSTA: Mouse Organogenesis Spatiotemporal Transcriptomic Atlas/E16.5_E2S6](https://db.cngb.org/stomics/datasets/STDS0000058/data)
+  - [MOSTA: Mouse Organogenesis Spatiotemporal Transcriptomic Atlas/E14.5_E1S3](https://db.cngb.org/stomics/datasets/STDS0000058/data)
+  - [MOSTA: Mouse Organogenesis Spatiotemporal Transcriptomic Atlas/E16.5_E2S7](https://db.cngb.org/stomics/datasets/STDS0000058/data)
   - [Spatial Gene Expression of Mouse Embryo Fresh Frozen Tissue](https://en.stomics.tech/col1370/index.html)
 
 - **MERFISH**
@@ -52,6 +54,9 @@ In this work, We benchmark the 16 cell segmentation methods on 27 datasets, incl
   - [Merscope FFPE Human Immuno-Oncology Data Liver cancer 1](https://info.vizgen.com/ffpe-showcase)
   - [Merscope FFPE Human Immuno-Oncology Data Liver cancer 2](https://info.vizgen.com/ffpe-showcase)
   - [Merscope FFPE Human Immuno-Oncology Data Lung cancer 1](https://info.vizgen.com/ffpe-showcase)
+  - [Merscope FFPE Human Immuno-Oncology Data Prostate cancer 1​](https://info.vizgen.com/ffpe-showcase)
+  - [Merscope FFPE Human Immuno-Oncology Data Prostate cancer 2](https://info.vizgen.com/ffpe-showcase)
+  - [Merscope FFPE Human Immuno-Oncology Data Breast cancer​](https://info.vizgen.com/ffpe-showcase)
 
 - **StarMap**
   - [STARmap Mouse VISp 1020 genes](https://github.com/wanglab-broad/ClusterMap/tree/main/datasets/STARmap_V1_1020)
