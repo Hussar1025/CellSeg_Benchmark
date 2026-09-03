@@ -12,7 +12,7 @@ To address this gap, we systematically evaluated 16 cell segmentation methods (c
 
 In this work, we present a benchmark study encompassing 16 cell segmentation methods across datasets with varying characteristics and technological platforms. The following methods were included:
 - Cellotype: 《CelloType: a unified model for segmentation and classification of tissue images》
-- CellSAM: 《CellSAM: a foundation model for cell segmentation	Nature Methods》
+- CellSAM: 《CellSAM: a foundation model for cell segmentation》
 - Cellpose-3: 《Cellpose3: one-click image restoration for improved cellular segmentation》
 - Cellpose-SAM: 《Cellpose-SAM: superhuman generalization for cellular segmentation》
 - StarDist 2D: 《Cell detection with star-convex poly-gons》
