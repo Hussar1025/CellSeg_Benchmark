@@ -26,7 +26,7 @@ In this work, we present a benchmark study encompassing 16 cell segmentation met
 - Baysor: 《Cell segmentation in imaging-based spatial transcriptomics》
 - Bering: 《Bering: joint cell segmentation and annotation for spatial transcriptomics with transferred graph embeddings》
 - Cellist: 《Accurate, scalable and cross-platform cell identification for high-resolution spatial transcriptomics》
-- DISSECT: 《Diffusion-based Cell Segmentation Integrating Spatial Transcriptomics》
+- DISSECT: 《Integratingcytological images and spatialtranscriptomics for cell segmentation with DISSECT》
 
 ## Dataset
 In this work, We benchmark the 16 cell segmentation methods on 27 datasets, include Xenium (10x Genomics), Cosmx, Merfish and so on, which provide multimodal in situ spatial transcriptomics data—including high-resolution fluorescence images and spatially resolved gene expression profiles. The following datasets are as follows:
