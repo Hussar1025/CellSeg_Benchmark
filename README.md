@@ -39,6 +39,8 @@ In this work, We benchmark the 16 cell segmentation methods on 27 datasets, incl
   - [Fresh Frozen Mouse Colon with Xenium Multimodal Cell Segmentation](https://www.10xgenomics.com/datasets/fresh-frozen-mouse-colon-with-xenium-multimodal-cell-segmentation-1-standard)
   - [Preview Data: FFPE Human Prostate Adenocarcinoma with 5K Human Pan Tissue and Pathways Panel](https://www.10xgenomics.com/datasets/xenium-prime-ffpe-human-prostate)
   - [FFPE Human Cervical Cancer with 5K Human Pan Tissue and Pathways Panel plus 100 Custom Genes](https://www.10xgenomics.com/datasets/xenium-prime-ffpe-human-cervical-cancer)
+  - [SPATCH Xenium 5k COAD CODEX&Transcriptome](https://spatch.pku-genomics.org/#/dataset/xenium)
+  - [Xenium In Situ Gene and Protein Expression data for Human FFPE Clear Cell Renal Cell Carcinoma (ccRCC)](https://www.10xgenomics.com/datasets/xenium-protein-ffpe-human-renal-ccrcc)
 
 - **CosMx**
   - [Cosmx-FFPE-Pancreas-dataset-flat-files](https://brukerspatialbiology.com/resources/cosmx-ffpe-pancreas-dataset-flat-files/)
@@ -59,6 +61,12 @@ In this work, We benchmark the 16 cell segmentation methods on 27 datasets, incl
   - [Merscope FFPE Human Immuno-Oncology Data Prostate cancer 1​](https://info.vizgen.com/ffpe-showcase)
   - [Merscope FFPE Human Immuno-Oncology Data Prostate cancer 2](https://info.vizgen.com/ffpe-showcase)
   - [Merscope FFPE Human Immuno-Oncology Data Breast cancer​](https://info.vizgen.com/ffpe-showcase)
+  - [Merscope FFPE Human Immuno-Oncology Data Melanoma](https://info.vizgen.com/mouse-brain-data)
+  - [Merscope FFPE Human Immuno-Oncology Data Ovarian cancer 1](https://info.vizgen.com/mouse-brain-data)
+  - [Merscope FFPE Human Immuno-Oncology Data Ovarian cancer 2](https://info.vizgen.com/mouse-brain-data)
+  - [Merscope FFPE Human Immuno-Oncology Data Prostate cancer 1](https://info.vizgen.com/mouse-brain-data)
+  - [Merscope FFPE Human Immuno-Oncology Data Prostate cancer 2](https://info.vizgen.com/mouse-brain-data)
+  - [Merscope FFPE Human Immuno-Oncology Data Uterine cancer](https://info.vizgen.com/mouse-brain-data)
 
 - **StarMap**
   - [STARmap Mouse VISp 1020 genes](https://github.com/wanglab-broad/ClusterMap/tree/main/datasets/STARmap_V1_1020)
