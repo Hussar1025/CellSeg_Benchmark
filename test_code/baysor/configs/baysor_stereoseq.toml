@@ -1,0 +1,49 @@
+# Baysor C++ preset for the selected Stereo-seq dorsal-midbrain CellBin slices:
+# E14.5_E1S3, E16.5_E1S3, and E16.5_E2S7.
+#
+# Input is produced by prepare_stereoseq_baysor.py. One MIDCount is expanded to
+# one molecule row. Coordinates remain in native Bin1/DNB units (0.5 um/DNB).
+# The existing CellBin label is retained as platform_cell for evaluation only;
+# it is deliberately NOT used as a Baysor prior.
+
+[molecules]
+x = "x"
+y = "y"
+gene = "gene"
+force_2d = true
+min_molecules_per_gene = 3
+exclude_genes = ""
+min_molecules_per_cell = 30
+confidence_nn_id = 16
+
+[segmentation]
+# Approximate 7 um cell radius = 14 native DNB units. This starting value was
+# calibrated from the supplied CellBin bounding boxes across these three slices.
+scale = 14.0
+scale_std = "35%"
+cluster_method = "louvain"
+n_clusters = 10
+cluster_resolution = 1.0
+cluster_graph_k = 15
+cluster_n_dims = 20
+cluster_basis_sample_size = 100000
+prior_segmentation_confidence = 0.0
+iters = 500
+tol = 0.005
+# The launcher overrides this with the number of supplied CellBin labels. That
+# value controls initialization only; labels are not passed into segmentation.
+n_cells_init = 0
+nuclei_genes = ""
+cyto_genes = ""
+
+[prior]
+type = "none"
+unassigned_label = "0"
+estimate_scale_from_prior = false
+
+[plotting]
+# Avoid the whole-transcriptome default of n_genes/10, which is too broad here.
+gene_composition_neighborhood = 100
+min_pixels_per_cell = 10
+max_plot_size = 3000
+ncv_method = "ri"

@@ -1,0 +1,22 @@
+name: dissect
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - fvcore
+  - joblib
+  - numba
+  - numpy
+  - pandas
+  - psutil
+  - python=3.9.0
+  - scikit-image
+  - scipy
+  - shapely
+  - tifffile
+  - timm
+  - tqdm
+  - opencv
+  - pyarrow
+  - imagecodecs
+  - pillow=9.5.0

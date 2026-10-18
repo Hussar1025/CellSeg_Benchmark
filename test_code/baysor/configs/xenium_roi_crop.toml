@@ -1,0 +1,44 @@
+# Baysor benchmark preset: xenium_roi_crop (xenium_3 lymph-node ROI).
+# The molecule table contains the complete supplied ROI (335 x 335 um), so no
+# additional x/y filtering is applied.
+# Scale calibration (metadata only, not used as a segmentation prior): from
+# cells.parquet (2,442 cells in the supplied ROI), scale =
+# median(sqrt(cell_area/pi)) = 3.4373 um (cell_area is in um^2).
+
+[molecules]
+x = "x_location"
+y = "y_location"
+z = "z_location"
+gene = "feature_name"
+qv = "qv"
+force_2d = true
+min_qv = 20.0
+min_molecules_per_gene = 1
+min_molecules_per_cell = 50
+confidence_nn_id = 26
+exclude_genes = "NegControl*,UnassignedCodeword*,DeprecatedCodeword*,GenomicControl*,BLANK*,Blank*,antisense_*"
+
+[segmentation]
+scale = 3.4373
+scale_std = "25%"
+cluster_method = "louvain"
+n_clusters = 10
+cluster_resolution = 1.0
+cluster_graph_k = 15
+cluster_n_dims = 20
+cluster_basis_sample_size = 100000
+prior_segmentation_confidence = 0.0
+iters = 500
+tol = 0.0
+n_cells_init = 0
+
+[prior]
+type = "none"
+unassigned_label = "UNASSIGNED"
+estimate_scale_from_prior = false
+
+[plotting]
+gene_composition_neighborhood = 100
+min_pixels_per_cell = 10
+max_plot_size = 3000
+ncv_method = "ri"

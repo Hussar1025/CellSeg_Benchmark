@@ -1,0 +1,47 @@
+# Baysor C++ preset for a centered square ROI from D05103C4D4 mouse embryo.
+#
+# One ROI Parquet is produced directly from tissue.gef by
+# prepare_stereo_mouse_embryo_baysor.py. The registered HE image and GEF are
+# both 23520 x 44100 pixels. Coordinates remain global native Bin1/DNB units
+# (0.5 um/DNB). No CellBin labels or image masks are used as a prior.
+
+[molecules]
+x = "x"
+y = "y"
+gene = "gene"
+force_2d = true
+min_molecules_per_gene = 5
+exclude_genes = ""
+min_molecules_per_cell = 50
+confidence_nn_id = 26
+
+[segmentation]
+# adjusted.cellbin.gef median area is 264 DNB^2, giving an equivalent radius
+# sqrt(264/pi) = 9.17 DNB = 4.59 um. Rounded to 9.2 DNB here.
+scale = 9.2
+scale_std = "35%"
+cluster_method = "louvain"
+n_clusters = 10
+cluster_resolution = 1.0
+cluster_graph_k = 15
+cluster_n_dims = 20
+cluster_basis_sample_size = 100000
+prior_segmentation_confidence = 0.0
+iters = 500
+tol = 0.005
+# Overridden by the launcher using the number of adjusted CellBin centers inside
+# the selected ROI. This calibrates initialization only; labels are not supplied.
+n_cells_init = 0
+nuclei_genes = ""
+cyto_genes = ""
+
+[prior]
+type = "none"
+unassigned_label = "0"
+estimate_scale_from_prior = false
+
+[plotting]
+gene_composition_neighborhood = 100
+min_pixels_per_cell = 10
+max_plot_size = 3000
+ncv_method = "ri"

@@ -1,0 +1,47 @@
+# Baysor C++ 配置：CosMx human brain，29 个指定 FOV（约 1.04 万个参考细胞）
+#
+# 输入由 /data/qiuyijia/baysor/prepare_cosmx_human_brain_baysor.py 生成：
+#   /data/qiuyijia/dataset/cosmx_human_brain/_inspect_cache/tx_fov_4_18_51_52_56_65_74_87_90_101_104_110_124_131_147_173_187_220_224_234_242_250_255_256_264_296_298_307_339.parquet
+# C++ Baysor 不直接接受 .csv.gz；该 Parquet 已经只包含下面列出的 FOV。
+
+[data]
+x = "x_global_px"
+y = "y_global_px"
+z = "z"
+gene = "target"
+force_2d = true                 # z 为离散焦平面编号，不按与 x/y 相同单位参与距离
+min_molecules_per_gene = 1
+exclude_genes = "SystemControl*,Negative*,NegPrb*,Neg_*,FalseCode*,Blank*,UnassignedCodeword*,DeprecatedCodeword*,GenomicControl*"
+min_molecules_per_cell = 50
+confidence_nn_id = 26
+
+# 不设置 x/y_min/max：输入 Parquet 已严格按 FOV 筛选，且这些 FOV 在全局坐标中并不相邻。
+
+[segmentation]
+# scale 是细胞半径（单位：CosMx pixel）；指定 FOV metadata 中位面积 9260 px^2，
+# 等效半径约 54.3 px，故从 60 px 开始。
+scale = 60.0
+scale_std = "25%"         
+estimate_scale_from_centers = false
+cluster_method = "louvain"      # 高基因数 WTx panel 比 legacy MRF 更适合
+n_clusters = 10
+cluster_resolution = 1.0
+cluster_graph_k = 15
+cluster_n_dims = 20
+cluster_basis_sample_size = 100000
+prior_segmentation_confidence = 0.0
+iters = 500
+n_cells_init = 20000             # metadata 约 10359 个细胞，避免自动值过大
+nuclei_genes = ""
+cyto_genes = ""
+
+[prior]
+type = "none"
+unassigned_label = "0"
+estimate_scale_from_prior = false
+
+[plotting]
+gene_composition_neigborhood = 100  # 避免高基因数时默认 n_genes/10 过大
+min_pixels_per_cell = 15
+max_plot_size = 3000
+ncv_method = "ri"

@@ -1,0 +1,114 @@
+[data]
+
+# CosMx transcript file columns
+x = "x_global_px"
+y = "y_global_px"
+z = "z"
+gene = "target"
+
+# Keep 3D information
+force_2d = false
+
+
+# Minimal molecules per gene
+min_molecules_per_gene = 1
+
+
+# Ignore no genes initially
+exclude_genes = ""
+
+
+# IMPORTANT:
+# C++ Baysor requires positive value
+# CosMx has dense transcript data, use 30
+min_molecules_per_cell = 80
+
+
+# Minimal molecules in candidate segmented regions
+min_molecules_per_segment = 8
+
+
+# NN confidence estimation
+confidence_nn_id = 16
+
+
+
+[segmentation]
+
+
+# Let Baysor estimate cell size
+# Negative means automatic estimation
+scale = 300.0
+
+
+# Expected variation of cell size
+scale_std = "25%"
+
+
+# No DAPI-based scale estimation
+estimate_scale_from_centers = false
+
+
+# CosMx transcript distribution works well with MRF
+cluster_method = "mrf"
+
+
+# Let Baysor determine clusters
+n_clusters = 0
+
+
+cluster_resolution = 1.0
+
+
+cluster_graph_k = 15
+
+
+cluster_n_dims = 20
+
+
+cluster_basis_sample_size = 100000
+
+
+# Do not trust NanoString segmentation
+prior_segmentation_confidence = 0.0
+
+
+# Iterations
+iters = 500
+
+
+# Let Baysor estimate initial cells
+n_cells_init = 0
+
+
+
+# No manual nuclear/cytoplasm genes
+nuclei_genes = ""
+
+cyto_genes = ""
+
+
+
+[prior]
+
+# No prior segmentation
+unassigned_label = "0"
+
+
+estimate_scale_from_prior = false
+
+
+
+[plotting]
+
+
+gene_composition_neigborhood = 0
+
+
+min_pixels_per_cell = 15
+
+
+max_plot_size = 3000
+
+
+ncv_method = "ri"

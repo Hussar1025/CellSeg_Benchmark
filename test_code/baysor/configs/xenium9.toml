@@ -1,0 +1,58 @@
+# Baysor benchmark configuration for xenium9 (Human Skin Melanoma FFPE,
+# Xenium Human 5K Pan Tissue & Pathways panel).
+#
+# The run script should use a pre-filtered, centre 10,000 x 10,000 native-pixel
+# ROI table generated from transcripts.parquet.  It should contain qv >= 20
+# coding transcripts with columns x_um, y_um and gene.  platform_cell may be
+# retained only as provenance and must not be supplied as a Baysor prior.
+# Coordinates are in micrometres; force_2d is appropriate for Xenium's z stack.
+# Write the segmentation to /data/qiuyijia/baysor/xenium9_output.
+
+[molecules]
+x = "x_um"
+y = "y_um"
+z = "z"
+gene = "gene"
+force_2d = true
+min_molecules_per_gene = 1
+min_molecules_per_cell = 50
+confidence_nn_id = 26
+exclude_genes = "NegControl*,UnassignedCodeword*,DeprecatedCodeword*,GenomicControl*,BLANK*,Blank*,antisense_*"
+# Centre ROI: native pixels x[16374,26374), y[5147,15147), converted using
+# the official 0.2125 um/pixel resolution.
+x_min = 3479.475
+x_max = 5604.475
+y_min = 1093.7375
+y_max = 3218.7375
+
+[segmentation]
+# Median equivalent radius of the 17,608 official cells whose centroids are in
+# this ROI (median(sqrt(cell_area/pi)) = 4.4602 um).  Calibration only; no prior.
+scale = 4.4602
+scale_std = "25%"
+estimate_scale_from_centers = false
+cluster_method = "louvain"
+n_clusters = 10
+cluster_resolution = 1.0
+cluster_graph_k = 15
+cluster_n_dims = 20
+cluster_basis_sample_size = 100000
+prior_segmentation_confidence = 0.0
+iters = 500
+tol = 0.0
+# Explicitly initialize from the official cell count in this ROI.  Leaving this
+# at 0 would auto-seed 397,586 components from 2*N_transcripts/50.
+n_cells_init = 17608
+nuclei_genes = ""
+cyto_genes = ""
+
+[prior]
+type = "none"
+unassigned_label = "UNASSIGNED"
+estimate_scale_from_prior = false
+
+[plotting]
+gene_composition_neighborhood = 100
+min_pixels_per_cell = 10
+max_plot_size = 3000
+ncv_method = "ri"

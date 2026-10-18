@@ -1,0 +1,57 @@
+# Baysor benchmark configuration for xenium10.
+#
+# The run script should use a pre-filtered, centre 10,000 x 10,000 native-pixel
+# ROI table generated from transcripts/transcripts.parquet.  It should contain
+# qv >= 20 coding transcripts with columns x_um, y_um and gene.  platform_cell
+# may be retained only as provenance and must not be supplied as a Baysor prior.
+# Coordinates are in micrometres; force_2d is appropriate for Xenium's z stack.
+# Write the segmentation to /data/qiuyijia/baysor/xenium10_output.
+
+[molecules]
+x = "x_um"
+y = "y_um"
+z = "z"
+gene = "gene"
+force_2d = true
+min_molecules_per_gene = 1
+min_molecules_per_cell = 50
+confidence_nn_id = 26
+exclude_genes = "NegControl*,UnassignedCodeword*,DeprecatedCodeword*,GenomicControl*,BLANK*,Blank*,antisense_*"
+# Centre ROI: native pixels x[20564,30564), y[13750,23750), converted using
+# the official DAPI resolution of 0.2125 um/pixel.
+x_min = 4369.85
+x_max = 6494.85
+y_min = 2921.875
+y_max = 5046.875
+
+[segmentation]
+# Median equivalent radius of the 36,216 official cells whose centroids are in
+# this ROI (median(sqrt(polygon_area/pi)) = 4.6650 um).  Calibration only; no prior.
+scale = 4.6650
+scale_std = "25%"
+estimate_scale_from_centers = false
+cluster_method = "louvain"
+n_clusters = 10
+cluster_resolution = 1.0
+cluster_graph_k = 15
+cluster_n_dims = 20
+cluster_basis_sample_size = 100000
+prior_segmentation_confidence = 0.0
+iters = 500
+tol = 0.0
+# Explicitly initialize from the official cell count in this ROI.  Leaving this
+# at 0 would auto-seed 1,047,248 components from 2*N_transcripts/50.
+n_cells_init = 36216
+nuclei_genes = ""
+cyto_genes = ""
+
+[prior]
+type = "none"
+unassigned_label = "UNASSIGNED"
+estimate_scale_from_prior = false
+
+[plotting]
+gene_composition_neighborhood = 100
+min_pixels_per_cell = 10
+max_plot_size = 3000
+ncv_method = "ri"

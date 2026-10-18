@@ -1,0 +1,52 @@
+{
+  "dataset": "xenium10",
+  "data_root": "/data/qiuyijia/dataset/xenium10",
+  "outs_zip": "transcripts.zip",
+  "transcripts": "transcripts/transcripts.parquet",
+  "seed_source": "official_transcripts_cell_id",
+  "roi": {
+    "mode": "center_px",
+    "image_size_px": [51128, 37500],
+    "pixel_size_um": 0.2125,
+    "width_px": 10000,
+    "height_px": 10000
+  },
+  "training": {
+    "tile_um": 1500,
+    "center_um": null,
+    "label_clusters": 8,
+    "label_genes": 128
+  },
+  "qc": {
+    "qv_min": 20,
+    "is_gene_only": true,
+    "control_prefixes": [
+      "NegControlProbe", "NegControlCodeword", "antisense", "BLANK", "Blank",
+      "UnassignedCodeword", "DeprecatedCodeword", "Intergenic", "intergenic",
+      "NegPrb", "Neg_", "GenomicControl"
+    ]
+  },
+  "bering": {
+    "n_cells_perClass": 10,
+    "window_width": 50,
+    "window_height": 50,
+    "bwg_n_neighbors": 10,
+    "batch_size": 4,
+    "training_ratio": 0.8,
+    "tile_size_um": 600,
+    "tile_margin_um": 30,
+    "min_tile_transcripts": 200,
+    "node_classification_direct_max": 100000,
+    "node_classification_target_chunk": 100000,
+    "seg_positive_edge_thresh": 0.55,
+    "seg_leiden_resolution": 0.1,
+    "seg_num_edges_perSpot": 30,
+    "seg_graph_n_neighbors": 10,
+    "ann_min_transcripts": 20,
+    "ann_min_dominant_nodes": 10,
+    "ann_min_dominant_ratio": 0.4
+  },
+  "unassigned_values": ["UNASSIGNED", "0", "-1", "nan", "None", ""],
+  "seed": 0,
+  "output_dir": "/data/qiuyijia/bering/xenium10_center10000_output"
+}

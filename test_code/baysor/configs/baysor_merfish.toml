@@ -1,0 +1,47 @@
+# Reproducible Baysor defaults for the seven Vizgen MERFISH benchmark ROIs.
+# Coordinates in the ROI Parquet caches are global_x/global_y in micrometres;
+# the caches have already been cropped to the centre 10000 x 10000 mosaic-pixel
+# ROI. The run script overrides --scale for each tissue-specific cell radius.
+
+[data]
+x = "global_x"
+y = "global_y"
+z = "global_z"
+gene = "gene"
+force_2d = true
+min_molecules_per_gene = 1
+# Kept for consistency when caches are regenerated from raw Vizgen tables.
+exclude_genes = "Blank*"
+min_molecules_per_cell = 50
+confidence_nn_id = 26
+
+[segmentation]
+# Fallback only; run_baysor_merfish_center10000.sh supplies a dataset-specific
+# value estimated as the median sqrt((max_x-min_x)*(max_y-min_y)/pi) in the
+# corresponding ROI cell metadata (all values are micrometres).
+scale = 5.0
+scale_std = "25%"
+estimate_scale_from_centers = false
+cluster_method = "louvain"
+n_clusters = 10
+cluster_resolution = 1.0
+cluster_graph_k = 15
+cluster_n_dims = 20
+cluster_basis_sample_size = 100000
+prior_segmentation_confidence = 0.0
+iters = 500
+tol = 0.0
+n_cells_init = 0
+nuclei_genes = ""
+cyto_genes = ""
+
+[prior]
+type = "none"
+unassigned_label = "0"
+estimate_scale_from_prior = false
+
+[plotting]
+gene_composition_neigborhood = 100
+min_pixels_per_cell = 10
+max_plot_size = 3000
+ncv_method = "ri"

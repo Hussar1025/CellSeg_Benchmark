@@ -1,0 +1,42 @@
+# Baysor preset for /data/qiuyijia/dataset/starmap_BY1/BY1_raw.csv
+# Coordinates are STARmap voxel coordinates (x, y, z); keep the 3-D z axis.
+
+[molecules]
+x = "x"
+y = "y"
+z = "z"
+gene = "gene"
+force_2d = false
+
+# Same filtering convention as the STARmap example.  In BY1 this removes
+# only three extremely sparse genes (out of 1020).
+min_molecules_per_gene = 50
+min_molecules_per_cell = 70
+min_molecules_per_segment = 17
+confidence_nn_id = 36
+exclude_genes = ""
+
+[segmentation]
+# Initial radius in the same coordinate units as x/y.  A pilot estimate from
+# the BY1 reference labels is 79.6 (MAD 29.3) for a no-prior run.
+scale = 79.6
+scale_std = "29.3"
+cluster_method = "mrf"
+n_clusters = 4
+prior_segmentation_confidence = 0.0
+iters = 500
+tol = 0.0
+n_cells_init = 0
+nuclei_genes = ""
+cyto_genes = ""
+
+[prior]
+type = "none"
+unassigned_label = "0"
+estimate_scale_from_prior = false
+
+[plotting]
+gene_composition_neigborhood = 200
+min_pixels_per_cell = 15
+max_plot_size = 3000
+ncv_method = "ri"

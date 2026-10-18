@@ -1,0 +1,43 @@
+{
+  "dataset": "stereoseq_E16.5_E1S3_dorsal_midbrain",
+  "transcripts": "/data/qiuyijia/bering/prepared_stereoseq/E16.5_E1S3_Dorsal_Midbrain_GEM_CellBin.bering.parquet",
+  "seed_source": "cellbin_transcript_cell_id",
+  "seed_description": "CellBin GEM/TSV cell column; foreground-only because the supplied CellBin table contains no unassigned molecules",
+  "coarse_cell_boundaries_used": true,
+  "source_limitations": [
+    "GEM_CellBin contains only CellBin-assigned molecules, so no observed background examples are available for Bering noise/background training. No synthetic background is introduced."
+  ],
+  "fairness_note": "Reference-assisted Bering refinement using CellBin coarse seeds. This is not a seed-free segmentation benchmark.",
+  "roi": {"mode": "full_dataset"},
+  "training": {"tile_um": 750, "center_um": null, "label_clusters": 8, "label_genes": 128, "feature_genes": 512},
+  "qc": {"qv_min": 0, "is_gene_only": true, "control_prefixes": []},
+  "bering": {
+    "n_cells_perClass": 5,
+    "n_windows_per_cell": 3,
+    "window_width": 40,
+    "window_height": 40,
+    "bwg_n_neighbors": 10,
+    "batch_size": 2,
+    "training_ratio": 0.8,
+    "force_cpu_train": false,
+    "train_gpu_need_gib": 12,
+    "tile_size_um": 300,
+    "tile_margin_um": 30,
+    "min_tile_transcripts": 200,
+    "node_classification_direct_max": 50000,
+    "node_classification_target_chunk": 50000,
+    "seg_positive_edge_thresh": 0.55,
+    "seg_leiden_resolution": [0.001, 0.002, 0.005, 0.01, 0.02, 0.05],
+    "seg_num_edges_perSpot": 30,
+    "seg_graph_n_neighbors": 10,
+    "ann_min_transcripts": 20,
+    "ann_min_dominant_nodes": 10,
+    "ann_min_dominant_ratio": 0.4,
+    "stitch_radius_um": 8,
+    "stitch_boundary_band_um": 12,
+    "stitch_min_seed_purity": 0.8
+  },
+  "unassigned_values": ["UNASSIGNED", "0", "-1", "nan", "None", ""],
+  "seed": 0,
+  "output_dir": "/data/qiuyijia/bering/stereo_outputs/E16.5_E1S3_Dorsal_Midbrain"
+}

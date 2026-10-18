@@ -1,0 +1,45 @@
+# Baysor benchmark preset: xenium_liver (xenium_4).
+# The ROI is the centered 15000x15000 morphology-pixel ROI. Bounds are passed
+# explicitly by run_baysor_xenium_all.sh for reproducibility.
+# Scale calibration (metadata only, not used as a segmentation prior): from
+# outs/cells.parquet, cells whose centroids fall in x[4137.375,7324.875) and
+# y[2380,5567.5) (41,501 cells), scale = median(sqrt(cell_area/pi))
+# = 8.3829 um (cell_area is in um^2).
+
+[molecules]
+x = "x_location"
+y = "y_location"
+z = "z_location"
+gene = "feature_name"
+qv = "qv"
+force_2d = true
+min_qv = 20.0
+min_molecules_per_gene = 1
+min_molecules_per_cell = 50
+confidence_nn_id = 26
+exclude_genes = "NegControl*,UnassignedCodeword*,DeprecatedCodeword*,GenomicControl*,BLANK*,Blank*,antisense_*"
+
+[segmentation]
+scale = 8.3829
+scale_std = "25%"
+cluster_method = "louvain"
+n_clusters = 10
+cluster_resolution = 1.0
+cluster_graph_k = 15
+cluster_n_dims = 20
+cluster_basis_sample_size = 100000
+prior_segmentation_confidence = 0.0
+iters = 500
+tol = 0.0
+n_cells_init = 0
+
+[prior]
+type = "none"
+unassigned_label = "UNASSIGNED"
+estimate_scale_from_prior = false
+
+[plotting]
+gene_composition_neighborhood = 100
+min_pixels_per_cell = 10
+max_plot_size = 3000
+ncv_method = "ri"
