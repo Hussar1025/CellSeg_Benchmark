@@ -25,7 +25,7 @@ Generate all three missing tables::
 
     python prepare_merfish_gt_transcripts.py --all
 
-The default output is ``/data/qiuyijia/baysor/merfish_gt_tx/<dataset>/``.
+The default output is ``yourpath/baysor/merfish_gt_tx/<dataset>/``.
 The generated files can be passed to ``baysor_value_merfish.py`` with
 ``--gt-transcripts``; the evaluator is also configured to discover these paths
 automatically after they have been created.
@@ -48,26 +48,26 @@ import pandas as pd
 
 DATASETS = {
     "lung": {
-        "root": Path("/data/qiuyijia/dataset/MERFISH_Lung_cancer"),
-        "cache": Path("/data/qiuyijia/dataset/MERFISH_Lung_cancer/_roi_cache/tx_roi_31434_36213_10000.parquet"),
+        "root": Path("yourpath/dataset/MERFISH_Lung_cancer"),
+        "cache": Path("yourpath/dataset/MERFISH_Lung_cancer/_roi_cache/tx_roi_31434_36213_10000.parquet"),
         "roi": (3782.955573105985, 4862.941450365861,
                 3346.8477292572734, 4426.839168228945),
     },
     "prostate1": {
-        "root": Path("/data/qiuyijia/dataset/merfish_prostate1"),
-        "cache": Path("/data/qiuyijia/dataset/merfish_prostate1/_roi_cache/tx_roi_50405_50185_10000.parquet"),
+        "root": Path("yourpath/dataset/merfish_prostate1"),
+        "cache": Path("yourpath/dataset/merfish_prostate1/_roi_cache/tx_roi_50405_50185_10000.parquet"),
         "roi": (5355.736768078099, 6435.73020928004,
                 5298.299104035497, 6378.293212649178),
     },
     "prostate2": {
-        "root": Path("/data/qiuyijia/dataset/merfish_prostate2"),
-        "cache": Path("/data/qiuyijia/dataset/merfish_prostate2/_roi_cache/tx_roi_44812_50242_10000.parquet"),
+        "root": Path("yourpath/dataset/merfish_prostate2"),
+        "cache": Path("yourpath/dataset/merfish_prostate2/_roi_cache/tx_roi_44812_50242_10000.parquet"),
         "roi": (5264.427126244143, 6344.421012387153,
                 4702.379653633372, 5782.368867913451),
     },
 }
 
-DEFAULT_OUT = Path("/data/qiuyijia/baysor/merfish_gt_tx")
+DEFAULT_OUT = Path("yourpath/baysor/merfish_gt_tx")
 VERSION = "2026.09.03"
 
 

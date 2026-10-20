@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""DISSECT x MERFISH prostate1 —— prep / run / merge 一体
+"""DISSECT x MERFISH prostate1 - all-in-one prep / run / merge
 
-DISSECT 的 STReader 只认 ['stereoseq','xenium','nanostring','hd']，xenium 分支
-固定 x_location/0.2125 -> 图像像素，detector 权重也在 0.2125 um/px 上训练。
-所以本脚本把 merfish 伪装成 xenium：
-  prep : DAPI 裁中心 ROI -> 重采样到 0.2125 um/px；转录本 global_x/y(um)
-         -> mosaic px -> 相对 ROI 的 um 偏移，写 xenium schema parquet
-         (DISSECT 内部 /0.2125 正好等于重采样图像素，minarea/maxarea 沿用 xenium 默认)
-  run  : 调已验证的官方 wrapper run_xenium_pancreas_dissect.py
-  merge: 汇总 DISSECT 输出 -> 全局 um 质心 csv + 标签 tif + QC
+DISSECT's STReader only accepts ['stereoseq','xenium','nanostring','hd']; the xenium branch
+fixes x_location/0.2125 -> image pixels, and detector weights are also trained at 0.2125 um/px.
+So this script disguises merfish as xenium:
+  prep : crop the central ROI from DAPI -> resample to 0.2125 um/px; transcript global_x/y (um)
+         -> mosaic px -> um offset relative to the ROI, write xenium-schema parquet
+         (DISSECT's internal /0.2125 exactly equals the resampled image pixels, minarea/maxarea follow xenium defaults)
+  run  : call the validated official wrapper run_xenium_pancreas_dissect.py
+  merge: summarize DISSECT output -> global um centroid csv + label tif + QC
 
-用法:
+Usage:
   python dissect_merfish_prostate1.py --stage all
   python dissect_merfish_prostate1.py --stage prep
   python dissect_merfish_prostate1.py --stage run --n-jobs 4
@@ -20,13 +20,13 @@ import argparse, glob, json, subprocess, sys
 from pathlib import Path
 import numpy as np, pandas as pd, tifffile
 
-# ===== 数据集写死常量 =====
-ROOT      = "/data/qiuyijia/dataset/merfish_mouse_brain"
-OUT       = Path("/data/qiuyijia/dissect_merfish_mouse_brain")
-ROI_SIZE  = 10000          # native mosaic px, 居中
+# ===== hard-coded dataset constants =====
+ROOT      = "yourpath/dataset/merfish_mouse_brain"
+OUT       = Path("yourpath/dissect_merfish_mouse_brain")
+ROI_SIZE  = 10000          # native mosaic px, centered
 GT_CELLS  = -1  # actual ROI GT is measured during prep
-TARGET_UM = 0.2125         # DISSECT/xenium detector 训练尺度
-ENGINE    = Path("/data/qiuyijia/DISSECT/code/run_xenium_pancreas_dissect.py")
+TARGET_UM = 0.2125         # DISSECT/xenium detector training scale
+ENGINE    = Path("yourpath/DISSECT/code/run_xenium_pancreas_dissect.py")
 TAG       = "merfish_mouse_brain"
 
 P = lambda *a: print(*a, flush=True)
@@ -68,7 +68,7 @@ def stage_prep(force=False):
     img_f, tx_f, meta_f = inp / "dapi_roi.tif", inp / "transcripts.parquet", inp / "meta.json"
     if img_f.exists() and tx_f.exists() and meta_f.exists() and not force:
         m = json.load(open(meta_f))
-        P(f"  复用 prep 缓存: {m['resampled_px']}px  tx={m['n_transcripts']:,}  GT={m['gt_cells']}")
+        P(f"  reuse prep cache: {m['resampled_px']}px  tx={m['n_transcripts']:,}  GT={m['gt_cells']}")
         return m
 
     dapi = find_one(ROOT, ["*DAPI*.tif*", "*dapi*.tif*"])
@@ -80,7 +80,7 @@ def stage_prep(force=False):
     mdf  = find_one(ROOT, ["cell_metadata.csv*"])
     for n, v in (("dapi", dapi), ("transform", tfm), ("transcripts", txf)):
         if v is None:
-            raise SystemExit(f"缺 {n}")
+            raise SystemExit(f"Missing {n}")
     if mdf is None:
         P(f"  cell_metadata unavailable; canonical GT_CELLS={GT_CELLS} will be used")
 
@@ -90,8 +90,8 @@ def stage_prep(force=False):
     r = ROI_SIZE; y0 = (H - r) // 2; x0 = (W - r) // 2
     px_um  = 1.0 / float(np.hypot(M[0, 0], M[0, 1]))
     out_px = int(round(r * px_um / TARGET_UM))
-    P(f"  图像 {H}x{W}  px_um={px_um:.5f}  ROI px y[{y0},{y0+r}) x[{x0},{x0+r})")
-    P(f"  重采样 {r} -> {out_px} px @ {TARGET_UM} um/px")
+    P(f"  image {H}x{W}  px_um={px_um:.5f}  ROI px y[{y0},{y0+r}) x[{x0},{x0+r})")
+    P(f"  resample {r} -> {out_px} px @ {TARGET_UM} um/px")
 
     sm = np.clip(resize_to(read_crop(dapi, y0, x0, r), out_px), 0, None)
     mx = float(sm.max())
@@ -116,9 +116,9 @@ def stage_prep(force=False):
     df["cell_id"] = "UNASSIGNED"; df["overlaps_nucleus"] = 0
     df["transcript_id"] = np.arange(len(df), dtype=np.int64)
     df.to_parquet(tx_f, index=False)
-    P(f"  转录本 ROI内 {n0:,} -> 去Blank {len(df):,}  基因 {df.feature_name.nunique()}")
+    P(f"  transcripts in ROI {n0:,} -> after blank removal {len(df):,}  genes {df.feature_name.nunique()}")
     P(f"  x_location -> px [{df.x_location.min()/TARGET_UM:.0f},"
-      f"{df.x_location.max()/TARGET_UM:.0f}]  (图像 0..{out_px})")
+      f"{df.x_location.max()/TARGET_UM:.0f}]  (image 0..{out_px})")
 
     c = (np.array([[x0, y0, 1], [x0 + r, y0, 1], [x0, y0 + r, 1], [x0 + r, y0 + r, 1]], float)
          @ np.linalg.inv(M).T)
@@ -130,7 +130,7 @@ def stage_prep(force=False):
         d = pd.read_csv(mdf)
         gt = int(((d.center_x >= X0) & (d.center_x < X1) &
                   (d.center_y >= Y0) & (d.center_y < Y1)).sum())
-    P(f"  ROI um x[{X0:.1f},{X1:.1f}] y[{Y0:.1f},{Y1:.1f}]   ROI内 GT = {gt} (预期 {GT_CELLS})")
+    P(f"  ROI um x[{X0:.1f},{X1:.1f}] y[{Y0:.1f},{Y1:.1f}]   GT in ROI = {gt} (expected {GT_CELLS})")
     meta = dict(tag=TAG, root=ROOT, dapi=dapi, roi_px=[int(y0), int(x0), r],
                 roi_um=[X0, X1, Y0, Y1], px_um=px_um, target_um=TARGET_UM,
                 resampled_px=out_px, gt_cells=gt, n_transcripts=len(df))
@@ -143,7 +143,7 @@ def stage_prep(force=False):
 def stage_run(a):
     P(f"\n{SEP}\nRUN (DISSECT engine)  {TAG}\n{SEP}")
     if not ENGINE.exists():
-        raise SystemExit(f"缺 engine: {ENGINE}")
+        raise SystemExit(f"Missing engine: {ENGINE}")
     inp, od = OUT / "input", OUT / "dissect_out"
     od.mkdir(parents=True, exist_ok=True)
     cmd = [sys.executable, "-u", str(ENGINE),
@@ -160,10 +160,10 @@ def stage_run(a):
         cmd += a.engine_extra.split()
     P("  " + " ".join(cmd))
     if a.dry:
-        P("  DRY RUN, 不执行"); return
+        P("  DRY RUN, not executed"); return
     rc = subprocess.call(cmd)
     if rc != 0:
-        raise SystemExit(f"engine 退出码 {rc}")
+        raise SystemExit(f"engine exit code {rc}")
     P("  RUN DONE")
 
 
@@ -173,30 +173,30 @@ def stage_merge():
     meta = json.load(open(OUT / "input" / "meta.json"))
     od = OUT / "dissect_out"
     files = sorted(glob.glob(str(od / "**" / "*"), recursive=True))
-    P("  DISSECT 输出文件:")
+    P("  DISSECT output files:")
     for f in files[:25]:
         if Path(f).is_file():
             P(f"    {Path(f).name}  {Path(f).stat().st_size/1e6:.2f} MB")
 
-    # 1) 标签图优先
+    # 1) prefer the label image
     lab = None
     for pat in ("*mask*.tif", "*segmentation*.tif", "*label*.tif", "*mask*.npy", "*label*.npy"):
         h = sorted(glob.glob(str(od / "**" / pat), recursive=True))
         if h:
             lab = np.load(h[0]) if h[0].endswith(".npy") else np.squeeze(tifffile.imread(h[0]))
-            P(f"  标签图: {h[0]}  {lab.shape}"); break
+            P(f"  label image: {h[0]}  {lab.shape}"); break
 
-    # 2) 否则用 boxes/cells csv 的 cell_id + 坐标
+    # 2) otherwise use cell_id + coordinates from the boxes/cells csv
     cells = None
     if lab is None:
         for pat in ("cells.csv", "boxes.csv", "*cell*.csv", "raw_boxes.csv"):
             h = sorted(glob.glob(str(od / "**" / pat), recursive=True))
             if h:
                 d = pd.read_csv(h[0])
-                P(f"  表格: {h[0]}  行={len(d):,}  列={list(d.columns)[:12]}")
+                P(f"  table: {h[0]}  rows={len(d):,}  cols={list(d.columns)[:12]}")
                 cells = (h[0], d); break
         if cells is None:
-            raise SystemExit("未找到标签图或 cells/boxes csv —— 把上面文件清单发我，我按实际列名补 merge")
+            raise SystemExit("no label image or cells/boxes csv found - send me the file list above and I will adapt merge to the actual column names")
 
     X0, X1, Y0, Y1 = meta["roi_um"]; S = meta["resampled_px"]; um = meta["target_um"]
     to_gx = lambda xl: X0 + np.asarray(xl, float) * (X1 - X0) / (S * um)
@@ -215,7 +215,7 @@ def stage_merge():
                             "center_x": to_gx((cx + .5) * um), "center_y": to_gy((cy + .5) * um),
                             "area_um2": area})
         tifffile.imwrite(OUT / "dissect_segmentation.tif", lab.astype(np.uint32), compression="zlib")
-        P(f"  标签图 -> {OUT/'dissect_segmentation.tif'}")
+        P(f"  label image -> {OUT/'dissect_segmentation.tif'}")
     else:
         _, d = cells
         cid = next((c for c in d.columns if c.lower() in ("cell_id", "cell", "label", "id")), None)
@@ -224,7 +224,7 @@ def stage_merge():
         if xc is None and {"x1", "x2"} <= set(d.columns):
             d["_cx"] = (d.x1 + d.x2) / 2; d["_cy"] = (d.y1 + d.y2) / 2; xc, yc = "_cx", "_cy"
         if None in (xc, yc):
-            raise SystemExit(f"csv 里认不出质心列: {list(d.columns)} —— 发我这些列名")
+            raise SystemExit(f"cannot identify centroid columns in csv: {list(d.columns)} - send me these column names")
         if cid is None:
             d["cell_id"] = np.arange(1, len(d) + 1); cid = "cell_id"
         d = d[d[cid].astype(str).str.lower().ne("nan")]

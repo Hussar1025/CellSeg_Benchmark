@@ -17,55 +17,55 @@ warnings.filterwarnings("ignore")
 
 @dataclass
 class Config:
-    wsi_path: str = "/data/qiuyijia/dataset/stereo_mouse_embryo/D05103C4D4_HE_regist.tif"
-    output_dir: str = "/data/qiuyijia/Mesmer/stereo_mouse_embryo_output"
+    wsi_path: str = "yourpath/dataset/stereo_mouse_embryo/D05103C4D4_HE_regist.tif"
+    output_dir: str = "yourpath/Mesmer/stereo_mouse_embryo_output"
     run_name: str = "mesmer_he"
 
     wsi_level: int = 0
 
-    # Mesmer 训练分辨率是 0.5 microns/pixel。
-    # 如果 WSI 在 level=0 的 mpp 不是 0.5，predict 时通过 image_mpp 参数让 Mesmer 自己缩放。
-    # 必须由用户提供真实的 H&E µm/px；不能从该 TIFF 的无效 resolution 猜测。
+    # Mesmer's training resolution is 0.5 microns/pixel.
+    # If the WSI mpp at level=0 is not 0.5, let Mesmer rescale internally via the image_mpp argument.
+    # The user must provide the true H&E um/px; it cannot be guessed from this TIFF's invalid resolution.
     image_mpp: Optional[float] = None
 
-    # ---------- 分块 (Tile) ----------
-    tile_size: int = 2048                              # 每个 tile 的边长 (pixel, 在 wsi_level 上)
-    tile_overlap: int = 256                            # 相邻 tile 的重叠 (pixel)，建议 >= 平均细胞直径 * 2
+    # ---------- Tiling ----------
+    tile_size: int = 2048                              # tile side length (pixel, at wsi_level)
+    tile_overlap: int = 256                            # overlap between adjacent tiles (pixel); >= 2x mean cell diameter recommended
 
-    # ---------- 背景过滤 ----------
+    # ---------- Background filtering ----------
     skip_background: bool = True
-    background_mean_threshold: int = 220               # RGB 平均值 > 阈值 (近全白) 跳过
-    background_std_threshold: int = 8                  # 全图标准差 < 阈值 (无内容) 跳过
+    background_mean_threshold: int = 220               # skip when RGB mean > threshold (near white)
+    background_std_threshold: int = 8                  # skip when tile std < threshold (no content)
 
-    # ---------- Mesmer 推理 ----------
-    compartment: str = "whole-cell"                    # "whole-cell" 或 "nuclear"
-    batch_size: int = 4                                # Mesmer 内部 batch
-    interior_threshold: float = 0.3                    # 越低 -> 细胞越大；默认 0.3
-    maxima_threshold: float = 0.075                    # 越低 -> 切得越碎；默认 0.075
-    pixel_expansion: Optional[int] = None              # 仅在 compartment="nuclear" 时常用，扩展像素数
+    # ---------- Mesmer inference ----------
+    compartment: str = "whole-cell"                    # "whole-cell" or "nuclear"
+    batch_size: int = 4                                # Mesmer internal batch
+    interior_threshold: float = 0.3                    # lower -> larger cells; default 0.3
+    maxima_threshold: float = 0.075                    # lower -> more fragmented; default 0.075
+    pixel_expansion: Optional[int] = None              # mostly for compartment="nuclear"; pixels to expand
 
-    # ---------- ROI (可选: 只处理 WSI 的一个矩形子区域) ----------
-    # 留 None 表示处理整张。坐标都在 wsi_level=0 坐标系。
+    # ---------- ROI (optional: process only a rectangular sub-region of the WSI) ----------
+    # None = process the whole image. Coordinates use the wsi_level=0 system.
     roi_x: Optional[int] = None
     roi_y: Optional[int] = None
     roi_w: Optional[int] = None
     roi_h: Optional[int] = None
 
-    # ---------- 输出选项 ----------
-    save_mask_tiff: bool = True                        # 保存全图 instance mask (uint32, BigTIFF)
-    mask_memmap_path: Optional[str] = None             # 默认写入 output run 目录
-    save_geojson: bool = False                         # 保存 QuPath 可读的 polygon geojson (慢，细胞多时慎用)
-    save_preview_png: bool = True                      # 保存缩略图叠加预览
-    preview_max_side: int = 4096                       # 预览图最长边像素
+    # ---------- Output options ----------
+    save_mask_tiff: bool = True                        # save the full-image instance mask (uint32, BigTIFF)
+    mask_memmap_path: Optional[str] = None             # defaults to the output run directory
+    save_geojson: bool = False                         # save a QuPath-readable polygon geojson (slow with many cells)
+    save_preview_png: bool = True                      # save a downscaled overlay preview
+    preview_max_side: int = 4096                       # longest preview side in pixels
 
     # ---------- GPU ----------
-    gpu_id: str = "0"                                  # 设为 "-1" 强制 CPU
+    gpu_id: str = "0"                                  # set to "-1" to force CPU
 
 
 CONFIG = Config()
 
 
-# 设置 GPU 必须在 import tensorflow 之前
+# GPU selection must happen before importing tensorflow
 os.environ["CUDA_VISIBLE_DEVICES"] = CONFIG.gpu_id
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
@@ -107,7 +107,7 @@ def monitored_phase(name: str, monitor, phase_times: dict):
 
 
 class RSSMonitor:
-    """低开销后台 RSS 采样器；数值以 bytes 保存，便于写入 benchmark。"""
+    """Low-overhead background RSS sampler; values kept in bytes so they can go into the benchmark."""
 
     def __init__(self, interval=0.25):
         self.interval = float(interval)
@@ -138,14 +138,14 @@ class RSSMonitor:
 
 
 class TiffReader:
-    """普通单页 TIFF reader；按窗口读取，不依赖 WSI backend。"""
+    """Plain single-page TIFF reader; windowed reads, no WSI backend dependency."""
 
     backend = "tifffile"
     level_downsample = 1.0
 
     def __init__(self, path: str, level: int = 0):
         if level != 0:
-            raise ValueError("普通 TIFF reader only supports wsi_level=0")
+            raise ValueError("plain TIFF reader only supports wsi_level=0")
         self.path = str(path)
         self.file = tifffile.TiffFile(self.path)
         if len(self.file.pages) != 1:
@@ -164,7 +164,7 @@ class TiffReader:
         return (self.page.shape[1], self.page.shape[0])
 
     def get_mpp(self):
-        # resolution unit is NONE in this dataset, so it is not usable as µm/px.
+        # resolution unit is NONE in this dataset, so it is not usable as um/px.
         return None
 
     def read_region(self, x_l: int, y_l: int, w: int, h: int):
@@ -199,7 +199,7 @@ class TiffReader:
 
 
 class WSIReader:
-    """统一封装 openslide / tiffslide。优先用 openslide。"""
+    """Thin wrapper over openslide / tiffslide; openslide is preferred."""
 
     def __init__(self, path: str, level: int = 0):
         self.path = path
@@ -254,11 +254,11 @@ class WSIReader:
     def get_mpp(self) -> Optional[float]:
         if self.backend == "tifffile":
             return self.slide.get_mpp()
-        """读取 level=0 的 microns per pixel；读不到返回 None。
+        """Read level=0 microns per pixel; return None if unavailable.
 
-        注意: 有些后端 (如 tiffslide) 会把 key 写进 properties 但值是 None
-        或空字符串, 所以不能只判断 `k in props`, 必须校验值本身,
-        且要同时捕获 ValueError 和 TypeError (float(None) 抛的是 TypeError)。
+        Note: some backends (e.g. tiffslide) write the key into properties with a None
+        or empty value, so `k in props` is not enough -- validate the value itself,
+        and catch both ValueError and TypeError (float(None) raises TypeError).
         """
         props = dict(self.slide.properties)
         for k in ("openslide.mpp-x", "tiffslide.mpp-x", "aperio.MPP"):
@@ -269,15 +269,15 @@ class WSIReader:
                 mpp = float(v)
             except (ValueError, TypeError):
                 continue
-            if mpp > 0:                 # 排除 0 这类无意义的占位值
+            if mpp > 0:                 # reject meaningless placeholders such as 0
                 return mpp
         return None
 
     def read_region(self, x_l: int, y_l: int, w: int, h: int) -> np.ndarray:
         """
-        从当前 level 读取 [x_l, y_l, w, h] 区域 (level 坐标系)。
-        openslide.read_region 接受的 location 是 level=0 坐标，size 是当前 level 大小。
-        返回 RGB ndarray, dtype=uint8, shape=(h, w, 3)
+        Read the [x_l, y_l, w, h] region at the current level (level coordinates).
+        openslide.read_region takes a level=0 location and a size in current-level pixels.
+        Returns an RGB ndarray, dtype=uint8, shape=(h, w, 3)
         """
         if self.backend == "tifffile":
             return self.slide.read_region(x_l, y_l, w, h)
@@ -299,14 +299,14 @@ class WSIReader:
             pass
 
 
-# ---------- H&E -> (nuclear, membrane) 双通道 ----------
+# ---------- H&E -> (nuclear, membrane) two channels ----------
 
 def he_to_two_channels(rgb_tile: np.ndarray) -> np.ndarray:
     """
-    用颜色去卷积把 H&E RGB 拆成 Hematoxylin (核) 和 Eosin (膜/胞质)。
-    输出 shape=(H, W, 2), float32, 已 min-max 归一化到 [0,1]，
-    然后再乘以 255 以接近 Mesmer 训练数据的尺度。
-    Mesmer 期望的通道顺序是 [nuclear, membrane]。
+    Color-deconvolve H&E RGB into Hematoxylin (nucleus) and Eosin (membrane/cytoplasm).
+    Output shape=(H, W, 2), float32, min-max normalized to [0,1],
+    then multiplied by 255 to approach the Mesmer training-data scale.
+    Mesmer expects channel order [nuclear, membrane].
     """
     hed = rgb2hed(rgb_tile)                  # (H, W, 3): H, E, D
     h = hed[..., 0]
@@ -325,13 +325,13 @@ def he_to_two_channels(rgb_tile: np.ndarray) -> np.ndarray:
 
 
 def is_background(rgb_tile: np.ndarray, mean_thr: int, std_thr: int) -> bool:
-    """简单背景判断: 接近全白或几乎没纹理。"""
+    """Simple background test: near-white or almost no texture."""
     mean_v = rgb_tile.mean()
     std_v = rgb_tile.std()
     return (mean_v > mean_thr) or (std_v < std_thr)
 
 
-# ---------- Mesmer 包装 ----------
+# ---------- Mesmer wrapper ----------
 
 def get_mesmer_app():
     global _DEEPCELL_APP
@@ -343,7 +343,7 @@ def get_mesmer_app():
 
 def predict_tile(app, two_chan: np.ndarray, cfg: Config, image_mpp: float) -> np.ndarray:
     """
-    输入 (H, W, 2) float32, 返回 (H, W) int32 instance mask (背景 0)。
+    Input (H, W, 2) float32; return an (H, W) int32 instance mask (background 0).
     """
     x = two_chan[None, ...]                  # (1, H, W, 2)
 
@@ -367,18 +367,18 @@ def predict_tile(app, two_chan: np.ndarray, cfg: Config, image_mpp: float) -> np
     return pred[0, ..., 0].astype(np.int32)
 
 
-# ---------- Tile 网格生成 ----------
+# ---------- Tile grid generation ----------
 
 def make_tile_grid(
     width: int, height: int, tile: int, overlap: int,
     offset_x: int = 0, offset_y: int = 0,
 ) -> List[Tuple[int, int, int, int, int, int, int, int]]:
     """
-    返回 tile 列表，每项:
-      (x_read, y_read, w_read, h_read,    # 读取区域 (含重叠)
-       core_x0, core_y0, core_x1, core_y1) # 中心区(在 tile 局部坐标系内)，
-                                           # 只有中心区里的细胞会被保留到最终结果
-    边界 tile 的中心区会延伸到图像边缘。
+    Return the tile list, each item:
+      (x_read, y_read, w_read, h_read,    # read region (includes overlap)
+       core_x0, core_y0, core_x1, core_y1) # core area (tile-local coordinates);
+                                           # only cells in the core area reach the final result
+    The core area of border tiles extends to the image edge.
     """
     step = tile - overlap
     half = overlap // 2
@@ -408,7 +408,7 @@ def make_tile_grid(
     return grid
 
 
-# ---------- 拼接: 把 tile mask 写入全图 mask，并保证 ID 全局唯一 ----------
+# ---------- Merge: write tile masks into the global mask with globally unique IDs ----------
 
 def merge_tile_into_global(
     global_mask: np.ndarray,
@@ -418,34 +418,35 @@ def merge_tile_into_global(
     next_label: int,
 ) -> int:
     """
-    把 tile_mask 中位于中心区 (core_box) 内的实例写入 global_mask 的对应位置。
-    返回更新后的 next_label。
-    core_box = (x0, y0, x1, y1) 在 tile 局部坐标里
+    Write the instances of tile_mask whose pixels lie in the core area (core_box) to the
+    matching position in global_mask. Returns the updated next_label.
+    core_box = (x0, y0, x1, y1) in tile-local coordinates
     """
     x0, y0, x1, y1 = core_box
     core = tile_mask[y0:y1, x0:x1]
     if core.size == 0:
         return next_label
 
-    # 找在 core 区出现过的实例 id
+    # instance ids present in the core area
     present_ids = np.unique(core)
     present_ids = present_ids[present_ids != 0]
     if present_ids.size == 0:
         return next_label
 
-    # 给这些 id 分配全局新 id (连续)
+    # assign contiguous global ids to these
     remap = np.zeros(int(present_ids.max()) + 1, dtype=np.int64)
     for old_id in present_ids:
         remap[old_id] = next_label
         next_label += 1
 
-    # 在整个 tile 上做映射 (一个细胞可能跨中心区边界, 我们要把整个 tile 内属于这些 id 的像素都写进去,
-    # 但只在它们在 core 区有像素时才保留, 这样不会出现 "细胞在另一个 tile 已被记录又被这里覆盖" 的情况)
+    # Map over the whole tile (a cell may cross the core boundary, so write all pixels of these
+    # ids inside this tile), but keep an id only if it has pixels in the core area; this avoids
+    # overwriting a cell already recorded by another tile.
     full_remap = np.zeros(int(tile_mask.max()) + 1, dtype=np.int64)
     full_remap[present_ids] = remap[present_ids]
     new_tile = full_remap[tile_mask]
 
-    # 写入 global mask, 只覆盖 global 上还是背景的位置 (避免相邻 tile 覆盖另一 tile 已写入的细胞)
+    # write into the global mask only where it is still background (never overwrite neighbor tiles' cells)
     tx, ty = tile_origin_xy
     th, tw = tile_mask.shape
     region = global_mask[ty:ty + th, tx:tx + tw]
@@ -456,7 +457,7 @@ def merge_tile_into_global(
     return next_label
 
 
-# ---------- 预览图 ----------
+# ---------- Preview ----------
 
 def save_preview(
     reader: WSIReader,
@@ -465,7 +466,7 @@ def save_preview(
     roi_xywh: Tuple[int, int, int, int],
     max_side: int,
 ):
-    """保存缩略图叠加；按输出块读取，避免一次性加载整张 ROI。"""
+    """Save a downscaled overlay; read by output block so the whole ROI is never loaded at once."""
     from PIL import Image
     x, y, w, h = roi_xywh
     scale = min(1.0, max_side / max(w, h))
@@ -497,7 +498,7 @@ def save_preview(
     Image.fromarray(overlay).save(out_path)
 
 
-# ---------- 主流程 ----------
+# ---------- Main flow ----------
 
 def run(cfg: Config):
     out_dir = Path(cfg.output_dir) / cfg.run_name
@@ -508,31 +509,31 @@ def run(cfg: Config):
     log.info(f"WSI: {cfg.wsi_path}")
     log.info(f"Output: {out_dir}")
 
-    # 保存配置
+    # save the config
     with open(out_dir / "config.json", "w") as f:
         json.dump(asdict(cfg), f, indent=2)
 
     if not Path(cfg.wsi_path).exists():
         raise FileNotFoundError(cfg.wsi_path)
 
-    # 打开 WSI
+    # open the WSI
     reader = WSIReader(cfg.wsi_path, level=cfg.wsi_level)
     W_l, H_l = reader.level_dims
     log.info(f"Backend={reader.backend}, level={cfg.wsi_level}, "
              f"dims(W,H)=({W_l},{H_l}), downsample={reader.level_downsample}")
 
-    # mpp 必须来自用户确认的扫描元数据；本 TIFF 的 resolution unit=NONE。
+    # mpp must come from user-confirmed scan metadata; this TIFF has resolution unit=NONE.
     if cfg.image_mpp is None or not np.isfinite(cfg.image_mpp) or cfg.image_mpp <= 0:
         raise ValueError(
             "Config.image_mpp must be a confirmed positive H&E microns/pixel value; "
             "the input TIFF has no usable mpp metadata."
         )
     cur_mpp = float(cfg.image_mpp)
-    log.info(f"Using user-specified image_mpp={cur_mpp} µm/px")
+    log.info(f"Using user-specified image_mpp={cur_mpp} um/px")
 
     # ROI
     if cfg.roi_x is not None:
-        # ROI 坐标是 level=0 的, 转到当前 level
+        # ROI coordinates are level=0; convert to the current level
         ds = reader.level_downsample
         rx = int(cfg.roi_x / ds)
         ry = int(cfg.roi_y / ds)
@@ -542,7 +543,7 @@ def run(cfg: Config):
         rx, ry, rw, rh = 0, 0, W_l, H_l
     log.info(f"ROI at level {cfg.wsi_level}: x={rx}, y={ry}, w={rw}, h={rh}")
 
-    # 准备磁盘 mask，避免整图 ndarray 占用约 3.9 GiB RAM
+    # use an on-disk mask to avoid a full-image ndarray (~3.9 GiB RAM)
     mask_tmp = Path(cfg.mask_memmap_path) if cfg.mask_memmap_path else out_dir / "instance_mask.uint32.memmap"
     mask_tmp.parent.mkdir(parents=True, exist_ok=True)
     expected_bytes = int(rh) * int(rw) * np.dtype(np.uint32).itemsize
@@ -558,7 +559,7 @@ def run(cfg: Config):
     log.info(f"Global mask memmap={mask_tmp}, shape={global_mask.shape}, "
              f"disk_bytes={global_mask.nbytes}")
 
-    # 生成 tile grid (在 ROI 局部坐标里)
+    # build the tile grid (in ROI-local coordinates)
     grid = make_tile_grid(rw, rh, cfg.tile_size, cfg.tile_overlap,
                           offset_x=rx, offset_y=ry)
     log.info(f"Total tiles: {len(grid)}")
@@ -578,7 +579,7 @@ def run(cfg: Config):
             app = get_mesmer_app()
         log.info(f"Mesmer loaded, model_mpp={app.model_mpp}")
 
-        # ---- 推理循环 ----
+        # ---- inference loop ----
         for i, item in enumerate(grid):
             x_r, y_r, w_r, h_r, cx0, cy0, cx1, cy1 = item
             t0 = time.perf_counter()
@@ -634,7 +635,7 @@ def run(cfg: Config):
 
         monitor.__exit__(None, None, None)
 
-        # ---- 保存输出 ----
+        # ---- save outputs ----
         if cfg.save_mask_tiff:
             mask_path = out_dir / "instance_mask.tif"
             log.info(f"Saving mask to {mask_path} ...")
@@ -666,7 +667,7 @@ def run(cfg: Config):
             except Exception as e:
                 log.warning(f"geojson export failed: {e}")
 
-        # ---- 计算 benchmark 指标 ----
+        # ---- compute benchmark metrics ----
         metrics = compute_metrics(global_mask)
         bench = {
             "wsi_path": cfg.wsi_path,
@@ -704,7 +705,7 @@ def run(cfg: Config):
 
 
 def compute_metrics(mask: np.ndarray) -> dict:
-    """简单的细胞统计 (面积分布等), 用于 benchmark 报告"""
+    """Basic cell statistics (area distribution etc.) for the benchmark report"""
     if mask.max() == 0:
         return {"n_cells": 0}
     props = regionprops(mask)
@@ -722,11 +723,11 @@ def compute_metrics(mask: np.ndarray) -> dict:
 def export_geojson(mask: np.ndarray, out_path: Path,
                    x_offset: int = 0, y_offset: int = 0,
                    level_downsample: float = 1.0):
-    """把 instance mask 转成 QuPath 可读的 geojson (多边形)"""
+    """Convert the instance mask into a QuPath-readable geojson (polygons)"""
     from skimage.measure import find_contours
     features = []
     n = int(mask.max())
-    # 对每个 label 单独提轮廓
+    # extract contours for each label separately
     for lab in range(1, n + 1):
         ys, xs = np.where(mask == lab)
         if len(ys) == 0:
@@ -739,7 +740,7 @@ def export_geojson(mask: np.ndarray, out_path: Path,
         contours = find_contours(sub, 0.5)
         if not contours:
             continue
-        # 取最大轮廓
+        # take the longest contour
         c = max(contours, key=len)
         # (row, col) -> (x, y)
         pts = [

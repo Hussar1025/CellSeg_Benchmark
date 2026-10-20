@@ -38,14 +38,14 @@ from scipy.stats import pearsonr, spearmanr
 
 
 VERSION = "2026.09.20"
-DATA_ROOT = Path("/data/qiuyijia/dataset/starmap_BY1")
+DATA_ROOT = Path("yourpath/dataset/starmap_BY1")
 SPOTS = DATA_ROOT / "spots_all.csv"
 DAPI = DATA_ROOT / "BY1_dapi.tiff"
-PRED_ROOT = Path("/data/qiuyijia/bering/starmap_BY1_output")
+PRED_ROOT = Path("yourpath/bering/starmap_BY1_output")
 ASSIGNMENTS = PRED_ROOT / "segmentation_transcripts.parquet"
 PRED_CELLS = PRED_ROOT / "cells_ensembled_metadata.csv"
 RUN_SUMMARY = PRED_ROOT / "run_summary.json"
-DEFAULT_OUT = Path("/data/qiuyijia/eval/bering/bering_starmap_BY1_evaluation.csv")
+DEFAULT_OUT = Path("yourpath/eval/bering/bering_starmap_BY1_evaluation.csv")
 
 METRICS = [
     "gt_cells", "pred_cells", "cell_ratio", "matched", "precision", "recall", "f1",

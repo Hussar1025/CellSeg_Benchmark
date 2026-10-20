@@ -68,12 +68,12 @@ import tifffile
 from scipy.spatial import cKDTree
 
 
-ROOT_DEFAULT = Path("/data/qiuyijia/dataset/merfish_breast_cancer")
-DAPI_DEFAULT = Path("/data/qiuyijia/dataset/merfish_breast_cancer/imgs/mosaic_DAPI_z3.tif")
-TRANSFORM_DEFAULT = Path("/data/qiuyijia/dataset/merfish_breast_cancer/imgs/micron_to_mosaic_pixel_transform.csv")
-TX_DEFAULT = Path("/data/qiuyijia/dataset/merfish_breast_cancer/detected_transcripts.csv")
+ROOT_DEFAULT = Path("yourpath/dataset/merfish_breast_cancer")
+DAPI_DEFAULT = Path("yourpath/dataset/merfish_breast_cancer/imgs/mosaic_DAPI_z3.tif")
+TRANSFORM_DEFAULT = Path("yourpath/dataset/merfish_breast_cancer/imgs/micron_to_mosaic_pixel_transform.csv")
+TX_DEFAULT = Path("yourpath/dataset/merfish_breast_cancer/detected_transcripts.csv")
 
-OUT_DEFAULT = Path("/data/qiuyijia/comseg_merfish_breast")
+OUT_DEFAULT = Path("yourpath/comseg_merfish_breast")
 
 H = 94805
 W = 110485

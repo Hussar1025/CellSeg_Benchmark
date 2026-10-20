@@ -3,49 +3,17 @@
 """
 eval_merfish_cellist.py
 
-Cellist on the MERFISH liver ROIs.
+Cellist on MERFISH liver ROIs.
 
-Cellist labels spots, not pixels, so its raw raster is a scatter of occupied
-bins rather than a filled region.  Reporting area straight off that scatter
-understates cell size badly (on Xenium liver it read 9 um where the real extent
-was 34 um), so the labels are grown by --fill-um before area and coverage are
-measured.  The log prints occupancy before and after so the effect is visible.
+Cellist labels spots, not pixels, so labels are grown by --fill-um before
+area/coverage are measured.
 
-  python eval_merfish_cellist.py --datasets liver1,liver2
+Shared evaluation core: label array -> ROI-local mosaic px -> transcript lookup
+-> pred centroids/areas/counts/gene vectors -> sparse Hungarian match against
+platform cells -> identical metrics.
 
-This file is self-contained: the shared evaluation core is included
-below, so it can be copied anywhere and run on its own.
-
------ shared core -----
-evaluation core   v2026.08.13
-
-Shared evaluation core for the two MERFISH liver datasets.
-
-Every method is evaluated through the SAME path:
-
-    label array (any grid size) -> ROI-local mosaic pixels -> transcript lookup
-                                -> pred centroids / areas / counts / gene vectors
-                                -> sparse Hungarian match against platform cells
-                                -> the identical metric columns used for the
-                                   35 rows already in the benchmark workbook
-
-The only thing a per-method script has to supply is a label array plus the
-mosaic-pixel size of one of its grid pixels.  Everything downstream is common,
-so UCS / Proseg / Cellist / GeneSegNet are measured with one ruler.
-
-Geometry, once and for all
--------------------------
-  orientation           normal (no flip) for both livers
-  ROI                   10000 x 10000 mosaic px centred on the mosaic
-                          liver1  y0=36396  x0=49272
-                          liver2  y0=46028  x0=53436
-  mosaic px -> micron   um = (px - offset) / scale   from the dataset's own
-                        micron_to_mosaic_pixel_transform.csv
-  ROI width             10000 px / 9.2593 px per um = 1080.0 um
-
-That last line is the reason the four methods are comparable at all: the UCS
-1081-px grid, the Cellist 2160-bin grid and the GeneSegNet 10000-px mask all
-span the same 1080 um square.
+Geometry: ROI 10000x10000 mosaic px; um = (px - offset) / scale from
+micron_to_mosaic_pixel_transform.csv.
 """
 
 from __future__ import annotations
@@ -64,36 +32,32 @@ import pandas as pd
 
 VERSION = "2026.08.13-idbridge"
 
-# --------------------------------------------------------------------------
 # datasets
-# --------------------------------------------------------------------------
-
 DATASETS = {
     "liver1": dict(
-        data_root="/data/qiuyijia/dataset/merfish_liver1",
+        data_root="yourpath",
         roi_y0=36396,
         roi_x0=49272,
-        ucs_dir="/data/qiuyijia/ucs_merfish_liver1",
-        proseg_dir="/data/qiuyijia/proseg/output/liver1",
-        cellist_dir="/data/qiuyijia/cellist/merfish_liver1",
-        comseg_dir="/data/qiuyijia/comseg/merfish_liver1",
-        genesegnet_dir="/data/qiuyijia/genesegnet_merfish_liver/liver1",
+        ucs_dir="yourpath",
+        proseg_dir="yourpath",
+        cellist_dir="yourpath",
+        comseg_dir="yourpath",
+        genesegnet_dir="yourpath",
     ),
     "liver2": dict(
-        data_root="/data/qiuyijia/dataset/merfish_liver2",
+        data_root="yourpath",
         roi_y0=46028,
         roi_x0=53436,
-        ucs_dir="/data/qiuyijia/ucs_merfish_liver2",
-        proseg_dir="/data/qiuyijia/proseg/output/liver2",
-        cellist_dir="/data/qiuyijia/cellist/merfish_liver2",
-        comseg_dir="/data/qiuyijia/comseg/merfish_liver2",
-        genesegnet_dir="/data/qiuyijia/genesegnet_merfish_liver/liver2",
+        ucs_dir="yourpath",
+        proseg_dir="yourpath",
+        cellist_dir="yourpath",
+        comseg_dir="yourpath",
+        genesegnet_dir="yourpath",
     ),
 }
 
 ROI_SIZE = 10000
 
-# exact column order of the rows already in the workbook
 REQUESTED_METRICS = [
     "method",
     "Pred cell count",
@@ -165,14 +129,11 @@ def rule(msg: str = "") -> None:
         log.info("=" * 78)
 
 
-# --------------------------------------------------------------------------
 # geometry
-# --------------------------------------------------------------------------
-
 
 @dataclass
 class Geometry:
-    """Everything needed to move between micron, mosaic px and ROI-local px."""
+    """Conversions between micron, mosaic px and ROI-local px."""
 
     sx: float
     sy: float
@@ -230,8 +191,7 @@ def load_geometry(dataset: str) -> tuple[Geometry, dict]:
     tf = find_one(root, "*micron_to_mosaic_pixel_transform.csv")
     if tf is None:
         raise FileNotFoundError(
-            f"no *micron_to_mosaic_pixel_transform.csv under {root}; without it "
-            "micron and mosaic pixels cannot be related"
+            f"no *micron_to_mosaic_pixel_transform.csv under {root}"
         )
     m = np.loadtxt(tf)
     geo = Geometry(
@@ -248,18 +208,15 @@ def load_geometry(dataset: str) -> tuple[Geometry, dict]:
     return geo, cfg
 
 
-# --------------------------------------------------------------------------
-# transcripts (shared across every method)
-# --------------------------------------------------------------------------
-
+# transcripts
 
 @dataclass
 class Transcripts:
-    ux: np.ndarray            # micron
+    ux: np.ndarray
     uy: np.ndarray
-    gene: np.ndarray          # gene index
-    genes: list               # gene names
-    gt_label: np.ndarray      # platform cell id per transcript, 0 = unassigned
+    gene: np.ndarray
+    genes: list
+    gt_label: np.ndarray
     source: str
     has_gt_labels: bool
 
@@ -271,13 +228,9 @@ def _open_text(p: Path):
 def load_transcripts(dataset: str, geo: Geometry, cfg: dict,
                      override: str | None = None) -> Transcripts:
     """
-    Preferred source is the Proseg ROI subset: it is already cropped to exactly
-    this ROI, its coordinates are micron, and its cell_id column carries the
-    platform assignment, which is the only per-transcript ground truth MERFISH
-    offers (detected_transcripts.csv has no cell column).
-
-    Falling back to detected_transcripts.csv works but streams ~270 M rows and
-    yields no per-transcript ground truth.
+    Preferred source is the Proseg ROI subset: cropped to this ROI, micron
+    coordinates, and cell_id carries the platform assignment (the only
+    per-transcript ground truth MERFISH offers).
     """
     rule("TRANSCRIPTS")
 
@@ -326,7 +279,6 @@ def load_transcripts(dataset: str, geo: Geometry, cfg: dict,
         log.info(f"  genes {len(genes):,}")
         return Transcripts(ux, uy, gene, genes, gt, str(src), has_gt)
 
-    # fallback: stream the raw table
     raw = find_one(Path(cfg["data_root"]), "detected_transcripts.csv*")
     if raw is None:
         raise FileNotFoundError("no transcript table found")
@@ -368,20 +320,16 @@ def _pick(df, names, required=True):
     return None
 
 
-# --------------------------------------------------------------------------
 # ground truth cells
-# --------------------------------------------------------------------------
-
 
 @dataclass
 class GroundTruth:
-    ids: np.ndarray                   # id used by cell_metadata / cell_by_gene
-    tx_ids: np.ndarray                # SAME cell, but in the transcript table's
-                                      # id space; -1 when it could not be bridged
+    ids: np.ndarray
+    tx_ids: np.ndarray
     ux: np.ndarray
     uy: np.ndarray
     total_counts: np.ndarray
-    gene_matrix: np.ndarray | None    # cells x genes, aligned to Transcripts.genes
+    gene_matrix: np.ndarray | None
     source: str
     counts_source: str = "unknown"
 
@@ -414,15 +362,7 @@ def load_ground_truth(cfg: dict, geo: Geometry, tx: Transcripts,
     ids = pd.to_numeric(md[idcol], errors="coerce").fillna(-1).to_numpy(np.int64)
     log.info(f"  {len(md):,} have their centroid inside the ROI  <- GT cell count")
 
-    # ------------------------------------------------------------------
-    # bridge the two id spaces
-    #
-    # cell_metadata numbers the cells across the whole section, while the
-    # transcript table's prior column numbers only the cells of this ROI, from
-    # 1.  Comparing the two directly makes every transcript look misassigned,
-    # which is exactly how this used to report an accuracy of 0.0000.  The two
-    # are reconciled through the one thing they share: the centroid.
-    # ------------------------------------------------------------------
+    # Bridge the two id spaces through the shared centroid.
     tx_ids = np.full(len(md), -1, np.int64)
     if tx.has_gt_labels:
         lab = tx.gt_label
@@ -449,7 +389,6 @@ def load_ground_truth(cfg: dict, geo: Geometry, tx: Transcripts,
                 log.info("            WARNING: less than 90% bridged; the "
                          "transcript-level accuracy will only cover that subset")
 
-    # counts and gene vectors from the official cell x gene table
     gm = None
     tot = np.full(len(md), np.nan)
     csource = "none"
@@ -483,10 +422,6 @@ def load_ground_truth(cfg: dict, geo: Geometry, tx: Transcripts,
         csource = f"official {Path(cbg).name}"
 
     if gm is None and tx.has_gt_labels and counts_source in ("auto", "prior"):
-        # Derive them from the transcript table's own platform labels.  Same ROI,
-        # same filtering, and available for every dataset -- but note that for
-        # UCS / Proseg / ComSeg this column is also their input, so agreement
-        # with it is partly circular.
         log.info("counts      derived from the transcript table's platform "
                  "labels (no usable cell_by_gene table)")
         pos = {int(v): i for i, v in enumerate(tx_ids) if v > 0}
@@ -511,17 +446,12 @@ def load_ground_truth(cfg: dict, geo: Geometry, tx: Transcripts,
     return GroundTruth(ids, tx_ids, ux, uy, tot, gm, str(meta), csource)
 
 
-# --------------------------------------------------------------------------
 # predictions
-# --------------------------------------------------------------------------
-
 
 @dataclass
 class Prediction:
-    """A label array covering the ROI plus the mosaic-px size of one of its pixels."""
-
     labels: np.ndarray
-    px_per_cell: float                     # mosaic px per label-array pixel
+    px_per_cell: float
     method: str
     uses_platform_prior: bool
     note: str = ""
@@ -565,7 +495,6 @@ def summarise_prediction(pred: Prediction, geo: Geometry, tx: Transcripts) -> Pr
     coverage = float((lab > 0).mean())
     log.info(f"cells       {len(ids):,}   coverage {coverage*100:.2f}%")
 
-    # geometric centroids
     rows, cols = np.nonzero(lab)
     lv = lab[rows, cols].astype(np.int64)
     order = np.argsort(lv, kind="stable")
@@ -581,7 +510,6 @@ def summarise_prediction(pred: Prediction, geo: Geometry, tx: Transcripts) -> Pr
     log.info(f"area        median {med_a:.1f} um^2   equivalent diameter "
              f"{2*np.sqrt(med_a/np.pi):.2f} um")
 
-    # transcript assignment through the same array
     lpx, lpy = geo.um_to_local(tx.ux, tx.uy)
     r = np.clip((lpy / s).astype(np.int64), 0, lab.shape[0] - 1)
     c = np.clip((lpx / s).astype(np.int64), 0, lab.shape[1] - 1)
@@ -607,10 +535,7 @@ def summarise_prediction(pred: Prediction, geo: Geometry, tx: Transcripts) -> Pr
     return PredCells(ids, pux, puy, area_um2, n_tx, gmat, coverage, tx_lab)
 
 
-# --------------------------------------------------------------------------
-# matching  (same recipe as the rows already in the workbook)
-# --------------------------------------------------------------------------
-
+# matching
 
 def infer_match_radius(gx, gy, quantile=0.95, factor=1.25, floor=2.0):
     from scipy.spatial import cKDTree
@@ -654,7 +579,7 @@ def _cc_bipartite(pi, gi, n_pred, n_gt):
 
 
 def match_sparse_hungarian(px, py, gx, gy, radius, greedy_above=400):
-    """Optimal within each small connected component, greedy in the huge ones."""
+    """Optimal within each small connected component, greedy in huge ones."""
     from scipy.optimize import linear_sum_assignment
     pi, gi, d = build_candidate_edges(px, py, gx, gy, radius)
     if len(pi) == 0:
@@ -741,10 +666,7 @@ def gene_vector_metrics(pm, gm):
     }
 
 
-# --------------------------------------------------------------------------
-# the evaluation itself
-# --------------------------------------------------------------------------
-
+# evaluation
 
 def evaluate(pred: Prediction, dataset: str, out_dir: Path,
              transcripts_override=None, counts_source: str = "auto",
@@ -794,7 +716,6 @@ def evaluate(pred: Prediction, dataset: str, out_dir: Path,
         "uses_platform_prior": pred.uses_platform_prior,
     }
 
-    # count agreement -------------------------------------------------------
     if n_match:
         pn = pc.n_tx[mp].astype(float)
         gtot = gt.total_counts[mg].astype(float)
@@ -808,7 +729,6 @@ def evaluate(pred: Prediction, dataset: str, out_dir: Path,
             for s in ("pearson", "spearman", "mae", "rmse"):
                 row[f"{p}_{s}"] = np.nan
 
-    # gene vectors ----------------------------------------------------------
     if n_match and gt.gene_matrix is not None:
         row.update(gene_vector_metrics(pc.gene_matrix[mp], gt.gene_matrix[mg]))
         log.info(f"gene vector cosine {row['matched_cell_gene_vector_mean_cosine']:.4f}"
@@ -821,7 +741,6 @@ def evaluate(pred: Prediction, dataset: str, out_dir: Path,
             "matched_cell_gene_vector_valid_pairs": 0,
         })
 
-    # per-transcript accuracy ----------------------------------------------
     if tx.has_gt_labels and n_match:
         gt_of_pred = {}
         for a, b in zip(mp, mg):
@@ -850,7 +769,6 @@ def evaluate(pred: Prediction, dataset: str, out_dir: Path,
             log.info("transcript-level accuracy unavailable: this dataset has no "
                      "per-transcript platform labels")
 
-    # write ----------------------------------------------------------------
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = f"{pred.method}_{dataset}"
     full = pd.DataFrame([{k: row.get(k, np.nan) for k in REQUESTED_METRICS}])
@@ -891,14 +809,13 @@ def common_parser(method: str) -> argparse.ArgumentParser:
         description=f"Evaluate {method} on the MERFISH liver ROIs")
     p.add_argument("--datasets", default="liver1,liver2",
                    help="comma separated: liver1,liver2")
-    p.add_argument("--output-dir", default="/data/qiuyijia/eval_merfish")
+    p.add_argument("--output-dir", default="yourpath")
     p.add_argument("--transcripts", default=None,
                    help="override the transcript table")
     p.add_argument("--gt-counts", choices=["auto", "official", "prior"],
                    default="auto",
                    help="where GT counts and gene vectors come from. 'prior' "
-                        "forces the transcript table for every dataset, which "
-                        "keeps liver1 and liver2 on the same footing")
+                        "forces the transcript table for every dataset")
     p.add_argument("--bridge-radius", type=float, default=5.0,
                    help="radius for reconciling the two cell id spaces")
     p.add_argument("--version", action="store_true")
@@ -941,13 +858,7 @@ def main_loop(method: str, build, argv=None):
                   .to_string(index=False))
 
 
-# ==========================================================================
-# cellist specific part
-# ==========================================================================
-
-
-
-
+# Cellist-specific part
 
 def add_arguments(ap):
     ap.add_argument("--table", default=None,
@@ -1012,9 +923,7 @@ def build(dataset, cfg, args):
     geo, _ = load_geometry(dataset)
 
     # The bin grid must come from the gem that Cellist was given, not from the
-    # extent of the surviving labels: cells only occupy part of the ROI, so
-    # max(label coordinate) understates the grid and silently rescales
-    # everything.  The gem defines the grid, the seg table is derived from it.
+    # extent of surviving labels.
     g = args.bins
     src = "--bins"
     if g is None:

@@ -71,19 +71,19 @@ import pandas as pd  # noqa: E402
 VERSION = "2026.08.11-openfix"
 
 DATASETS = {
-    "liver": {"root": "/data/qiuyijia/dataset/xenium_liver",
+    "liver": {"root": "yourpath/dataset/xenium_liver",
               "tag": "liver", "role": "test",
-              "compare": "/data/qiuyijia/ucs_xenium_liver_roi10000_prior"},
-    "mouse_brain": {"root": "/data/qiuyijia/dataset/xenium_mouse_brain",
+              "compare": "yourpath/ucs_xenium_liver_roi10000_prior"},
+    "mouse_brain": {"root": "yourpath/dataset/xenium_mouse_brain",
                     "tag": "mouse_brain", "role": "test",
-                    "compare": "/data/qiuyijia/ucs_xenium_mouse_brain_roi10000_prior"},
-    "pancreas_cancer": {"root": "/data/qiuyijia/dataset/xenium_pancreas_cancer",
+                    "compare": "yourpath/ucs_xenium_mouse_brain_roi10000_prior"},
+    "pancreas_cancer": {"root": "yourpath/dataset/xenium_pancreas_cancer",
                         "tag": "pancreas_cancer", "role": "train"},
-    "lymph_node": {"root": "/data/qiuyijia/dataset/xenium_roi_crop",
+    "lymph_node": {"root": "yourpath/dataset/xenium_roi_crop",
                    "tag": "lymph_node", "role": "train"},
 }
-OUT_TEMPLATE = "/data/qiuyijia/genesegnet_xenium/{tag}"
-DEFAULT_REPO = "/data/qiuyijia/GeneSegNet"
+OUT_TEMPLATE = "yourpath/genesegnet_xenium/{tag}"
+DEFAULT_REPO = "yourpath/GeneSegNet"
 TEST_ROI = 10000            # locked for role=test
 
 CONTROL_PREFIXES = (

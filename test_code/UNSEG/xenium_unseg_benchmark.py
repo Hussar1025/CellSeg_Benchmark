@@ -29,7 +29,7 @@ import tifffile
 from skimage.color import rgb2hed
 from skimage.draw import polygon
 
-ROOT = Path('/data/qiuyijia')
+ROOT = Path('yourpath')
 DATA = ROOT / 'dataset'
 HERE = Path(__file__).resolve().parent
 OUT = HERE / 'outputs'

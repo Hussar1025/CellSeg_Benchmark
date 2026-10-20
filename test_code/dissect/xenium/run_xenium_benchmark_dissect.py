@@ -19,7 +19,7 @@ Typical usage (after ``conda activate dissect``)::
     python run_xenium_benchmark_dissect.py --dataset xenium_liver
     python run_xenium_benchmark_dissect.py --dataset all --dry-run
 
-Outputs are written below ``/data/qiuyijia/DISSECT/xenium_benchmark`` unless
+Outputs are written below ``yourpath/DISSECT/xenium_benchmark`` unless
 ``--output-root`` is supplied.  Each dataset directory contains ``mask.npy``,
 ``boxes.csv``, the detector's ``raw_boxes.csv``, ``run_info.json`` and the
 ROI definition in ``roi_info.json``.
@@ -37,8 +37,8 @@ from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
 
-ROOT = Path("/data/qiuyijia/DISSECT")
-DATASET_ROOT = Path("/data/qiuyijia/dataset")
+ROOT = Path("yourpath/DISSECT")
+DATASET_ROOT = Path("yourpath/dataset")
 DEFAULT_OUTPUT_ROOT = ROOT / "xenium_benchmark"
 DEFAULT_WEIGHTS = ROOT / "weights/model_weights.pth"
 DEFAULT_CONFIG = ROOT / "code/config.yaml"
@@ -467,8 +467,8 @@ def run_one(spec: DatasetSpec, args: argparse.Namespace) -> dict:
         from dissect.segmentation import parallel_gm
     except Exception as exc:  # pragma: no cover - depends on local CUDA/detectron2
         raise RuntimeError(
-            "无法导入 DISSECT。请先执行 `conda activate dissect`，并确认 "
-            "detectron2、pyarrow、imagecodecs 和 Pillow==9.5.0 已安装。"
+            "cannot import DISSECT. Run `conda activate dissect` first, and check that "
+            "detectron2, pyarrow, imagecodecs and Pillow==9.5.0 are installed."
         ) from exc
 
     image_h, image_w, _ = _image_shape(spec.image)

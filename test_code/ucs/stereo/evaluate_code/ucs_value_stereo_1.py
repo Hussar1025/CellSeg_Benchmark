@@ -1,20 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-eval_ucs_stereoseq.py  —— Stereo-seq × UCS 评估（19 指标）
+eval_ucs_stereoseq.py  —— Stereo-seq x UCS evaluation (19 metrics)
 =========================================================================
-GT 来自 GEM 的 cell 列（CellBin），不同于 Xenium 从 cells.parquet 建 GT。
+GT comes from the GEM cell column (CellBin), unlike Xenium where GT is built from cells.parquet.
 
-⚠ assignment accuracy 会循环虚高：nuclei_mask 和 GT 都来自同一个 cell 列，
-  两者同源。仅检测/定位/计数指标有效，向量/分配指标仅供参考。
+⚠ assignment accuracy is circularly inflated: nuclei_mask and GT both come from the same cell column,
+  the two share the same source. Only detection/localization/count metrics are valid; vector/assignment metrics are reference only.
 
-用法
+Usage
 -----
 python eval_ucs_stereoseq.py
 python eval_ucs_stereoseq.py \
-    --mask  /data/qiuyijia/ucs_stereoseq/segmentation_mask.tif \
-    --gem   /data/qiuyijia/dataset/stereoseq/stereo-seq_data_all/E16.5_E2S6_Dorsal_Midbrain_GEM_CellBin.tsv.gz \
-    --out   /data/qiuyijia/eval_results/ucs/stereoseq.csv
+    --mask  yourpath/ucs_stereoseq/segmentation_mask.tif \
+    --gem   yourpath/dataset/stereoseq/stereo-seq_data_all/E16.5_E2S6_Dorsal_Midbrain_GEM_CellBin.tsv.gz \
+    --out   yourpath/eval_results/ucs/stereoseq.csv
 """
 
 import os, gzip, argparse, warnings
@@ -26,23 +26,23 @@ from scipy.stats import pearsonr, spearmanr
 
 warnings.filterwarnings("ignore")
 SEP = "=" * 68
-BIN_UM = 0.5    # Stereo-seq bin1 = 0.5µm/px
+BIN_UM = 0.5    # Stereo-seq bin1 = 0.5 um/px
 
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--mask", default="/data/qiuyijia/ucs_stereoseq/segmentation_mask.tif")
-    p.add_argument("--gem",  default="/data/qiuyijia/dataset/stereoseq/"
+    p.add_argument("--mask", default="yourpath/ucs_stereoseq/segmentation_mask.tif")
+    p.add_argument("--gem",  default="yourpath/dataset/stereoseq/"
         "stereo-seq_data_all/E16.5_E2S6_Dorsal_Midbrain_GEM_CellBin.tsv.gz")
-    p.add_argument("--out",  default="/data/qiuyijia/eval_results/ucs/stereoseq.csv")
+    p.add_argument("--out",  default="yourpath/eval_results/ucs/stereoseq.csv")
     p.add_argument("--match-radius-um", type=float, default=15.0,
-                   help="匹配半径（µm），细胞直径约 12.9µm，取 1.2×")
+                   help="match radius (um), cell diameter ~12.9um, use 1.2x")
     return p.parse_args()
 
 
-# ── 读 GEM ────────────────────────────────────────────────────────────────────
+# ── read GEM ────────────────────────────────────────────────────────────────────
 def load_gem(path):
-    print(f"  读 GEM: {os.path.basename(path)} ...")
+    print(f"  reading GEM: {os.path.basename(path)} ...")
     opener = gzip.open if path.endswith(".gz") else open
     skip = 0
     with opener(path, "rt") as fh:
@@ -60,49 +60,49 @@ def load_gem(path):
         elif cl in ("cell","cellid","label"): ren[c] = "cell"
     df = df.rename(columns=ren)
     if "count" not in df.columns: df["count"] = 1
-    print(f"    {len(df):,} 行  cell>0: {(df.cell>0).sum():,}  "
-          f"GT 细胞 {df.loc[df.cell>0,'cell'].nunique():,}")
+    print(f"    {len(df):,} rows  cell>0: {(df.cell>0).sum():,}  "
+          f"GT cells {df.loc[df.cell>0,'cell'].nunique():,}")
     return df
 
 
-# ── 从 mask 建 pred 细胞质心 + 每细胞计数 ──────────────────────────────────
+# ── build pred cell centroids + per-cell counts from mask ──────────────────────
 def pred_from_mask(mask, x0_bin, y0_bin):
     """
-    返回 pred_df: label, cx_um, cy_um, n_px
+    Return pred_df: label, cx_um, cy_um, n_px
     x0_bin / y0_bin = gem.x.min() / gem.y.min()
-    ucs_stereoseq.py 建 gene_map 时做了 (x-x0)//bin_px 的平移，
-    这里必须加回来，才能和 GT 的 GEM bin 坐标系对齐。
+    ucs_stereoseq.py shifts by (x-x0)//bin_px when building gene_map;
+    that offset must be added back here to align with the GT GEM bin coordinates.
     """
-    print("  解析 pred mask ...")
-    print(f"    GEM 原点: x0={x0_bin}, y0={y0_bin} bin  "
-          f"= {x0_bin*BIN_UM:.0f}, {y0_bin*BIN_UM:.0f} µm")
+    print("  parsing pred mask ...")
+    print(f"    GEM origin: x0={x0_bin}, y0={y0_bin} bin  "
+          f"= {x0_bin*BIN_UM:.0f}, {y0_bin*BIN_UM:.0f} um")
     ids, cnt = np.unique(mask[mask > 0], return_counts=True)
     rows, cols = np.where(mask > 0)
     labels = mask[rows, cols]
     df = pd.DataFrame({"label": labels, "row": rows, "col": cols})
     cent = df.groupby("label")[["row","col"]].mean().reset_index()
-    # ★ 加回 GEM 原点偏移，与 GT 坐标系对齐
+    # ★ add back the GEM origin offset to align with GT coordinates
     cent["cx_um"] = (cent["col"] + x0_bin) * BIN_UM
     cent["cy_um"] = (cent["row"] + y0_bin) * BIN_UM
-    # 像素数
+    # pixel count
     npx = pd.Series(cnt, index=ids, name="n_px")
     cent = cent.merge(npx.reset_index().rename(columns={"index":"label",0:"n_px"}),
                       on="label", how="left")
     if "n_px" not in cent.columns:
-        # 直接从 cnt 添
+        # add directly from cnt
         cnt_df = pd.DataFrame({"label": ids, "n_px": cnt})
         cent = cent.merge(cnt_df, on="label", how="left")
-    print(f"    pred 细胞 {len(cent):,}  中位像素 {cent.n_px.median():.0f}  "
-          f"等效直径 {2*np.sqrt(cent.n_px.median()*BIN_UM**2/np.pi):.1f}µm")
+    print(f"    pred cells {len(cent):,}  median pixels {cent.n_px.median():.0f}  "
+          f"equivalent diameter {2*np.sqrt(cent.n_px.median()*BIN_UM**2/np.pi):.1f}um")
     return cent
 
 
-# ── GT 质心 + 每细胞计数 ──────────────────────────────────────────────────
+# ── GT centroids + per-cell counts ──────────────────────────────────────────────
 def gt_from_gem(gem):
-    """GT 质心 = MIDCounts 加权的 (x,y) 均值；GT 计数 = 总 MIDCounts"""
-    print("  构建 GT 质心（CellBin cell 列）...")
+    """GT centroid = MIDCounts-weighted (x,y) mean; GT count = total MIDCounts"""
+    print("  building GT centroids (CellBin cell column)...")
     g = gem[gem.cell > 0].copy()
-    # 加权质心（按 MIDCounts）
+    # weighted centroid (by MIDCounts)
     g["wx"] = g.x * g["count"]
     g["wy"] = g.y * g["count"]
     agg = g.groupby("cell").agg(
@@ -111,13 +111,13 @@ def gt_from_gem(gem):
     agg["cx_um"] = agg.wx_sum / agg.count_sum * BIN_UM
     agg["cy_um"] = agg.wy_sum / agg.count_sum * BIN_UM
     agg = agg.rename(columns={"count_sum": "gt_count"})
-    print(f"    GT 细胞 {len(agg):,}  中位计数 {agg.gt_count.median():.0f}")
+    print(f"    GT cells {len(agg):,}  median count {agg.gt_count.median():.0f}")
     return agg[["cell","cx_um","cy_um","gt_count"]]
 
 
-# ── 稀疏匈牙利匹配 ────────────────────────────────────────────────────────
+# ── sparse Hungarian matching ──────────────────────────────────────────────────
 def match_cells(pred_cent, gt_cent, radius_um):
-    print(f"  匹配细胞（radius={radius_um}µm）...")
+    print(f"  matching cells (radius={radius_um}um)...")
     pred_xy = pred_cent[["cx_um","cy_um"]].values
     gt_xy   = gt_cent[["cx_um","cy_um"]].values
     tree = cKDTree(gt_xy)
@@ -125,20 +125,20 @@ def match_cells(pred_cent, gt_cent, radius_um):
     matched_mask = dists < radius_um
     matched_pred = np.where(matched_mask)[0]
     matched_gt   = gt_idx[matched_mask]
-    # 处理一对多：每个 GT 只保留最近的 pred
+    # resolve one-to-many: keep only the nearest pred per GT
     best = {}
     for pi, gi, di in zip(matched_pred, matched_gt, dists[matched_mask]):
         if gi not in best or di < best[gi][1]:
             best[gi] = (pi, di)
     pairs = [(pi, gi, di) for gi, (pi, di) in best.items()]
-    print(f"    pred {len(pred_cent):,}  GT {len(gt_cent):,}  匹配 {len(pairs):,}")
+    print(f"    pred {len(pred_cent):,}  GT {len(gt_cent):,}  matched {len(pairs):,}")
     return pairs
 
 
-# ── 每细胞 pred 计数（从 mask 查 GEM 点）──────────────────────────────────
+# ── per-cell pred counts (look up GEM points on the mask) ──────────────────────
 def pred_counts_from_gem(mask, gem, x0_bin, y0_bin):
-    """把 GEM 每行坐标打到 mask 上，统计每个 pred cell 的 MIDCounts 总和"""
-    print("  计算 pred 每细胞 MIDCounts（从 mask 查 GEM）...")
+    """Map each GEM row coordinate onto the mask and sum MIDCounts per pred cell"""
+    print("  computing pred per-cell MIDCounts (look up GEM on the mask)...")
     H, W = mask.shape
     xi = (gem.x.values - x0_bin).astype(np.int32)
     yi = (gem.y.values - y0_bin).astype(np.int32)
@@ -149,22 +149,22 @@ def pred_counts_from_gem(mask, gem, x0_bin, y0_bin):
     df = pd.DataFrame({"label": pred_labels, "count": counts})
     pred_cnt = df[df.label > 0].groupby("label")["count"].sum().reset_index()
     pred_cnt.columns = ["label", "pred_count"]
-    print(f"    {(df.label > 0).sum():,} / {len(df):,} 条 GEM 落在 pred 细胞内")
+    print(f"    {(df.label > 0).sum():,} / {len(df):,} GEM rows fall inside pred cells")
     return pred_cnt
 
 
-# ── 主评估 ────────────────────────────────────────────────────────────────
+# ── main evaluation ────────────────────────────────────────────────────────────
 def main():
     cfg = parse_args()
     os.makedirs(os.path.dirname(cfg.out), exist_ok=True)
-    print(SEP); print("Stereo-seq × UCS 评估"); print(SEP)
+    print(SEP); print("Stereo-seq x UCS evaluation"); print(SEP)
 
-    # --- 读数据 ---
+    # --- read data ---
     mask = tifffile.imread(cfg.mask)
     print(f"  mask shape {mask.shape}  dtype {mask.dtype}")
     gem = load_gem(cfg.gem)
 
-    # GEM 原点（mask 坐标系的偏移量）
+    # GEM origin (offset of the mask coordinate system)
     x0_bin = int(gem.x.min())   # 2925
     y0_bin = int(gem.y.min())   # 4875
 
@@ -172,27 +172,27 @@ def main():
     pred_cent = pred_from_mask(mask, x0_bin, y0_bin)
     gt_cent   = gt_from_gem(gem)
 
-    # --- pred 计数 ---
+    # --- pred counts ---
     pred_cnt = pred_counts_from_gem(mask, gem, x0_bin, y0_bin)
     pred_cent = pred_cent.merge(pred_cnt, on="label", how="left")
     pred_cent["pred_count"] = pred_cent.get("pred_count",
                                              pred_cent.get("n_px", 0)).fillna(0)
 
-    # --- 匹配 ---
+    # --- matching ---
     pairs = match_cells(pred_cent, gt_cent, cfg.match_radius_um)
     n_match = len(pairs)
     n_pred  = len(pred_cent)
     n_gt    = len(gt_cent)
 
-    # --- 指标计算 ---
+    # --- metrics ---
     metrics = {}
 
-    # 基础
+    # basics
     metrics["gt_cells"]   = n_gt
     metrics["pred_cells"] = n_pred
     metrics["cell_ratio"] = n_pred / n_gt
 
-    # 检测
+    # detection
     prec   = n_match / n_pred if n_pred else 0
     recall = n_match / n_gt   if n_gt   else 0
     f1     = 2*prec*recall/(prec+recall) if prec+recall else 0
@@ -201,7 +201,7 @@ def main():
     metrics["recall"]    = recall
     metrics["f1"]        = f1
 
-    # 定位（质心偏移 µm）
+    # localization (centroid shift um)
     shifts = [pairs[i][2] for i in range(len(pairs))]
     if shifts:
         metrics["loc_mean_um"]   = np.mean(shifts)
@@ -210,7 +210,7 @@ def main():
     else:
         metrics["loc_mean_um"] = metrics["loc_median_um"] = metrics["loc_p95_um"] = np.nan
 
-    # 计数相关
+    # count correlation
     if pairs:
         pi_arr = [p[0] for p in pairs]
         gi_arr = [p[1] for p in pairs]
@@ -227,10 +227,10 @@ def main():
         for k in ["count_pearson","count_spearman","count_mae","count_rmse"]:
             metrics[k] = np.nan
 
-    # 基因向量（top 基因 cosine）
-    print("  计算基因向量指标（pred vs GT，对matched pairs）...")
+    # gene vectors (top-gene cosine)
+    print("  computing gene-vector metrics (pred vs GT, on matched pairs)...")
     try:
-        # 建 pred 基因向量
+        # build pred gene vectors
         gene_names = np.sort(gem.gene.unique())
         g2i = {g: i for i, g in enumerate(gene_names)}
         ng = len(gene_names)
@@ -243,13 +243,13 @@ def main():
         gi_vals = gem.gene.map(g2i).values[ok]
         counts  = gem["count"].values[ok]
 
-        # GT 基因向量（对 matched GT cells）
+        # GT gene vectors (for matched GT cells)
         gi_arr = [p[1] for p in pairs]
         pi_arr = [p[0] for p in pairs]
         gt_cells_matched = gt_cent.iloc[gi_arr]["cell"].values
         pred_labels_matched = pred_cent.iloc[pi_arr]["label"].values
 
-        # 抽样计算（最多 2000 对）
+        # subsample (up to 2000 pairs)
         np.random.seed(42)
         idx = np.random.permutation(len(pairs))[:2000]
         cosines = []
@@ -257,12 +257,12 @@ def main():
             pi, gi = pi_arr[i], gi_arr[i]
             pl = pred_cent.iloc[pi]["label"]
             gc = gt_cent.iloc[gi]["cell"]
-            # pred 向量
+            # pred vector
             pm = plabels == pl
             pv = np.zeros(ng)
             if pm.any():
                 np.add.at(pv, gi_vals[pm], counts[pm])
-            # GT 向量
+            # GT vector
             gm = (gem.cell == gc)
             gv = np.zeros(ng)
             gene_idx = gem.gene.map(g2i).values
@@ -277,39 +277,39 @@ def main():
         else:
             metrics["vec_cosine"] = np.nan
     except Exception as e:
-        print(f"    基因向量计算失败: {e}")
+        print(f"    gene-vector computation failed: {e}")
         metrics["vec_cosine"] = np.nan
 
-    metrics["vec_js_dist"]  = np.nan   # 计算量大，跳过
+    metrics["vec_js_dist"]  = np.nan   # too expensive, skip
     metrics["vec_pearson"]  = np.nan
 
-    # 分配（同源，循环虚高，仅做记录）
-    metrics["assign_accuracy"] = np.nan  # 同源，skip
+    # assignment (same source, circularly inflated, record only)
+    metrics["assign_accuracy"] = np.nan  # same source, skip
     metrics["assign_overlap"]  = np.nan
 
-    # --- 打印 ---
+    # --- print ---
     print(f"\n{SEP}")
-    print(f"结果（Stereo-seq × UCS）")
+    print(f"results (Stereo-seq x UCS)")
     print(f"{SEP}")
-    print(f"  {'GT 细胞':16} {metrics['gt_cells']:,}")
-    print(f"  {'pred 细胞':16} {metrics['pred_cells']:,}")
+    print(f"  {'GT cells':16} {metrics['gt_cells']:,}")
+    print(f"  {'pred cells':16} {metrics['pred_cells']:,}")
     print(f"  {'cell_ratio':16} {metrics['cell_ratio']:.4f}")
     print(f"  {'matched':16} {metrics['matched']:,}")
     print(f"  {'precision':16} {metrics['precision']:.4f}")
     print(f"  {'recall':16} {metrics['recall']:.4f}")
     print(f"  {'F1':16} {metrics['f1']:.4f}")
-    print(f"  {'loc_median µm':16} {metrics['loc_median_um']:.2f}")
-    print(f"  {'loc_p95 µm':16} {metrics['loc_p95_um']:.2f}")
+    print(f"  {'loc_median um':16} {metrics['loc_median_um']:.2f}")
+    print(f"  {'loc_p95 um':16} {metrics['loc_p95_um']:.2f}")
     print(f"  {'count_pearson':16} {metrics['count_pearson']:.4f}")
     print(f"  {'count_spearman':16} {metrics['count_spearman']:.4f}")
     print(f"  {'count_mae':16} {metrics['count_mae']:.1f}")
     print(f"  {'count_rmse':16} {metrics['count_rmse']:.1f}")
     print(f"  {'vec_cosine':16} {metrics['vec_cosine']:.4f}")
-    print(f"\n  ⚠ assign_accuracy 和 vec_js/pearson 因同源/计算量跳过")
+    print(f"\n  ⚠ assign_accuracy and vec_js/pearson skipped (same source / too expensive)")
 
-    # --- 写出 ---
+    # --- write out ---
     pd.DataFrame([metrics]).to_csv(cfg.out, index=False)
-    print(f"\n  已写 → {cfg.out}")
+    print(f"\n  saved -> {cfg.out}")
     print(SEP)
 
 

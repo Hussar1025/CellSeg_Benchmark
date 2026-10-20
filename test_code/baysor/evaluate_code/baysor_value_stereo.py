@@ -41,12 +41,12 @@ from scipy.stats import pearsonr, spearmanr
 
 BIN_UM = 0.5
 MATCH_RADIUS_UM = 15.0
-OUT_DIR = Path("/data/qiuyijia/eval/baysor")
-BAYSOR_ROOT = Path("/data/qiuyijia/baysor/stereo_outputs")
-STEREO_ROOT = Path("/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all")
-MOUSE_ROOT = Path("/data/qiuyijia/dataset/stereo_mouse_embryo")
+OUT_DIR = Path("yourpath/eval/baysor")
+BAYSOR_ROOT = Path("yourpath/baysor/stereo_outputs")
+STEREO_ROOT = Path("yourpath/dataset/stereoseq/stereo-seq_data_all")
+MOUSE_ROOT = Path("yourpath/dataset/stereo_mouse_embryo")
 MOUSE_PREPARED = Path(
-    "/data/qiuyijia/baysor/prepared_stereoseq/mouse_embryo_center_3000/"
+    "yourpath/baysor/prepared_stereoseq/mouse_embryo_center_3000/"
     "D05103C4D4_center_3000.metadata.json"
 )
 SEP = "=" * 76

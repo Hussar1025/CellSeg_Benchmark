@@ -9,7 +9,7 @@ xenium_5 (mouse brain).  Same 19 metrics as every other row in the workbook.
     python eval_comseg_xenium.py --dataset liver
     python eval_comseg_xenium.py --dataset mouse_brain
     python eval_comseg_xenium.py --dataset liver --method UCS \
-        --pred /data/qiuyijia/ucs_xenium_liver_roi10000_prior/ucs_segmentation.tif
+        --pred yourpath/ucs_xenium_liver_roi10000_prior/ucs_segmentation.tif
 
 The ROI is the one every other method used on that section, written down here
 and re-derived from the raster on the way in.
@@ -34,12 +34,12 @@ import pandas as pd
 
 DATASETS = {
     "liver": dict(
-        root="/data/qiuyijia/dataset/xenium_liver",
-        run="/data/qiuyijia/comseg_xenium_liver_roi10000",
+        root="yourpath/dataset/xenium_liver",
+        run="yourpath/comseg_xenium_liver_roi10000",
         label="xenium_4", roi=(13704, 21974, 10000)),
     "mouse_brain": dict(
-        root="/data/qiuyijia/dataset/xenium_mouse_brain",
-        run="/data/qiuyijia/comseg_xenium_mouse_brain_roi10000",
+        root="yourpath/dataset/xenium_mouse_brain",
+        run="yourpath/comseg_xenium_mouse_brain_roi10000",
         label="xenium_5", roi=(6956, 12077, 10000)),
 }
 # xenium_2 / xenium_3 were run in a different shape: no raster, a noprior
@@ -51,15 +51,15 @@ DATASETS = {
 # decided by comparing that box against the platform centroids.
 CSV_DATASETS = {
     "breast": dict(
-        root="/data/qiuyijia/dataset/xenium_breast",
-        run="/data/qiuyijia/comseg_xenium/xenium_breast",
+        root="yourpath/dataset/xenium_breast",
+        run="yourpath/comseg_xenium/xenium_breast",
         label="xenium_2", prior=False),
     "lymph": dict(
-        root="/data/qiuyijia/dataset/xenium_lymph",
-        run="/data/qiuyijia/comseg_xenium/xenium_lymph",
+        root="yourpath/dataset/xenium_lymph",
+        run="yourpath/comseg_xenium/xenium_lymph",
         label="xenium_3", prior=False),
 }
-OUT = "/data/qiuyijia/eval_results_qv20"
+OUT = "yourpath/eval_results_qv20"
 PIXEL_SIZE = 0.2125
 METHOD = "ComSeg"
 # ---- metric core (identical in every evaluator; kept inline so each file runs

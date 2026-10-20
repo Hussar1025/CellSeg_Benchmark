@@ -19,11 +19,11 @@ checks n_transcripts * n_genes against an int32 safety margin.  If unsafe, it
 suggests a smaller patch size; it does NOT silently switch to HVGs.
 
 Input:
-  /data/qiuyijia/dataset/cosmx_lymph_node/_inspect_cache/tx_fov_48_261.parquet
+  yourpath/dataset/cosmx_lymph_node/_inspect_cache/tx_fov_48_261.parquet
 
 Output:
-  /data/qiuyijia/boms_cosmx_2_fullgenes/fov48/
-  /data/qiuyijia/boms_cosmx_2_fullgenes/fov261/
+  yourpath/boms_cosmx_2_fullgenes/fov48/
+  yourpath/boms_cosmx_2_fullgenes/fov261/
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import coo_matrix
 
-BOMS_SRC = "/data/qiuyijia/boms/boms_src"
+BOMS_SRC = "yourpath/boms/boms_src"
 sys.path.insert(0, BOMS_SRC)
 
 try:
@@ -50,14 +50,14 @@ except Exception as e:
     )
 
 TX_DEFAULT = (
-    "/data/qiuyijia/dataset/cosmx_lymph_node/_inspect_cache/"
+    "yourpath/dataset/cosmx_lymph_node/_inspect_cache/"
     "tx_fov_48_261.parquet"
 )
 META_DEFAULT = (
-    "/data/qiuyijia/dataset/cosmx_lymph_node/flat_files/"
+    "yourpath/dataset/cosmx_lymph_node/flat_files/"
     "S0_metadata_file.csv.gz"
 )
-OUT_DEFAULT = "/data/qiuyijia/boms_cosmx_2_fullgenes"
+OUT_DEFAULT = "yourpath/boms_cosmx_2_fullgenes"
 
 PX_UM = 0.12
 FOV_PX = 4256

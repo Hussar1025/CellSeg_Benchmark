@@ -1,50 +1,55 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-指标排序一致性矩阵 (metric rank-consistency) —— avg 半矩阵版（共同指标 / 字典序）。
-每个数据集内：把各分割方法在某指标上的值转成秩，指标两两算 Spearman 秩相关，
-得到「指标 × 指标」对称矩阵，跨数据集平均，画成半矩阵热力图。
+Metric rank-consistency matrix -- avg half-matrix version (common metrics / alphabetical order).
+Within each dataset: convert each method's value on a metric to a rank, compute pairwise
+Spearman rank correlation between metrics, producing a symmetric "metric x metric" matrix,
+averaged across datasets and drawn as a half-matrix heatmap.
 
-本版本修改：
-  0. 【与正文统一的数据清洗】组学表按主分析同一口径清洗后再算：
-       · 列错位修正：uses_platform_prior 为数值（非 True/False）的 20 行，
-         assign_accuracy 实际存在 median_diameter_um 列，搬回
-       · 剔除 GeneSegNet d40 调参行
-       · 剔除 GT 口径不同的 ROI 子集行（备注含 ROI子集 / GT 口径不同 等，
-         或 GT 偏离该数据集众数 >10%）
-       · 同一数据集同一方法多行取均值
-     计算逻辑与正文一致：每个数据集内对方法求秩，指标两两 Spearman，跨数据集平均，
-     参评方法 < 4 个的数据集不纳入。
-  1. 两个文件各用自己的完整指标集合，不做交集
-       file1（图像表）：IMAGE_CORE 中的 mask 级指标
-       file2（组学表）：CORE 中的转录本级指标
-  2. 指标排列顺序按字典序（指标原始名称字母顺序）排列
-  3. 输出仅 PDF 格式，文件名分别为 relation_1.pdf 和 relation_2.pdf
-  4. 【适配】file1 改为读取单个 sheet「图像分割方法汇总」并按 dataset 列分组，列名统一转小写
-  5. 【适配】数据集别名归并（同一数据集的不同写法，见 ALIAS）
-  6. 【适配】xenium_liver 下 GT≈10,654 的行实为 CosMx 人脑数据，归到 cosmx_human_brain
-     （本地数据已改的话这条规则不会命中任何行）
+This version:
+  0. [Cleaning unified with the paper] the omics sheet is cleaned on the same basis as the
+     main analysis before computing:
+       . column-misalignment fix: 20 rows where uses_platform_prior is numeric (not
+         True/False); assign_accuracy actually lives in the median_diameter_um column, moved back
+       . drop GeneSegNet d40 tuning rows
+       . drop ROI-subset rows whose GT scope differs (note contains "ROI subset" /
+         "GT scope differs" etc., or GT deviates from the dataset mode by >10%)
+       . mean over multiple rows of the same dataset+method
+     The computation matches the paper: within each dataset rank the methods, pairwise
+     Spearman between metrics, average across datasets; datasets with < 4 methods are excluded.
+  1. Each file uses its own full metric set, no intersection
+       file1 (image sheet): mask-level metrics in IMAGE_CORE
+       file2 (omics sheet): transcript-level metrics in CORE
+  2. Metrics are ordered alphabetically (by original metric name)
+  3. PDF-only output, named relation_1.pdf and relation_2.pdf
+  4. [Adapt] file1 reads the single "Image Segmentation Summary" sheet, groups by the dataset
+     column, and lowercases column names
+  5. [Adapt] dataset aliases merged (different spellings of the same dataset, see ALIAS)
+  6. [Adapt] xenium_liver rows with GT~10,654 are actually CosMx human brain data, reassigned
+     to cosmx_human_brain (matches nothing if the local data is already fixed)
 
-样式：
-  · 下三角(含对角线)：Blues 色块 + 白色极细框线（WHITE_LINE_W=0.2）；对角线为最深蓝(=1)，不写数字
-  · 上三角(严格,不含对角)：白底 + 灰色细全框线 + 数字
-  · 无图标题；行名/列名加粗加大
+Style:
+  . lower triangle (incl. diagonal): Blues blocks + very thin white outlines (WHITE_LINE_W=0.2);
+    the diagonal is the deepest blue (=1) with no number
+  . upper triangle (strict, no diagonal): white background + thin gray full outline + number
+  . no figure title; row/column names bold and larger
 
-指标（15 个，误差/距离类越小越好，自动反向对齐）：
+Metrics (15; error/distance ones are lower-is-better and auto-reversed):
   precision recall f1 count_pearson count_spearman count_mae count_rmse
   vec_cosine vec_pearson vec_js_dist assign_overlap assign_accuracy
   loc_mean_um loc_median_um loc_p95_um
-  （文件中不存在的指标会自动剔除）
+  (metrics not present in the file are dropped automatically)
 
-数据集名归并：'xenium_2' 与 'xenium_2 乳腺癌' 视为同一数据集，
-             'merfish_2 肝1' 与 '新_merfish_2 肝1' 也归并（同 method 多行取均值去重）。
+Dataset name merging: 'xenium_2' and 'xenium_2 breast cancer' are the same dataset;
+             'merfish_2 liver1' and 'new_merfish_2 liver1' are merged too (multiple rows of
+             the same method are averaged to dedup).
 
-输出（桌面）：
+Output (yourpath):
   relation_1.pdf
   relation_2.pdf
 
-依赖: pandas numpy scipy matplotlib openpyxl
-运行: python plot_consistency_final.py
+Dependencies: pandas numpy scipy matplotlib openpyxl
+Run: python plot_consistency_final.py
 """
 
 import os, re
@@ -59,33 +64,33 @@ import matplotlib.font_manager as fm
 from scipy.stats import spearmanr
 import openpyxl
 
-# ---------------- 路径（Windows 桌面）----------------
-DESKTOP = r"C:\Users\阿飞\Desktop"
+# ---------------- Paths (yourpath placeholders) ----------------
+DESKTOP = "yourpath"
 FILES = {
     "file1_eval": os.path.join(DESKTOP, "benchmark_result_image.xlsx"),
     "file2_full": os.path.join(DESKTOP, "benchmark_result_omics.xlsx"),
 }
-OUTDIR = DESKTOP          # 图直接存桌面
+OUTDIR = DESKTOP          # save figures next to the data
 
-# ---------------- 配置 ----------------
+# ---------------- Configuration ----------------
 CORE = ['precision','recall','f1',
         'count_pearson','count_spearman','count_mae','count_rmse',
         'vec_cosine','vec_pearson','vec_js_dist',
         'assign_overlap','assign_accuracy',
         'loc_mean_um','loc_median_um','loc_p95_um']
-# 图像表指标（读入时列名已转小写；均为越大越好）
+# image sheet metrics (column names lowercased on read; all higher-is-better)
 IMAGE_CORE = ['dice','iou','pixel accuracy',
               'boundary f1','boundary precision','boundary recall',
               'f1','precision','recall',
               'dq','sq','pq','aji','mda(ap0.5:0.95)']
-# 越小越好 -> 取负再算秩（误差/距离类）
+# lower-is-better -> negate before ranking (error/distance metrics)
 SMALLER_BETTER = {'vec_js_dist','count_mae','count_rmse',
                   'loc_mean_um','loc_median_um','loc_p95_um'}
-MIN_N   = 4                            # 每数据集最少方法数，低于则跳过（秩相关无意义）
+MIN_N   = 4                            # min methods per dataset; below this skip (rank correlation is meaningless)
 CMAP    = "Blues"
-LINE_W  = 0.5                          # 上三角灰色框线线宽
-WHITE_LINE_W = 0.2                     # 下三角色块之间的白线线宽（更细）
-GRID_GRAY = "#B8B8B8"                  # 上三角灰色细框线
+LINE_W  = 0.5                          # upper-triangle gray outline width
+WHITE_LINE_W = 0.2                     # white line width between lower-triangle blocks (thinner)
+GRID_GRAY = "#B8B8B8"                  # upper-triangle thin gray outline
 
 PRETTY = {
     'precision':'Precision','recall':'Recall','f1':'F1',
@@ -99,7 +104,7 @@ PRETTY = {
     'dq':'DQ','sq':'SQ','pq':'PQ','aji':'AJI','mda(ap0.5:0.95)':'mDA',
 }
 
-# ---------------- 字体（中文）----------------
+# ---------------- Font ----------------
 def pick_font():
     cands=["Microsoft YaHei","Noto Sans CJK SC","SimHei","DejaVu Sans"]
     avail={f.name for f in fm.fontManager.ttflist}
@@ -108,35 +113,35 @@ def pick_font():
     return "DejaVu Sans"
 FONT=pick_font()
 plt.rcParams.update({"font.family":FONT,"axes.unicode_minus":False})
-print("字体:",FONT)
+print("Font:",FONT)
 
-# ---------------- 数据集名归并 ----------------
-# 【适配】同一数据集、不同名字的别名表（键为小写原名）
+# ---------------- Dataset name merging ----------------
+# Adapt: alias table for different spellings of the same dataset (keys are lowercase originals)
 ALIAS = {
     'xenium_pancreas_cancer': 'xenium_1',
     'merfish_uterine':        'merfish_uterian',
-    'cosmx_lymph_node':       'cosmx_2',      # Cellpose-3 的写法，另外几个图像方法写作 cosmx_2_lymph_node
-    'merfish_mouse_brain':    'merfish_1',    # Cellpose-3 的写法，GT 与 merfish_1 相同
+    'cosmx_lymph_node':       'cosmx_2',      # Cellpose-3 spelling; the other image methods write cosmx_2_lymph_node
+    'merfish_mouse_brain':    'merfish_1',    # Cellpose-3 spelling; GT matches merfish_1
     'merfish_liver1':         'merfish_2',
     'merfish_liver2':         'merfish_3',
 }
-# 【适配】xenium_liver 下 GT≈10,654 的行实为 CosMx 人脑数据
+# Adapt: xenium_liver rows with GT~10,654 are actually CosMx human brain data
 LIVER_FIX_GT, LIVER_FIX_TOL, LIVER_FIX_TO = 10654, 50, 'cosmx_human_brain'
 
 def norm_dataset_key(name):
     """
-    '新_xenium_4 肝'  -> 'xenium_4'
-    'xenium_2 乳腺癌' -> 'xenium_2'
-    'merfish_2 肝1'   -> 'merfish_2'
-    'cosmx_1 胰腺'    -> 'cosmx_1'
+    'new_xenium_4 liver'     -> 'xenium_4'
+    'xenium_2 breast cancer' -> 'xenium_2'
+    'merfish_2 liver1'       -> 'merfish_2'
+    'cosmx_1 pancreas'       -> 'cosmx_1'
     """
     s=str(name).strip()
-    s=re.sub(r'^(新|原)[_\-]?','',s)                 # 去中文前缀
-    s=ALIAS.get(s.lower(), s)                        # 【适配】别名归并
-    m=re.search(r'([A-Za-z]+)[_\-]?(\d+)', s)        # 抓 平台+编号
+    s=re.sub(r'^(new|original)[_\-]?','',s)                 # strip the new/original prefix
+    s=ALIAS.get(s.lower(), s)                        # Adapt: alias merge
+    m=re.search(r'([A-Za-z]+)[_\-]?(\d+)', s)        # grab platform+number
     return f"{m.group(1).lower()}_{m.group(2)}" if m else s.lower()
 
-# ---------------- 读取 ----------------
+# ---------------- Reading ----------------
 def sheet_to_df(ws):
     rows=list(ws.iter_rows(values_only=True))
     hi=None
@@ -146,7 +151,7 @@ def sheet_to_df(ws):
     if hi is None: return None
     hdr=[str(c).strip() if c is not None else "" for c in rows[hi]]
     df=pd.DataFrame(rows[hi+1:], columns=hdr)
-    df=df.loc[:,~df.columns.duplicated()]            # 去重列名（个别 sheet 有重复表头）
+    df=df.loc[:,~df.columns.duplicated()]            # dedup columns (some sheets repeat the header)
     if 'method' not in df.columns: return None
     df=df[df['method'].notna()]
     df['method']=df['method'].astype(str).str.strip()
@@ -154,7 +159,7 @@ def sheet_to_df(ws):
     return df
 
 def merge_by_key(pairs):
-    """按 norm_dataset_key 归并；同一 key 下多个 df 纵向拼接。"""
+    """Merge by norm_dataset_key; vertically concatenate the dfs under the same key."""
     buckets={}
     for raw,df in pairs:
         buckets.setdefault(norm_dataset_key(raw),[]).append(df)
@@ -163,73 +168,74 @@ def merge_by_key(pairs):
     return out
 
 def load_file1(path):
-    # 【适配】图像表只有一个 sheet「图像分割方法汇总」，数据集由 dataset 列区分；
-    #         列名为 F1 / Precision / Recall 等大写形式，统一转小写以对应 CORE
+    # Adapt: the image sheet has a single "Image Segmentation Summary" sheet; datasets are
+    #         distinguished by the dataset column; columns are capitalized (F1 / Precision /
+    #         Recall etc.), lowercased to match CORE
     wb=openpyxl.load_workbook(path, read_only=True, data_only=True)
-    df=sheet_to_df(wb['图像分割方法汇总']); wb.close()
+    df=sheet_to_df(wb['Image Segmentation Summary']); wb.close()
     df.columns=[str(c).strip().lower() for c in df.columns]
     if 'dataset' not in df.columns: return []
-    # 【适配】xenium_liver 下 GT≈10,654 的行归到 CosMx 人脑
+    # Adapt: xenium_liver rows with GT~10,654 are reassigned to the CosMx human brain
     raw=df['dataset'].astype(str).str.strip().str.lower()
-    gtv=pd.to_numeric(df['gt细胞数'], errors='coerce')
+    gtv=pd.to_numeric(df['gt cells'], errors='coerce')
     fix=(raw=='xenium_liver')&((gtv-LIVER_FIX_GT).abs()<=LIVER_FIX_TOL)
     if fix.any():
-        print(f"  [修正] xenium_liver 中 GT≈{LIVER_FIX_GT:,} 的 {int(fix.sum())} 行 -> {LIVER_FIX_TO}")
+        print(f"  [Fixed] xenium_liver rows with GT~{LIVER_FIX_GT:,}: {int(fix.sum())} -> {LIVER_FIX_TO}")
         df.loc[fix,'dataset']=LIVER_FIX_TO
     raw=[(ds, g) for ds,g in df.groupby('dataset')]
     return merge_by_key(raw)
 
-NONCOMP_PAT = r"ROI子集|GT 口径不同|ROI 6000px|细胞数口径有别"
+NONCOMP_PAT = r"ROI subset|GT scope differs|ROI 6000px|cell count scope differs"
 GT_TOL = 0.10
 
 def clean_omics(df):
-    """与主分析相同的组学表清洗（见文件头 0.）。"""
+    """Same omics-sheet cleaning as the main analysis (see header item 0)."""
     df = df.copy()
     df['dataset'] = df['dataset'].astype(str).str.strip()
     upp = df['uses_platform_prior'].astype(str).str.strip() if 'uses_platform_prior' in df.columns \
         else pd.Series('', index=df.index)
     tune = upp.str.contains('d40', na=False)
     if tune.any():
-        print(f"  [清洗] 剔除 d40 调参行 {int(tune.sum())}")
+        print(f"  [Clean] dropped {int(tune.sum())} d40 tuning rows")
     df, upp = df[~tune].copy(), upp[~tune]
     shifted = pd.to_numeric(upp, errors='coerce').notna() & ~upp.isin(['True', 'False'])
     if shifted.any() and 'median_diameter_um' in df.columns:
         df['assign_accuracy'] = to_num(df['assign_accuracy'])
         df.loc[shifted, 'assign_accuracy'] = to_num(df.loc[shifted, 'median_diameter_um'])
-        print(f"  [清洗] 列错位修正 {int(shifted.sum())} 行（assign_accuracy <- median_diameter_um）")
+        print(f"  [Clean] column-misalignment fix on {int(shifted.sum())} rows (assign_accuracy <- median_diameter_um)")
     gt = to_num(df['gt_cells'])
     mode = gt.groupby(df['dataset']).transform(lambda s: s.mode().iloc[0] if s.notna().any() else np.nan)
     bad = (gt / mode - 1).abs() > GT_TOL
     if 'note' in df.columns:
         bad |= df['note'].astype(str).str.contains(NONCOMP_PAT, regex=True)
     if bad.any():
-        print(f"  [清洗] 剔除 GT 口径不同的 ROI 子集行 {int(bad.sum())}: "
+        print(f"  [Clean] dropped {int(bad.sum())} ROI-subset rows with differing GT scope: "
               f"{df.loc[bad, ['method', 'dataset']].astype(str).agg('/'.join, axis=1).tolist()}")
     return df[~bad]
 
 def load_file2(path):
-    df = pd.read_excel(path, sheet_name='汇总')
+    df = pd.read_excel(path, sheet_name='Summary')
     df = df[df['method'].notna() & df['dataset'].notna()].copy()
-    df['method'] = df['method'].astype(str).str.strip().str.replace(r'\s*[（(].*?[)）]\s*$', '', regex=True)
+    df['method'] = df['method'].astype(str).str.strip().str.replace(r'\s*[(].*?[)]\s*$', '', regex=True)
     df = clean_omics(df)
     raw=[(ds, g) for ds,g in df.groupby('dataset')]
     return merge_by_key(raw)
 
-# ---------------- 计算 ----------------
+# ---------------- Computation ----------------
 def to_num(s): return pd.to_numeric(s, errors='coerce')
 
 def method_metric_table(df, metrics):
     cols=[m for m in metrics if m in df.columns]
     sub=df[['method']+cols].copy()
     for c in cols: sub[c]=to_num(sub[c])
-    return sub.groupby('method')[cols].mean()   # 同 method 多行取均值去重
+    return sub.groupby('method')[cols].mean()   # mean over multiple rows of the same method to dedup
 
 def corr_matrix(sub, metrics):
     present=[m for m in metrics if m in sub.columns]
     d=sub.copy()
     for m in present:
         if m in SMALLER_BETTER: d[m]=-d[m]
-    M=len(metrics)          # 使用传入的完整指标列表，缺失部分为 NaN
+    M=len(metrics)          # use the full metric list passed in; missing parts stay NaN
     mat=np.full((M,M),np.nan)
     for i in range(M):
         for j in range(M):
@@ -254,7 +260,7 @@ def average_matrix(dfs, metrics):
     return pd.DataFrame(avg,index=metrics,columns=metrics), used
 
 def present_metrics(dfs, metrics):
-    """返回在数据集中至少有一个非空值的指标列表（保持 metrics 原顺序）"""
+    """Return metrics that have at least one non-null value in the datasets (keeping metrics order)"""
     keep=[]
     for m in metrics:
         for _,df in dfs:
@@ -262,40 +268,41 @@ def present_metrics(dfs, metrics):
                 keep.append(m); break
     return keep
 
-# ---------------- 画图（半矩阵 / 细框线，仅输出 PDF）----------------
+# ---------------- Plotting (half matrix / thin outlines, PDF only) ----------------
 def draw_heatmap_half(mat, out_base, subtitle=None):
     """
-    下三角(含对角)：Blues 色块 + 白色细框线；对角为最深蓝(=1)，不写数字
-    上三角(严格)：白底 + 灰色细框线 + 数字
-    输出仅 PDF（out_base 不含扩展名）
+    Lower triangle (incl. diagonal): Blues blocks + thin white outlines; diagonal is the
+    deepest blue (=1), no number written.
+    Upper triangle (strict): white background + thin gray outlines + number.
+    PDF only (out_base has no extension).
     """
     labels=[PRETTY.get(m,m) for m in mat.index]; M=len(labels)
     data=mat.values.astype(float)
 
     fig,ax=plt.subplots(figsize=(0.72*M+2.6, 0.72*M+2.2))
 
-    # 下三角(含对角)Blues 色块
+    # lower triangle (incl. diagonal) Blues blocks
     lower=data.copy()
-    keep_lower=np.tril(np.ones((M,M),bool),k=0)    # 含对角(k=0)
+    keep_lower=np.tril(np.ones((M,M),bool),k=0)    # include diagonal (k=0)
     lower[~keep_lower]=np.nan
     im=ax.imshow(ma.masked_invalid(lower), cmap=CMAP, vmin=0, vmax=1, aspect='equal')
 
-    # 全框线：下三角+对角白色细线；上三角(严格)白底灰细线
+    # full outlines: lower triangle + diagonal get white thin lines; strict upper triangle white bg + gray thin lines
     for i in range(M):
         for j in range(M):
-            if j<=i:  # 下三角+对角：透明填充 + 白色细框线
+            if j<=i:  # lower triangle + diagonal: transparent fill + white thin outline
                 ax.add_patch(mpatches.Rectangle((j-0.5,i-0.5),1,1,
                     facecolor='none', edgecolor="white", linewidth=WHITE_LINE_W, zorder=2))
-            else:     # 上三角(严格)：白底 + 灰色细框线
+            else:     # strict upper triangle: white bg + gray thin outline
                 ax.add_patch(mpatches.Rectangle((j-0.5,i-0.5),1,1,
                     facecolor="white", edgecolor=GRID_GRAY, linewidth=LINE_W, zorder=2))
 
-    # 仅严格上三角写数字；对角线不写
+    # write numbers only in the strict upper triangle; none on the diagonal
     for i in range(M):
         for j in range(M):
             if j>i:
                 v=data[i,j]
-                txt="–" if np.isnan(v) else f"{v:.2f}"
+                txt="-" if np.isnan(v) else f"{v:.2f}"
                 ax.text(j,i,txt,ha='center',va='center',fontsize=13,
                         color="#0B3D91",fontweight='normal',zorder=3)
 
@@ -313,49 +320,49 @@ def draw_heatmap_half(mat, out_base, subtitle=None):
         ax.text(0.5,-0.14,subtitle,transform=ax.transAxes,ha='center',
                 va='top',fontsize=8.5,color="#666",style='italic')
     fig.tight_layout()
-    # 仅保存 PDF
+    # save PDF only
     fig.savefig(f"{out_base}.pdf", dpi=220, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print("  ->", out_base + ".pdf")
 
-# ---------------- 主流程 ----------------
+# ---------------- Main flow ----------------
 def run(tag, dfs, metrics, out_name=None):
     """
-    tag      : 打印标识
-    dfs      : 归并后的数据集列表 (name, df)
-    metrics  : 固定使用的指标列表（已按字典序排序）
-    out_name : 输出 PDF 基本名（不含扩展名），若为 None 则使用默认 consistency_{tag}_avg
+    tag      : print label
+    dfs      : merged dataset list (name, df)
+    metrics  : fixed metric list (already sorted alphabetically)
+    out_name : output PDF base name (no extension); None -> default consistency_{tag}_avg
     """
     print(f"\n########## {tag} ##########")
-    print("  归并后数据集:", [k for k,_ in dfs])
-    print("  最终纳入指标数:", len(metrics))
-    print("  指标列表(字典序):", metrics)
+    print("  Merged datasets:", [k for k,_ in dfs])
+    print("  Final metric count:", len(metrics))
+    print("  Metric list (alphabetical):", metrics)
     avg,used=average_matrix(dfs, metrics)
     if avg is None:
-        print("  无足够数据（方法数均 < %d）"%MIN_N); return
-    print("  纳入平均的数据集(方法数):", used)
-    print(f"  共 {len(used)} 个数据集纳入平均")
-    print("  平均相关矩阵：\n" + avg.round(2).to_string())
+        print("  Not enough data (method count < %d everywhere)"%MIN_N); return
+    print("  Datasets averaged (method count):", used)
+    print(f"  {len(used)} datasets included in the average")
+    print("  Mean correlation matrix:\n" + avg.round(2).to_string())
     sub=f"averaged over {len(used)} datasets (n>={MIN_N} methods each), Spearman on ranks"
     if out_name is None:
         out_name = f"consistency_{tag}_avg"
     draw_heatmap_half(avg, os.path.join(OUTDIR, out_name), subtitle=sub)
 
 if __name__=="__main__":
-    # 1. 加载两个文件
-    print("正在加载 file1_eval ...")
+    # 1. load both files
+    print("Loading file1_eval ...")
     dfs1 = load_file1(FILES["file1_eval"])
-    print("正在加载 file2_full ...")
+    print("Loading file2_full ...")
     dfs2 = load_file2(FILES["file2_full"])
 
-    # 2. 各自取完整指标集合，按字典序排序（不做交集）
+    # 2. take each file's full metric set, sorted alphabetically (no intersection)
     metrics1 = sorted(present_metrics(dfs1, IMAGE_CORE))
     metrics2 = sorted(present_metrics(dfs2, CORE))
-    print("\nfile1_eval 指标（字典序）:", metrics1)
-    print("file2_full 指标（字典序）:", metrics2)
+    print("\nfile1_eval metrics (alphabetical):", metrics1)
+    print("file2_full metrics (alphabetical):", metrics2)
 
-    # 3. 分别运行，输出 relation_1.pdf 和 relation_2.pdf
+    # 3. run each, producing relation_1.pdf and relation_2.pdf
     run("file1_eval", dfs1, metrics1, out_name="relation_1")
     run("file2_full", dfs2, metrics2, out_name="relation_2")
 
-    print("\n完成。两张 PDF 已存到桌面。")
+    print("\nDone. Two PDFs saved to yourpath.")

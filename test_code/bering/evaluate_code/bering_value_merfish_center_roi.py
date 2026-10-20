@@ -20,7 +20,7 @@ Examples::
     python bering_value_merfish_center_roi.py --dataset mouse_brain
 
 The default output is one CSV with one row per evaluated dataset:
-``/data/qiuyijia/eval/bering/bering_merfish_evaluation.csv``.
+``yourpath/eval/bering/bering_merfish_evaluation.csv``.
 """
 
 from __future__ import annotations
@@ -40,9 +40,9 @@ from scipy.spatial.distance import jensenshannon
 from scipy.stats import pearsonr, spearmanr
 
 
-DATA_ROOT = Path("/data/qiuyijia/dataset")
-RESULT_ROOT = Path("/data/qiuyijia/bering/merfish_new_output")
-DEFAULT_OUT = Path("/data/qiuyijia/eval/bering/bering_merfish_evaluation.csv")
+DATA_ROOT = Path("yourpath/dataset")
+RESULT_ROOT = Path("yourpath/bering/merfish_new_output")
+DEFAULT_OUT = Path("yourpath/eval/bering/bering_merfish_evaluation.csv")
 MATCH_RADIUS_UM = 10.0
 GT_ASSIGN_RADIUS_UM = 15.0
 SEP = "=" * 78

@@ -11,12 +11,12 @@ from scipy.spatial.distance import jensenshannon
 
 warnings.filterwarnings("ignore")
 
-DATA="/data/qiuyijia/dataset/xenium9"
-BASE="/data/qiuyijia/cellist_xenium_xenium_9_roi10000"
-D=BASE+"/cellist/alpha_0.8_sigma_1.0_beta_10_gene_HVG_dist_18_twostep_False_cyto_False_noise_0.0_neigh_2.5"
-COORD=D+"/xenium_9_Cellist_segmentation_cell_coord.txt"
-H5=D+"/xenium_9_Cellist_segmentation_cell_count.h5"
-OUT="/data/qiuyijia/eval_results_qv20/xenium_9/cellist_xenium_9_metrics.csv"
+DATA="yourpath"
+BASE="yourpath"
+D="yourpath"
+COORD=D+"/yourpath"
+H5=D+"/yourpath"
+OUT="yourpath"
 
 PS=0.2125
 GEM_BIN=2
@@ -36,11 +36,11 @@ def rnd(x,n=4):
 
 print("Loading GT...",flush=True)
 gt=pd.read_parquet(
-    "/data/qiuyijia/dataset/xenium9/benchmark_roi_10000/cells.parquet",
+    "yourpath",
     columns=["cell_id","x_centroid","y_centroid"]
 )
-# xenium9 benchmark_roi_10000/cells.parquet is already ROI-local in um.
-# Convert the complete locked GT to the same global-um frame used by Cellist predictions.
+# benchmark cells.parquet is already ROI-local in um;
+# shift to the same global-um frame used by Cellist predictions
 gt = gt.reset_index(drop=True)
 gt["x_centroid"] = gt["x_centroid"].astype(float) + X0
 gt["y_centroid"] = gt["y_centroid"].astype(float) + Y0
@@ -50,11 +50,11 @@ if len(gt)!=17689:
     raise RuntimeError(f"GT mismatch: {len(gt)} != 17689")
 
 print("Loading transcripts...",flush=True)
-TX_CACHE="/data/qiuyijia/dataset/xenium9/_roi_cache/tx_roi_5147_16374_10000_qv20.parquet"
+TX_CACHE="yourpath"
 tx=pd.read_parquet(TX_CACHE)
 
-# x9 ROI cache is already qv20-filtered and ROI-filtered.
-# Harmonise its schema with the existing Cellist evaluator convention.
+# ROI cache is already qv20-filtered and ROI-filtered;
+# harmonise its schema with the Cellist evaluator convention
 tx=tx.rename(columns={
     "gene": "feature_name",
     "platform_cell": "cell_id",
@@ -79,14 +79,14 @@ print("Pred =",len(pred),flush=True)
 gxy=gt[["x_centroid","y_centroid"]].to_numpy(float)
 pxy=pred[["x_um","y_um"]].to_numpy(float)
 
-# same x9 convention: GT NN p95 * 1.25
+# match radius: GT NN p95 * 1.25
 tree_g=cKDTree(gxy)
 nn,_=tree_g.query(gxy,k=2)
 R=max(2.0,float(np.quantile(nn[:,1],0.95)*1.25))
 AR=R*1.5
 print(f"match radius = {R:.4f} um",flush=True)
 
-# same Cellist convention: nearest-GT, one best prediction per GT
+# nearest-GT matching, one best prediction per GT
 dd,gi=tree_g.query(pxy,k=1,distance_upper_bound=R)
 best={}
 for pi in range(len(pred)):
@@ -105,21 +105,21 @@ f1=2*prec*rec/(prec+rec)
 
 print(f"matched={nmatch} precision={prec:.4f} recall={rec:.4f} F1={f1:.4f}",flush=True)
 
-# transcript -> nearest predicted centroid, same x2 Cellist evaluator convention
+# transcript -> nearest predicted centroid
 txy=tx[["x_location","y_location"]].to_numpy(float)
 td,tpi=cKDTree(pxy).query(txy,k=1,distance_upper_bound=AR)
 ok=np.isfinite(td)&(td<AR)
 tx["pred_row"]=np.where(ok,tpi,-1)
 
-# canonical GT transcript assignment: same x9 benchmark truth used by UCS
-PRIOR="/data/qiuyijia/SpaSegBench/result/ucs/xenium_9/platform_cell_labels.tif"
-PRIOR_IDS="/data/qiuyijia/SpaSegBench/result/ucs/xenium_9/platform_cell_ids.json"
+# canonical GT transcript assignment: same benchmark truth used by UCS
+PRIOR="yourpath"
+PRIOR_IDS="yourpath"
 
 prior=np.squeeze(tifffile.imread(PRIOR))
 name2lab=json.load(open(PRIOR_IDS))
 lab2name={int(v):str(k) for k,v in name2lab.items()}
 
-# tx coordinates in cache are global um; prior raster is ROI-local native pixels
+# tx coordinates are global um; prior raster is ROI-local native pixels
 cc0=np.floor((tx["x_location"].to_numpy(float)-X0)/PS).astype(np.int64)
 rr0=np.floor((tx["y_location"].to_numpy(float)-Y0)/PS).astype(np.int64)
 inside=((rr0>=0)&(rr0<prior.shape[0])&

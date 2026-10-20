@@ -5,7 +5,7 @@ Each dataset is evaluated on a reproducible centre ROI in native mosaic pixel
 coordinates.  The prediction uses Cellbound1 (or polyT) as the cytoplasm /
 membrane channel and DAPI as the nucleus channel.  Vizgen cell-boundary HDF5
 polygons are rasterized into the same ROI and evaluated with the metric
-implementation in /data/qiuyijia/eval/test.py.
+implementation in yourpath/eval/test.py.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ import torch
 from skimage.draw import polygon as draw_polygon
 
 
-ROOT = Path("/data/qiuyijia")
+ROOT = Path("yourpath")
 DATA_ROOT = ROOT / "dataset"
 DEFAULT_OUTPUT_ROOT = ROOT / "cellpose3" / "merfish_outputs"
 METRICS_PATH = ROOT / "eval" / "test.py"
@@ -557,7 +557,7 @@ def run_dataset(args: argparse.Namespace) -> dict:
             label_map.items(), columns=["gt_label", "vizgen_cell_id"]
         ).to_csv(output_dir / "gt_label_to_cell_id.csv", index=False)
 
-        print("  evaluating with /data/qiuyijia/eval/test.py ...")
+        print("  evaluating with yourpath/eval/test.py ...")
         result = evaluate_masks(gt, pred, args.dataset)
         result.update(
             {

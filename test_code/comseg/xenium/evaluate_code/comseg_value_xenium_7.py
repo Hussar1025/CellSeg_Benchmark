@@ -30,7 +30,7 @@ Evaluation convention
 Expected finished ComSeg run
 ----------------------------
 root:
-  /data/qiuyijia/comseg_xenium_mouse_brain_roi10000
+  yourpath/comseg_xenium_mouse_brain_roi10000
 
 known run summary:
   merged cells = 12,045
@@ -46,7 +46,7 @@ python3 comseg_value_xenium_5.py --match-radius 20
 
 Outputs
 -------
-/data/qiuyijia/eval_results_qv20/mouse_brain/
+yourpath/eval_results_qv20/mouse_brain/
     comseg_xenium_5_metrics.csv
     comseg_xenium_5_pairs.csv
     comseg_xenium_5_pred_cells.csv
@@ -68,9 +68,9 @@ import numpy as np
 import pandas as pd
 
 
-ROOT = "/data/qiuyijia/comseg_xenium7_roi10000"
-GT_ROOT = "/data/qiuyijia/dataset/xenium7/outs"
-OUT = "/data/qiuyijia/eval_results_qv20/xenium_7"
+ROOT = "yourpath/comseg_xenium7_roi10000"
+GT_ROOT = "yourpath/dataset/xenium7/outs"
+OUT = "yourpath/eval_results_qv20/xenium_7"
 
 METHOD = "ComSeg"
 DATASET = "xenium_7"

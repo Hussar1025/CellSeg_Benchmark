@@ -26,9 +26,9 @@ cell_index_pred, comseg) so that whichever name the runner's post stage looks
 for, it finds it.  After this, run the runner's own `--stage post`; the merge,
 core-region de-duplication and rasterisation logic is untouched.
 
-    python comseg_salvage.py --run-dir /data/qiuyijia/comseg_merfish_lung
-    python comseg_salvage.py --run-dir /data/qiuyijia/comseg_cosmx_lymph_node/fov48
-    python comseg_salvage.py --run-dir /data/qiuyijia/comseg_cosmx_lymph_node/fov261
+    python comseg_salvage.py --run-dir yourpath/comseg_merfish_lung
+    python comseg_salvage.py --run-dir yourpath/comseg_cosmx_lymph_node/fov48
+    python comseg_salvage.py --run-dir yourpath/comseg_cosmx_lymph_node/fov261
 
 then
 
@@ -206,7 +206,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True,
                     help="the directory holding comseg_out/, e.g. "
-                         "/data/qiuyijia/comseg_merfish_lung")
+                         "yourpath/comseg_merfish_lung")
     ap.add_argument("--tiles", default=None,
                     help="comma separated tile names; default is all")
     ap.add_argument("--dry-run", action="store_true",

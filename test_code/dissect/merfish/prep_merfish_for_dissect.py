@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""merfish -> DISSECT(xenium 伪装) 输入转换。
+"""merfish -> DISSECT (xenium disguise) input conversion.
 
-STReader 只认 ['stereoseq','xenium','nanostring','hd']，xenium 分支固定
-x_location/0.2125 -> 图像像素。所以：
-  1. DAPI mosaic 裁中心 ROI，重采样到 0.2125 um/px（对齐 detector 训练尺度）
-  2. 转录本 global_x/y(um) -> mosaic px -> 相对 ROI 的 um 偏移，写 xenium schema parquet
-  3. DISSECT 内部 /0.2125 正好等于重采样图的像素坐标，minarea/maxarea 沿用 xenium 默认
-用法: python prep_merfish_for_dissect.py --root /data/qiuyijia/dataset/merfish_prostate1 \
-        --out /data/qiuyijia/dissect_inputs/prostate1
+STReader only accepts ['stereoseq','xenium','nanostring','hd']; the xenium branch fixes
+x_location/0.2125 -> image pixels. So:
+  1. crop the central ROI from the DAPI mosaic and resample to 0.2125 um/px (matching the detector training scale)
+  2. transcript global_x/y (um) -> mosaic px -> um offset relative to the ROI, write xenium-schema parquet
+  3. DISSECT's internal /0.2125 exactly equals the resampled image pixel coordinates, minarea/maxarea follow xenium defaults
+Usage: python prep_merfish_for_dissect.py --root yourpath/dataset/merfish_prostate1 \
+        --out yourpath/dissect_inputs/prostate1
 """
 import argparse, glob, json
 from pathlib import Path
@@ -52,15 +52,15 @@ def main():
     txf  = find_one(root, ["detected_transcripts.csv*"])
     mdf  = find_one(root, ["cell_metadata.csv*"])
     for n, v in (("dapi", dapi), ("transform", tfm), ("transcripts", txf), ("cell_metadata", mdf)):
-        if v is None: raise SystemExit(f"缺 {n}")
+        if v is None: raise SystemExit(f"Missing {n}")
 
     M = np.loadtxt(tfm)
     with tifffile.TiffFile(dapi) as t: H, W = t.series[0].shape[-2:]
     r = a.roi_size; y0 = (H - r) // 2; x0 = (W - r) // 2
     px_um = 1.0 / float(np.hypot(M[0, 0], M[0, 1]))
     out_px = int(round(r * px_um / TARGET_UM))
-    print(f"图像 {H}x{W}  px_um={px_um:.5f}  ROI px y[{y0},{y0+r}) x[{x0},{x0+r})")
-    print(f"重采样 {r} -> {out_px} px @ {TARGET_UM} um/px")
+    print(f"image {H}x{W}  px_um={px_um:.5f}  ROI px y[{y0},{y0+r}) x[{x0},{x0+r})")
+    print(f"resample {r} -> {out_px} px @ {TARGET_UM} um/px")
 
     img = read_crop(dapi, y0, x0, r)
     sm = np.clip(resize_to(img, out_px), 0, None)
@@ -87,10 +87,10 @@ def main():
     df["cell_id"] = "UNASSIGNED"; df["overlaps_nucleus"] = 0
     df["transcript_id"] = np.arange(len(df), dtype=np.int64)
     df.to_parquet(out / "transcripts.parquet", index=False)
-    print(f"转录本 ROI内 {n0:,} -> 去Blank {len(df):,}  基因 {df.feature_name.nunique()}")
+    print(f"transcripts in ROI {n0:,} -> after blank removal {len(df):,}  genes {df.feature_name.nunique()}")
     print(f"  x_location [{df.x_location.min():.1f},{df.x_location.max():.1f}] um"
           f"  -> px [{df.x_location.min()/TARGET_UM:.0f},{df.x_location.max()/TARGET_UM:.0f}]"
-          f"  (图像 0..{out_px})")
+          f"  (image 0..{out_px})")
 
     Mi = np.linalg.inv(M)
     c = np.array([[x0, y0, 1], [x0+r, y0, 1], [x0, y0+r, 1], [x0+r, y0+r, 1]], float) @ Mi.T
@@ -98,7 +98,7 @@ def main():
     d = pd.read_csv(mdf)
     gt = int(((d.center_x >= X0) & (d.center_x < X1) &
               (d.center_y >= Y0) & (d.center_y < Y1)).sum())
-    print(f"ROI um x[{X0:.1f},{X1:.1f}] y[{Y0:.1f},{Y1:.1f}]   ROI内 GT = {gt}")
+    print(f"ROI um x[{X0:.1f},{X1:.1f}] y[{Y0:.1f},{Y1:.1f}]   GT in ROI = {gt}")
     json.dump(dict(root=str(root), dapi=dapi, roi_px=[int(y0), int(x0), r],
                    roi_um=[X0, X1, Y0, Y1], px_um=px_um, target_um=TARGET_UM,
                    resampled_px=out_px, gt_cells=gt, n_transcripts=len(df)),

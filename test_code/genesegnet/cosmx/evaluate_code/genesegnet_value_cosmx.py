@@ -1,21 +1,21 @@
 """
-eval_genesegnet_cosmx.py — GeneSegNet vs CosMx GT
+eval_genesegnet_cosmx.py - GeneSegNet vs CosMx GT
 ==================================================
-参考代码: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
+Reference code: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
 
-与参考代码的差异（仅此三处）:
-  1. GT 来源: Pancreas_metadata_file.csv（替代 cells.parquet）
-  2. pixel_size_um = 0.1203（CosMx，替代 0.2125 Xenium）
-  3. labels_to_cell_table: 加入 gx_min/gy_min 坐标修正
-     canvas(row,col) → global_px(+gx_min,+gy_min) → µm(×pixel_size)
+Differences from the reference code (only these three):
+  1. GT source: Pancreas_metadata_file.csv (instead of cells.parquet)
+  2. pixel_size_um = 0.1203 (CosMx, instead of 0.2125 Xenium)
+  3. labels_to_cell_table: add gx_min/gy_min coordinate correction
+     canvas(row,col) -> global_px(+gx_min,+gy_min) -> um(x pixel_size)
 
-所有指标与参考代码完全一致。
+All metrics are identical to the reference code.
 
-运行:
+Run:
   conda activate genesegnet_env
   python eval_genesegnet_cosmx.py \
-      --label-path /data/qiuyijia/genesegnet_cosmx_full/output/label_pancreas_full_conf0.0_flow0.4.mat \
-      --output-dir /data/qiuyijia/eval_results/genesegnet
+      --label-path yourpath/genesegnet_cosmx_full/output/label_pancreas_full_conf0.0_flow0.4.mat \
+      --output-dir yourpath/eval_results/genesegnet
 """
 from __future__ import annotations
 
@@ -39,14 +39,14 @@ from sklearn.neighbors import NearestNeighbors
 EPS = 1e-12
 SCRIPT_VERSION = "2026-06-08-genesegnet-label-image-eval-input-layer-v1"
 
-# ── CosMx 数据路径 ────────────────────────────────────────────────────────────
-DATA_DIR = "/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles"
+# -- CosMx data paths --------------------------------------------------------
+DATA_DIR = "yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles"
 GT_METADATA_PATH = os.path.join(DATA_DIR, "Pancreas_metadata_file.csv")
 TX_FILE          = os.path.join(DATA_DIR, "Pancreas_tx_file.csv")
 
 
 # =============================================================================
-# Configuration（与参考代码保持一致）
+# Configuration (consistent with the reference code)
 # =============================================================================
 @dataclass
 class EvaluationConfig:
@@ -54,12 +54,12 @@ class EvaluationConfig:
     gt_transcripts_path:  Optional[str] = TX_FILE
     label_path:           Optional[str] = None
     mat_key:              str           = "CellMap"
-    pixel_size_um:        float         = 0.1203       # CosMx 实测值
+    pixel_size_um:        float         = 0.1203       # measured CosMx value
     swap_xy:              bool          = False
     label_chunk_rows:     int           = 512
     min_label:            int           = 1
     max_label:            Optional[int] = None
-    output_dir:           str           = "/data/qiuyijia/eval_results/genesegnet"
+    output_dir:           str           = "yourpath/eval_results/genesegnet"
     method_name:          str           = "GeneSegNet"
     cell_id_col:          str           = "cell_id"
     gt_cell_id_col:       str           = "cell_id"
@@ -84,19 +84,19 @@ class EvaluationConfig:
 
 
 # =============================================================================
-# GT 加载（CosMx 替代 cells.parquet）
+# GT loading (CosMx replaces cells.parquet)
 # =============================================================================
 def load_gt_cosmx(cfg: EvaluationConfig) -> pd.DataFrame:
-    """从 Pancreas_metadata_file.csv 加载 GT 细胞表，转换坐标到 µm。"""
+    """Load the GT cell table from Pancreas_metadata_file.csv and convert coordinates to um."""
     path = Path(os.path.expanduser(cfg.gt_path))
     if not path.exists():
-        raise FileNotFoundError(f"GT metadata 未找到: {path}")
+        raise FileNotFoundError(f"GT metadata not found: {path}")
     print(f"[INFO] GT metadata: {path}")
     df = pd.read_csv(path, usecols=[
         "cell_id", "CenterX_global_px", "CenterY_global_px",
         "nCount_RNA", "Area", "fov"
     ])
-    # 坐标转换: global_px → µm
+    # coordinate conversion: global_px -> um
     df["x"]          = df["CenterX_global_px"] * cfg.pixel_size_um
     df["y"]          = df["CenterY_global_px"] * cfg.pixel_size_um
     df["total_counts"] = df["nCount_RNA"]
@@ -109,7 +109,7 @@ def load_gt_cosmx(cfg: EvaluationConfig) -> pd.DataFrame:
 
 
 # =============================================================================
-# GeneSegNet label → cell table（含 gx_min/gy_min 坐标修正）
+# GeneSegNet label -> cell table (with gx_min/gy_min coordinate correction)
 # =============================================================================
 def labels_to_cell_table(
     label_path: Path,
@@ -122,45 +122,45 @@ def labels_to_cell_table(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
-    将 GeneSegNet label 图像转换为细胞质心表。
-    与参考代码相比，增加了从 MAT 文件读取 gx_min/gy_min 的逻辑。
+    Convert a GeneSegNet label image to a cell centroid table.
+    Unlike the reference code, this also reads gx_min/gy_min from the MAT file.
 
-    坐标转换链：
-      canvas(row, col) → global_px(col+gx_min, row+gy_min) → µm(×pixel_size_um)
+    Coordinate chain:
+      canvas(row, col) -> global_px(col+gx_min, row+gy_min) -> um(x pixel_size_um)
     """
     suffix = label_path.suffix.lower()
 
-    # ── 读取标签数组和坐标偏移 ──────────────────────────────────────────────
+    # -- read label array and coordinate offsets --
     gx_min = gy_min = 0
     if suffix == ".mat":
         mat  = loadmat(str(label_path))
         if mat_key not in mat:
             keys = [k for k in mat.keys() if not k.startswith("__")]
-            raise KeyError(f"{label_path}: key '{mat_key}' 未找到，可用: {keys}")
+            raise KeyError(f"{label_path}: key '{mat_key}' not found, available: {keys}")
         arr    = np.asarray(mat[mat_key])
         gx_min = int(np.squeeze(mat.get("gx_min", [[0]])))
         gy_min = int(np.squeeze(mat.get("gy_min", [[0]])))
         if verbose:
-            print(f"[INFO] 从 MAT 读取: gx_min={gx_min}  gy_min={gy_min}")
+            print(f"[INFO] read from MAT: gx_min={gx_min}  gy_min={gy_min}")
     elif suffix in {".tif", ".tiff"}:
         import tifffile
         try:
             arr = tifffile.memmap(label_path)
         except Exception:
             arr = tifffile.imread(label_path)
-        warnings.warn("使用 TIF 文件：gx_min/gy_min=0，坐标将有偏移。"
-                      "建议使用对应的 MAT 文件以获得正确的全局坐标。")
+        warnings.warn("Using a TIF file: gx_min/gy_min=0, coordinates will be offset. "
+                      "Use the matching MAT file for correct global coordinates.")
     elif suffix == ".npy":
         arr = np.load(label_path, mmap_mode="r", allow_pickle=False)
     else:
-        raise ValueError(f"不支持的文件格式: {suffix}")
+        raise ValueError(f"unsupported file format: {suffix}")
 
     if arr.ndim != 2:
-        raise ValueError(f"期望 2D label 图像，实际 shape={arr.shape}")
+        raise ValueError(f"expected a 2D label image, got shape={arr.shape}")
 
     n_rows, n_cols = int(arr.shape[0]), int(arr.shape[1])
     if max_label is None:
-        if verbose: print("[INFO] 扫描 label 图像中的最大标签...")
+        if verbose: print("[INFO] scanning label image for max label...")
         max_label = int(np.nanmax(arr))
     if max_label < min_label:
         raise ValueError(f"max_label={max_label} < min_label={min_label}")
@@ -168,7 +168,7 @@ def labels_to_cell_table(
     if verbose:
         print(f"[INFO] Label: {label_path}")
         print(f"[INFO] shape={arr.shape}  dtype={arr.dtype}  max_label={max_label:,}")
-        print(f"[INFO] 分块计算质心（{chunk_rows} 行/块）...")
+        print(f"[INFO] computing centroids in chunks ({chunk_rows} rows/chunk)...")
 
     n_bins       = max_label + 1
     counts       = np.zeros(n_bins, dtype=np.float64)
@@ -194,17 +194,17 @@ def labels_to_cell_table(
         sum_r  += np.bincount(lab_flat, weights=rows, minlength=n_bins)
         sum_c  += np.bincount(lab_flat, weights=cols, minlength=n_bins)
         if verbose and (r0 == 0 or r1 == n_rows or (r0 // chunk_rows) % 20 == 0):
-            print(f"[INFO] 已处理行 {r0:,}-{r1:,} / {n_rows:,}")
+            print(f"[INFO] processed rows {r0:,}-{r1:,} / {n_rows:,}")
 
     valid_labels = np.flatnonzero(counts >= 1)
     valid_labels = valid_labels[valid_labels >= min_label]
     if valid_labels.size == 0:
-        raise ValueError("未找到任何有标签的细胞。")
+        raise ValueError("no labeled cells found.")
 
-    centroid_r = sum_r[valid_labels] / counts[valid_labels]   # canvas 行 → y
-    centroid_c = sum_c[valid_labels] / counts[valid_labels]   # canvas 列 → x
+    centroid_r = sum_r[valid_labels] / counts[valid_labels]   # canvas row -> y
+    centroid_c = sum_c[valid_labels] / counts[valid_labels]   # canvas col -> x
 
-    # canvas → global_px → µm
+    # canvas -> global_px -> um
     if swap_xy:
         x_um = (centroid_r + gy_min) * pixel_size_um
         y_um = (centroid_c + gx_min) * pixel_size_um
@@ -220,14 +220,14 @@ def labels_to_cell_table(
         "area_um2"    : counts[valid_labels].astype(np.float64) * (pixel_size_um ** 2),
     })
     if verbose:
-        print(f"[INFO] 预测细胞数: {len(out):,}")
+        print(f"[INFO] predicted cell count: {len(out):,}")
         print(f"[INFO] x=[{out['x'].min():.3f},{out['x'].max():.3f}]µm  "
               f"y=[{out['y'].min():.3f},{out['y'].max():.3f}]µm")
     return out
 
 
 # =============================================================================
-# 以下函数与参考代码完全一致
+# The functions below are identical to the reference code
 # =============================================================================
 
 def expand_path(path):
@@ -262,7 +262,7 @@ def normalize_columns(df, cfg, table_name):
     required = [cfg.cell_id_col, cfg.x_col, cfg.y_col]
     missing  = [c for c in required if c not in out.columns]
     if missing:
-        raise ValueError(f"{table_name} 缺少必需列 {missing}. 可用列: {list(out.columns)[:80]}")
+        raise ValueError(f"{table_name} is missing required columns {missing}. Available columns: {list(out.columns)[:80]}")
     return out
 
 
@@ -296,7 +296,7 @@ def check_coordinate_scale_warning(cells, cfg, table_name):
     span_y = float(np.nanmax(xy[:,1]) - np.nanmin(xy[:,1]))
     if (cfg.match_radius is None and max(span_x, span_y) > 1e5
             and cfg.coordinate_scale_x == 1.0 and cfg.coordinate_scale_y == 1.0):
-        warnings.warn(f"{table_name}: 坐标跨度很大 ({span_x:.1f},{span_y:.1f}) 且未设置 match_radius")
+        warnings.warn(f"{table_name}: coordinate span is very large ({span_x:.1f},{span_y:.1f}) and match_radius is not set")
 
 
 def collapse_to_cell_level(df, cfg, table_name):
@@ -305,10 +305,10 @@ def collapse_to_cell_level(df, cfg, table_name):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     coord_bad = df[[cfg.x_col, cfg.y_col]].isna().any(axis=1)
     if coord_bad.any():
-        warnings.warn(f"{table_name}: 丢弃 {int(coord_bad.sum())} 行（坐标缺失）")
+        warnings.warn(f"{table_name}: dropping {int(coord_bad.sum())} rows (missing coordinates)")
         df = df.loc[~coord_bad].copy()
     if df.empty:
-        raise ValueError(f"{table_name}: 坐标清洗后无有效行")
+        raise ValueError(f"{table_name}: no valid rows after coordinate cleaning")
     df[cfg.x_col] *= cfg.coordinate_scale_x
     df[cfg.y_col] *= cfg.coordinate_scale_y
 
@@ -338,7 +338,7 @@ def collapse_to_cell_level(df, cfg, table_name):
             f"{table_name}_type_median_confidence"     : float(type_df[f"{cfg.type_col}_confidence"].median(skipna=True)),
         })
         if multitype_fraction > cfg.warn_multitype_fraction:
-            msg = f"{table_name}: {multitype_fraction:.3%} 个细胞有多个 {cfg.type_col} 值"
+            msg = f"{table_name}: {multitype_fraction:.3%} cells have multiple {cfg.type_col} values"
             if cfg.strict_unique_type_per_cell: raise ValueError(msg)
             warnings.warn(msg)
 
@@ -353,7 +353,7 @@ def collapse_to_cell_level(df, cfg, table_name):
     numeric_to_aggregate = [c for c in numeric_to_aggregate if not (c in seen or seen.add(c))]
     for col in numeric_to_aggregate:
         if col not in df.columns:
-            warnings.warn(f"{table_name}: 数值列 '{col}' 缺失")
+            warnings.warn(f"{table_name}: numeric column '{col}' is missing")
             continue
         numeric = pd.to_numeric(df[col], errors="coerce")
         tmp = pd.DataFrame({cfg.cell_id_col: df[cfg.cell_id_col].values, col: numeric.values})
@@ -373,12 +373,12 @@ def collapse_to_cell_level(df, cfg, table_name):
 
 def infer_match_radius(gt_cells, cfg):
     xy = gt_cells[[cfg.x_col, cfg.y_col]].to_numpy(dtype=float)
-    if xy.shape[0] < 2: raise ValueError("GT 细胞数 < 2，无法推断匹配半径")
+    if xy.shape[0] < 2: raise ValueError("GT cell count < 2; cannot infer match radius")
     nbrs = NearestNeighbors(n_neighbors=2, algorithm="auto").fit(xy)
     dists, _ = nbrs.kneighbors(xy)
     radius = float(np.nanquantile(dists[:, 1], cfg.radius_quantile) * cfg.radius_multiplier)
     if not np.isfinite(radius) or radius <= 0:
-        raise ValueError(f"无效匹配半径: {radius}")
+        raise ValueError(f"invalid match radius: {radius}")
     return radius
 
 
@@ -638,7 +638,7 @@ def numeric_pair_metrics(matches, cfg):
                 f"matched_pair_{label}_spearman": np.nan, f"matched_pair_{label}_mae": np.nan,
                 f"matched_pair_{label}_rmse": np.nan}
         if matches.empty or pred_col not in matches.columns or gt_col not in matches.columns:
-            warnings.warn(f"numeric pair '{pred_col_raw}:{gt_col_raw}' 无法评估（列缺失）")
+            warnings.warn(f"numeric pair '{pred_col_raw}:{gt_col_raw}' cannot be evaluated (missing columns)")
             res.update(base); continue
         x = pd.to_numeric(matches[pred_col], errors="coerce")
         y = pd.to_numeric(matches[gt_col],   errors="coerce")
@@ -678,7 +678,7 @@ def knn_neighbor_type_consistency_on_gt_graph(matches, cfg):
                 "knn_neighbor_type_mean_js_distance_gt_graph": np.nan,
                 "knn_neighbor_type_mean_js_divergence_gt_graph": np.nan,
                 "knn_neighbor_metric_valid_n": 0}
-    # GeneSegNet label 无细胞类型预测，返回 NaN（与参考代码一致）
+    # GeneSegNet labels have no cell-type predictions; return NaN (same as reference code)
     return {"knn_neighbor_type_pearson_gt_graph": np.nan,
             "knn_neighbor_type_mean_js_distance_gt_graph": np.nan,
             "knn_neighbor_type_mean_js_divergence_gt_graph": np.nan,
@@ -687,28 +687,28 @@ def knn_neighbor_type_consistency_on_gt_graph(matches, cfg):
 
 def genesegnet_transcript_metrics(cfg, matches, pred_raw=None, total_gt_transcripts=65794237):
     """
-    CosMx 版本：利用已计算的 n_transcripts 补全转录本指标。
+    CosMx version: fill in transcript metrics from the already-computed n_transcripts.
 
-    可计算项（n_transcripts 已通过转录本分配补全）：
+    Computable (n_transcripts filled in by transcript assignment):
       - pred_transcript_rows            = sum(n_transcripts)
       - pred_transcript_assignment_rate = sum(n_transcripts) / total_gt_transcripts
-      - matched_cell_transcript_count_* = pred n_transcripts vs gt total_counts（同 numeric_pair_metrics）
+      - matched_cell_transcript_count_* = pred n_transcripts vs gt total_counts (same as numeric_pair_metrics)
 
-    真正无法计算（无逐转录本 ID）：
+    Not computable (no per-transcript ID):
       - matched_cell_gene_vector_*
       - transcript_id_overlap_n
       - transcript_assignment_accuracy_via_matched_cells
     """
-    # ── Pred 转录本统计（从 n_transcripts 列推算）────────────────────────────
+    # -- Pred transcript stats (derived from the n_transcripts column) --
     pred_transcript_rows      = np.nan
     pred_transcript_assigned_n= np.nan
     pred_transcript_rate      = np.nan
     if pred_raw is not None and "n_transcripts" in pred_raw.columns:
         pred_transcript_assigned_n = int(pred_raw["n_transcripts"].sum())
-        pred_transcript_rows       = pred_transcript_assigned_n   # 已分配的转录本数
+        pred_transcript_rows       = pred_transcript_assigned_n   # number of assigned transcripts
         pred_transcript_rate       = float(pred_transcript_assigned_n / max(total_gt_transcripts, 1))
 
-    # ── GT 转录本统计（从 tx_file 采样估算分配率）────────────────────────────
+    # -- GT transcript stats (assignment rate estimated from a tx_file sample) --
     gt_rows = float(total_gt_transcripts)
     gt_assigned_n = np.nan; gt_assignment_rate = np.nan
     tx_path = expand_path(cfg.gt_transcripts_path)
@@ -718,11 +718,11 @@ def genesegnet_transcript_metrics(cfg, matches, pred_raw=None, total_gt_transcri
             gt_assigned_n      = int((sample["cell_ID"] > 0).sum())
             gt_assignment_rate = float((sample["cell_ID"] > 0).mean())
         except Exception as e:
-            warnings.warn(f"读取 GT 转录本失败: {e}")
+            warnings.warn(f"failed to read GT transcripts: {e}")
 
-    # ── matched_cell_transcript_count_*（利用 matches 中的 pred/gt 计数）──────
-    # 与 matched_pair_n_transcripts_vs_total_counts_* 数值相同，
-    # 但按参考代码的指标命名规范独立计算
+    # -- matched_cell_transcript_count_* (using pred/gt counts in matches) --
+    # Same values as matched_pair_n_transcripts_vs_total_counts_*,
+    # but computed independently per the reference metric naming
     mc_pearson = mc_spearman = mc_mae = mc_rmse = np.nan
     pred_col = "pred_n_transcripts"; gt_col = "gt_total_counts"
     if not matches.empty and pred_col in matches.columns and gt_col in matches.columns:
@@ -739,7 +739,7 @@ def genesegnet_transcript_metrics(cfg, matches, pred_raw=None, total_gt_transcri
 
     return {
         "transcript_metrics_available"               : pred_raw is not None and "n_transcripts" in (pred_raw.columns if pred_raw is not None else []),
-        "transcript_metrics_error"                   : "gene_vector 和 transcript_id 指标需逐转录本 ID，无法计算",
+        "transcript_metrics_error"                   : "gene_vector and transcript_id metrics require per-transcript IDs and cannot be computed",
         "pred_transcript_rows"                       : pred_transcript_rows,
         "gt_transcript_rows"                         : gt_rows,
         "pred_transcript_assigned_n"                 : pred_transcript_assigned_n,
@@ -755,11 +755,11 @@ def genesegnet_transcript_metrics(cfg, matches, pred_raw=None, total_gt_transcri
         "matched_cell_transcript_count_spearman"     : mc_spearman,
         "matched_cell_transcript_count_mae"          : mc_mae,
         "matched_cell_transcript_count_rmse"         : mc_rmse,
-        "matched_cell_gene_vector_mean_cosine"       : np.nan,   # 需完整基因表达向量
+        "matched_cell_gene_vector_mean_cosine"       : np.nan,   # needs full gene expression vectors
         "matched_cell_gene_vector_mean_js_distance"  : np.nan,
         "matched_cell_gene_vector_mean_pearson"      : np.nan,
         "matched_cell_gene_vector_valid_pairs"       : 0,
-        "transcript_id_overlap_n"                    : 0,         # 需逐转录本 ID
+        "transcript_id_overlap_n"                    : 0,         # needs per-transcript IDs
         "transcript_assignment_accuracy_via_matched_cells": np.nan,
     }
 
@@ -812,39 +812,39 @@ def _json_default(obj):
 
 
 # =============================================================================
-# 全量转录本指标计算（仿照之前补全各模型输出结果的方式）
+# Full transcript metric computation (following the earlier way of completing model outputs)
 #
-# 核心思路：
-#   tx_file 自带 cell_ID 列 = GT 转录本分配
-#   label 图像像素查询      = Pred 转录本分配
-#   行索引                   = 合成转录本 ID
+# Core idea:
+#   tx_file cell_ID column = GT transcript assignment
+#   label image pixel lookup = Pred transcript assignment
+#   row index = synthetic transcript ID
 #
-# 一次扫描 tx_file 计算全部指标：
+# One pass over tx_file computes all metrics:
 #   n_transcripts per pred cell
-#   transcript_id_overlap_n           (GT 和 pred 都有分配的转录本数)
-#   transcript_assignment_accuracy    (分配到正确 matched cell 的比例)
-#   matched_cell_gene_vector_*        (每对 matched cell 的基因表达向量比较)
+#   transcript_id_overlap_n           (transcripts assigned in both GT and pred)
+#   transcript_assignment_accuracy    (fraction assigned to the correct matched cell)
+#   matched_cell_gene_vector_*        (gene expression vector comparison per matched pair)
 # =============================================================================
 def compute_all_transcript_metrics(
     label_arr, gx_min, gy_min, tx_file, matches, gt_metadata_path,
     bin_factor=1, verbose=True,
 ):
     """
-    核心修复：用 (fov, cell_ID) 联合 key 替代单一 cell_ID。
-    CosMx cell_ID 是 per-FOV 局部编号，FOV 51 和 52 都有 cell_ID=1，
-    不结合 fov 就会覆盖，导致 gt_gene_counts 严重不足。
-    同时用 pandas 向量化替代 Python 逐行循环，速度提升约 10x。
+    Key fix: use a joint (fov, cell_ID) key instead of cell_ID alone.
+    CosMx cell_ID is a per-FOV local index: FOV 51 and 52 both have cell_ID=1,
+    so without fov they overwrite each other and gt_gene_counts is severely incomplete.
+    Also uses pandas vectorization instead of Python row loops, about 10x faster.
     """
     n_rows, n_cols = label_arr.shape
 
-    # 1. 构建 (fov, cell_ID) → cell_id_str 映射
-    print("[TX] 加载 GT 映射 (fov, cell_ID) → cell_id_str ...")
+    # 1. build (fov, cell_ID) -> cell_id_str mapping
+    print("[TX] loading GT mapping (fov, cell_ID) -> cell_id_str ...")
     meta = pd.read_csv(gt_metadata_path, usecols=["cell_id","cell_ID","fov"])
     meta["_key"] = meta["fov"].astype(str) + "_" + meta["cell_ID"].astype(str)
     fov_cell_to_str = dict(zip(meta["_key"], meta["cell_id"].astype(str)))
-    print(f"[TX] 映射条目数: {len(fov_cell_to_str):,}（预期 ≈ 48944）")
+    print(f"[TX] mapping entries: {len(fov_cell_to_str):,} (expected ~48944)")
 
-    # 2. Matched pair 映射
+    # 2. Matched pair mapping
     pred_to_gt: Dict[str, str] = {}; gt_to_pred: Dict[str, str] = {}
     if not matches.empty and "pred_cell_id" in matches.columns:
         for _, row in matches[["pred_cell_id","gt_cell_id"]].iterrows():
@@ -854,15 +854,15 @@ def compute_all_transcript_metrics(
     matched_gt_set   = set(gt_to_pred.keys())
     print(f"[TX] Matched pred={len(matched_pred_set):,}  GT={len(matched_gt_set):,}")
 
-    # 3. 累加器
+    # 3. accumulators
     pred_tx_counts: Dict[int,int] = {}
     pred_gene_counts: Dict[str,Dict[str,int]] = {}
     gt_gene_counts:   Dict[str,Dict[str,int]] = {}
     total_read = 0; total_pred = 0; total_gt = 0; both = 0
     in_matched = 0; correct = 0
 
-    # 4. 流式扫描（pandas 向量化）
-    print("[TX] 开始扫描 tx_file ...")
+    # 4. streaming scan (pandas vectorized)
+    print("[TX] scanning tx_file ...")
     for chunk in pd.read_csv(
         tx_file,
         usecols=["fov","x_global_px","y_global_px","cell_ID","target"],
@@ -882,7 +882,7 @@ def compute_all_transcript_metrics(
         gene_v  = chunk["target"].values[valid]
         pred_v  = label_arr[y_v, x_v].astype(np.int64)
 
-        # (fov, cell_ID) → gt_cell_str（向量化）
+        # (fov, cell_ID) -> gt_cell_str (vectorized)
         keys     = pd.Series(fov_v).astype(str) + "_" + pd.Series(gt_id_v).astype(str)
         gt_str_v = keys.map(fov_cell_to_str).fillna("").where(
             pd.Series(gt_id_v) > 0, "").to_numpy(dtype=object)
@@ -910,11 +910,11 @@ def compute_all_transcript_metrics(
                 if cell not in gt_gene_counts: gt_gene_counts[cell] = {}
                 gt_gene_counts[cell][gene] = gt_gene_counts[cell].get(gene, 0) + int(cnt)
         if verbose:
-            print(f"  已读 {total_read:,}  pred={total_pred:,}  "
+            print(f"  read {total_read:,}  pred={total_pred:,}  "
                   f"correct={correct:,}  gt_gene_cells={len(gt_gene_counts):,}")
 
-    # 5. 基因向量相似度
-    print("[TX] 计算基因向量相似度 ...")
+    # 5. gene-vector similarity
+    print("[TX] computing gene-vector similarity ...")
     cosine_sims, js_dists, pearsons = [], [], []
     valid_pairs = 0
     for pred_str, gt_str in pred_to_gt.items():
@@ -933,7 +933,7 @@ def compute_all_transcript_metrics(
         valid_pairs += 1
 
     accuracy = float(correct / max(in_matched, 1))
-    print(f"[TX] 完成: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  "
+    print(f"[TX] Done: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  "
           f"gt_cells={len(gt_gene_counts):,}")
 
     return {
@@ -960,7 +960,7 @@ def compute_all_transcript_metrics(
 
 
 # =============================================================================
-# 主评估流程（与参考代码结构完全一致）
+# Main evaluation flow (same structure as the reference code)
 # =============================================================================
 def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     if cfg.numeric_pairs is None:
@@ -971,7 +971,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
 
     label_path = expand_path(cfg.label_path)
     if label_path is None or not label_path.exists():
-        raise FileNotFoundError(f"label 文件未找到: {cfg.label_path}")
+        raise FileNotFoundError(f"label file not found: {cfg.label_path}")
 
     if cfg.verbose:
         print(f"[INFO] Script version: {SCRIPT_VERSION}")
@@ -979,10 +979,10 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         print(f"[INFO] label: {label_path}")
         print(f"[INFO] pixel_size_um={cfg.pixel_size_um}  swap_xy={cfg.swap_xy}")
 
-    # GT 加载（CosMx 适配）
+    # GT loading (CosMx adaptation)
     gt_raw = load_gt_cosmx(cfg)
 
-    # GeneSegNet label → cell table（含坐标修正）
+    # GeneSegNet label -> cell table (with coordinate correction)
     pred_raw = labels_to_cell_table(
         label_path    = label_path,
         pixel_size_um = cfg.pixel_size_um,
@@ -994,11 +994,11 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         verbose       = cfg.verbose,
     )
 
-    # ── 全量转录本分析（单次扫描，计算所有转录本指标）────────────────────────
-    # 仿照之前补全各模型输出结果的方式：
-    #   tx_file cell_ID = GT分配，label像素查询 = pred分配，行索引 = 合成转录本ID
+    # -- full transcript analysis (single scan, all transcript metrics) --
+    # Following the earlier way of completing model outputs:
+    #   tx_file cell_ID = GT assignment, label pixel lookup = pred assignment, row index = synthetic transcript ID
     if cfg.verbose:
-        print("\n[INFO] 全量转录本分析（约 5-10 分钟）...")
+        print("\n[INFO] full transcript analysis (~5-10 min)...")
     suffix = label_path.suffix.lower()
     if suffix == ".mat":
         _mat = loadmat(str(label_path))
@@ -1010,12 +1010,12 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         try: _arr = _tifffile.memmap(str(label_path))
         except: _arr = _tifffile.imread(str(label_path))
         _gx = _gy = 0
-        warnings.warn("TIF 文件无 gx_min/gy_min，转录本分配坐标可能有偏移")
+        warnings.warn("TIF file has no gx_min/gy_min; transcript assignment coordinates may be offset")
 
     gt_cells,   gt_qc   = collapse_to_cell_level(gt_raw,   cfg, table_name="gt")
     pred_cells_pre, _   = collapse_to_cell_level(pred_raw.copy(), cfg, table_name="pred")
 
-    # 先做匹配（全量分析需要 matched pairs）
+    # match first (full analysis needs matched pairs)
     radius_pre = cfg.match_radius if cfg.match_radius is not None else infer_match_radius(gt_cells, cfg)
     matches_pre, _ = match_sparse_hungarian(pred_cells_pre, gt_cells, cfg, radius=radius_pre)
 
@@ -1030,18 +1030,18 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         verbose          = cfg.verbose,
     )
 
-    # 合并 n_transcripts 到 pred_raw，重新 collapse
+    # merge n_transcripts into pred_raw and collapse again
     pred_raw = pred_raw.merge(tx_result["_n_transcripts_df"], on="cell_id", how="left")
     pred_raw["n_transcripts"] = pred_raw["n_transcripts"].fillna(0).astype(np.int64)
     if cfg.verbose:
         assigned = (pred_raw["n_transcripts"] > 0).sum()
-        print(f"[INFO] {assigned:,}/{len(pred_raw):,} 个预测细胞有转录本分配")
+        print(f"[INFO] {assigned:,}/{len(pred_raw):,} predicted cells have transcript assignments")
 
     pred_cells, pred_qc = collapse_to_cell_level(pred_raw, cfg, table_name="pred")
 
     radius = cfg.match_radius if cfg.match_radius is not None else infer_match_radius(gt_cells, cfg)
     if cfg.verbose:
-        print(f"[INFO] 匹配半径: {radius:.6g}")
+        print(f"[INFO] match radius: {radius:.6g}")
         print(f"[INFO] GT cells: {len(gt_cells):,}  Pred cells: {len(pred_cells):,}")
 
     matches, match_qc = match_sparse_hungarian(pred_cells, gt_cells, cfg, radius=radius)
@@ -1065,7 +1065,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     metrics.update(numeric_spatial_metrics(pred_cells, gt_cells, matches, cfg))
     metrics.update(numeric_pair_metrics(matches, cfg))
     metrics.update(genesegnet_transcript_metrics(cfg, matches, pred_raw=pred_raw))
-    # 覆盖全量转录本指标（tx_result 的计算更完整）
+    # override with full transcript metrics (tx_result is more complete)
     for key in ["pred_transcript_rows","pred_transcript_assigned_n",
                 "pred_transcript_assignment_rate","gt_transcript_rows",
                 "gt_transcript_assigned_n","gt_transcript_assignment_rate",
@@ -1110,18 +1110,18 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="评估 GeneSegNet label 图像（CosMx 数据集）")
+    p = argparse.ArgumentParser(description="Evaluate GeneSegNet label images (CosMx dataset)")
     p.add_argument("--gt-path",            default=GT_METADATA_PATH)
     p.add_argument("--gt-transcripts-path",default=TX_FILE)
     p.add_argument("--label-path",         required=True,
-                   help=".mat 或 .tif 文件（MAT 内含 CellMap/gx_min/gy_min）")
+                   help=".mat or .tif file (MAT contains CellMap/gx_min/gy_min)")
     p.add_argument("--mat-key",            default="CellMap")
     p.add_argument("--pixel-size-um",      type=float, default=0.1203)
     p.add_argument("--swap-xy",            action="store_true")
     p.add_argument("--label-chunk-rows",   type=int, default=512)
     p.add_argument("--min-label",          type=int, default=1)
     p.add_argument("--max-label",          type=int, default=None)
-    p.add_argument("--output-dir",         default="/data/qiuyijia/eval_results/genesegnet")
+    p.add_argument("--output-dir",         default="yourpath/eval_results/genesegnet")
     p.add_argument("--method-name",        default="GeneSegNet")
     p.add_argument("--match-radius",       type=float, default=None)
     p.add_argument("--radius-quantile",    type=float, default=0.95)

@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""ComSeg 评估 —— 拼合 tile_results/*.h5ad 的细胞质心+基因向量，复用参考脚本的匹配/指标逻辑。
-comseg 输出是分块 h5ad(细胞级)、无全局像素标签图，故用质心+每细胞基因向量评估，
-面积/像素转录本类指标置 nan（comseg 输出本就没有像素足迹）。核心指标(数量/检测P,R,F1/
-质心偏移/基因向量 cosine,js,pearson/每细胞转录本计数相关)与其它方法同口径。
-用法:  python eval_comseg.py --dataset prostate1   (或 prostate2)
-可选覆盖: --root --run-dir --gt-mask --out-dir --ref --roi-size
+"""ComSeg evaluation - assemble cell centroids + gene vectors from tile_results/*.h5ad,
+reusing the matching/metric logic of the reference script.
+ComSeg output is per-tile h5ad (cell-level) with no global pixel label image, so evaluate
+with centroids + per-cell gene vectors; area/pixel-transcript metrics are nan (ComSeg output
+has no pixel footprint). Core metrics (count / detection P,R,F1 / centroid shift / gene vector
+cosine,js,pearson / per-cell transcript count correlation) use the same protocol as other methods.
+Usage:  python eval_comseg.py --dataset prostate1   (or prostate2)
+Optional overrides: --root --run-dir --gt-mask --out-dir --ref --roi-size
 """
 import argparse, importlib.util, sys, glob, re
 from pathlib import Path
 import numpy as np
 
-REF_DEFAULT  = "/data/qiuyijia/ucs/UCS/ucs_value_merfish_4.py"
-DATA_BASE    = "/data/qiuyijia/dataset"
-RESULT_BASE  = "/data/qiuyijia"
+REF_DEFAULT  = "yourpath/ucs/UCS/ucs_value_merfish_4.py"
+DATA_BASE    = "yourpath/dataset"
+RESULT_BASE  = "yourpath"
 METHOD       = "ComSeg"
 ROI_SIZE_DEF = 10000
 
 def _load_ref(ref):
     ref = Path(ref).resolve()
     if not ref.exists():
-        raise SystemExit(f"参考评估脚本不存在: {ref}")
+        raise SystemExit(f"reference evaluation script not found: {ref}")
     spec = importlib.util.spec_from_file_location("refval", ref)
     V = importlib.util.module_from_spec(spec); sys.modules["refval"] = V
     spec.loader.exec_module(V)
@@ -35,14 +37,14 @@ def _pick_gt_mask(run_dir, root, dataset):
     return None
 
 def load_comseg_cells(run_dir, geo):
-    """拼 16 个 tile 的细胞 -> 全局质心(um) + 每细胞基因向量(基因表对齐到 tile 的 var)。"""
+    """Join cells from 16 tiles -> global centroid (um) + per-cell gene vector (gene table aligned to the tile var)."""
     import anndata as ad, pandas as pd
     meta = pd.read_csv(Path(run_dir)/"tile_metadata.tsv", sep="\t")
     origin = {r.tile_id: (float(r.ry), float(r.rx)) for r in meta.itertuples()}
     PX_UM = geo.um_per_px
     fs = sorted(glob.glob(f"{run_dir}/tile_results/tile_*.h5ad"))
     if not fs:
-        raise SystemExit(f"{run_dir}/tile_results 下没有 h5ad")
+        raise SystemExit(f"{run_dir}/tile_results has no h5ad")
     all_cx=[]; all_cy=[]; gms=[]; genes=None
     for f in fs:
         a = ad.read_h5ad(f)
@@ -51,19 +53,19 @@ def load_comseg_cells(run_dir, geo):
             tid2 = a.obs.get("image_name")
             tid = tid2.iloc[0] if tid2 is not None else tid
         ry, rx = origin[tid]
-        # tile 内质心是 um（relative to tile origin）；全局像素 = 原点 + um/PX_UM
+        # centroid inside a tile is um (relative to the tile origin); global px = origin + um/PX_UM
         cx_um = a.obs["centroid_x"].to_numpy(float)
         cy_um = a.obs["centroid_y"].to_numpy(float)
         gpx = rx + cx_um / PX_UM
         gpy = ry + cy_um / PX_UM
-        ux, uy = geo.local_to_um(gpx, gpy)     # 全局像素 -> 全局微米
+        ux, uy = geo.local_to_um(gpx, gpy)     # global px -> global um
         all_cx.append(ux); all_cy.append(uy)
         X = a.X
         X = np.asarray(X.todense()) if hasattr(X, "todense") else np.asarray(X)
         gms.append((list(a.var_names), X))
         if genes is None:
             genes = list(a.var_names)
-    # 统一基因表（各 tile var 相同则直接堆叠）
+    # unify the gene table (stack directly when all tiles share the same var)
     cx = np.concatenate(all_cx); cy = np.concatenate(all_cy)
     if all(g == genes for g, _ in gms):
         gm = np.vstack([X for _, X in gms]).astype(np.float32)
@@ -77,12 +79,12 @@ def load_comseg_cells(run_dir, geo):
             m[:, cols] = X[:, src]
             rows.append(m)
         gm = np.vstack(rows)
-    # 只留 ROI 内
+    # keep ROI cells only
     inside = geo.inside(cx, cy)
     return cx[inside], cy[inside], gm[inside], genes
 
 def build_gt_gene_matrix(gt, genes):
-    """把参考脚本 gt 的每细胞基因向量对齐到 comseg 的基因表。"""
+    """Align the reference-script gt per-cell gene vectors to the ComSeg gene table."""
     gt_genes = getattr(gt, "genes", None)
     gm = getattr(gt, "gene_matrix", None)
     if gm is None:
@@ -112,7 +114,7 @@ def main():
         args.run_dir = args.run_dir or f"{RESULT_BASE}/comseg_merfish_{args.dataset}"
         args.out_dir = args.out_dir or f"{RESULT_BASE}/eval_merfish_{args.dataset}"
     if not (args.root and args.run_dir):
-        raise SystemExit("需要 --dataset，或同时给 --root 和 --run-dir")
+        raise SystemExit("need --dataset, or both --root and --run-dir")
     args.out_dir = args.out_dir or f"{RESULT_BASE}/eval_merfish_out"
     if not args.gt_mask:
         args.gt_mask = _pick_gt_mask(args.run_dir, args.root, args.dataset)
@@ -120,7 +122,7 @@ def main():
     V, ref = _load_ref(args.ref)
     root, out = Path(args.root), Path(args.out_dir)
     V.setup_log(out, f"eval_ComSeg_{args.dataset or 'x'}")
-    V.rule(f"ComSeg  x  MERFISH {args.dataset or ''}   (质心拼合, via {ref.name})")
+    V.rule(f"ComSeg  x  MERFISH {args.dataset or ''}   (centroid assembly, via {ref.name})")
 
     geo = V.load_geometry(root, args.roi_size)
     gt_mask = V.load_gt_mask(root, geo, args.gt_mask)
@@ -128,9 +130,9 @@ def main():
     gt = V.load_ground_truth(root, geo, tx)
 
     cx, cy, gm, genes = load_comseg_cells(args.run_dir, geo)
-    V.log.info(f"comseg 拼合细胞 = {len(cx):,}  (基因 {len(genes)})")
+    V.log.info(f"comseg assembled cells = {len(cx):,}  (genes {len(genes)})")
 
-    # ---- 匹配 + 指标（复用参考脚本函数，与其它方法同口径）----
+    # ---- matching + metrics (reuse reference-script functions, same protocol as other methods) ----
     gx, gy = gt.ux, gt.uy
     radius = V.infer_match_radius(gx, gy)
     mp, mg, md = V.match_sparse_hungarian(cx, cy, gx, gy, radius)
@@ -207,9 +209,9 @@ def main():
             f"GT={len(gt_genes)} common={len(common_genes)}"
         )
 
-        # 每细胞转录本计数相关：
-        # 也只统计共同 benchmark genes，避免 ComSeg 额外 feature
-        # 使 predicted total artificially larger.
+        # per-cell transcript count correlation:
+        # also restrict to common benchmark genes so ComSeg's extra features
+        # do not inflate the predicted total.
         pn = gm_eval[mp].sum(1).astype(float)
         gn = gt_gm[mg].sum(1).astype(float)
 
@@ -236,7 +238,7 @@ def main():
     V.rule("RESULT")
     for k, v in row.items():
         V.log.info(f"  {k:52s} {v}")
-    # 落表：追加到 out/eval_results.csv
+    # write table: append to out/eval_results.csv
     import csv, os
     fcsv = out / "eval_results.csv"
     os.makedirs(out, exist_ok=True)

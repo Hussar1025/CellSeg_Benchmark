@@ -1,42 +1,42 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-genesegnet_xenium.py — GeneSegNet 推理 @ xenium_2 / 3 / 5 / 6
+genesegnet_xenium.py -- GeneSegNet inference @ xenium_2 / 3 / 5 / 6
 
-权重：自训练的 Xenium pancreas_cancer 模型（residual_on / style_off /
-concatenation_off）。四个目标数据集都不含 pancreas，全部 held-out。
+Weights: self-trained Xenium pancreas_cancer model (residual_on / style_off /
+concatenation_off). None of the four target datasets contains pancreas, so all are held-out.
 
-本版新增（相对上一版，只动 xenium_3 相关的三处）：
-  FIX-C  xenium_3 是从母片裁出来的 ROI：图 1577x1576 px，但
-         transcripts / cells 里存的仍是**母片全局 um 坐标**
-         （TX x[3982.50,4317.50] y[2522.50,2857.50]，跨度 335.00 um）。
-         按 global 口径去捞 x in [0,335) um 会一条都捞不到。
-         -> DATASETS 里给它写死 coord_mode=local_um + 原点 (3982.5, 2522.5)。
-         像素尺寸不用改：1576 x 0.2125 = 334.9 um，与 335.0 只差半个像素。
-  FIX-D  prep_meta.json 里补 coord_mode / origin_x_um / origin_y_um，
-         否则 eval_genesegnet.py 读不到口径，会按 global 兜底而算错。
-         已跑完的 x2/x5/x6 没有这几个键，兜底成 global 正好是对的。
-  FIX-E  main() 里让 DATASETS 的 coord_mode 覆盖默认值（命令行仍可再覆盖）。
+New in this version (vs the previous one; only three places touching xenium_3):
+  FIX-C  xenium_3 is a ROI cropped from the parent slide: image 1577x1576 px, but
+         transcripts / cells still store **parent-slide global um coordinates**
+         (TX x[3982.50,4317.50] y[2522.50,2857.50], span 335.00 um).
+         Querying x in [0,335) um under the global convention finds not a single one.
+         -> hard-code coord_mode=local_um + origin (3982.5, 2522.5) in DATASETS.
+         Pixel size unchanged: 1576 x 0.2125 = 334.9 um, half a pixel off from 335.0.
+  FIX-D  add coord_mode / origin_x_um / origin_y_um to prep_meta.json,
+         otherwise eval_genesegnet.py cannot read the convention and falls back to global, computing wrong numbers.
+         Already-run x2/x5/x6 lack these keys; their global fallback is exactly right.
+  FIX-E  in main(), let the DATASETS coord_mode override the default (the command line can still override again).
 
-沿用的修正：
-  FIX-A  DAPI 全零 = tifffile 的 OME 多文件拼装失败（"OME series cannot read
-         multi-file pyramids" 之后不抛错、返回全零 series）。策略链
-         is_ome=False -> OME series -> pages[0]，每种都先采样校验非零。
-  FIX-B  热图 sigma 用精确解：==255 的像素恰是 spot 中心，抠出来按候选
-         sigma 重建比 MAE，真值处 MAE 为 0。
-  FIX-1  z-stack 被当多通道（ZYX 误判 CYX，取到几乎全黑的 z0）
-  FIX-2  金字塔走 series.levels[0]
-  FIX-3  zarr 2.x/3.x 双路 + 无 zarr 回退
-  FIX-4  OME Channel Name 认 DAPI；通道 = 选文件
-  FIX-5  ROI 夹边界 + 支持非方形
-  FIX-6  热图与训练一致（max-of-Gaussians，峰值 255）
-  FIX-7  DAPI 全局百分位归一化（不再逐 tile）
-  FIX-8  pyarrow 下推过滤，不整表读 parquet
-  FIX-9  剔除对照探针
-  FIX-10 --audit 逐 channel/z 统计
-  FIX-11 prep 报 ROI 内 GT 细胞数并与期望比对
+Carried-over fixes:
+  FIX-A  all-zero DAPI = tifffile OME multi-file assembly failure ("OME series cannot read
+         multi-file pyramids" then no raise, all-zero series). Strategy chain
+         is_ome=False -> OME series -> pages[0], each first samples and validates non-zero.
+  FIX-B  heatmap sigma uses an exact solution: pixels ==255 are exactly spot centers; extract them,
+         rebuild for each candidate sigma and compare MAE; at the true value MAE is 0.
+  FIX-1  z-stack mistaken for multichannel (ZYX misread as CYX, picked an almost black z0)
+  FIX-2  pyramids go through series.levels[0]
+  FIX-3  zarr 2.x/3.x dual path + no-zarr fallback
+  FIX-4  OME Channel Name recognizes DAPI; channel = choose file
+  FIX-5  ROI edge clamping + non-square support
+  FIX-6  heatmap consistent with training (max-of-Gaussians, peak 255)
+  FIX-7  global percentile normalization for DAPI (no longer per tile)
+  FIX-8  pyarrow pushdown filtering, no full-table parquet read
+  FIX-9  drop control probes
+  FIX-10 --audit per channel/z stats
+  FIX-11 prep reports GT cell count in ROI and compares it with the expectation
 
-用法
+Usage
   python genesegnet_xenium.py --calib-heatmap
   python genesegnet_xenium.py --dataset xenium_3 --audit
   python genesegnet_xenium.py --dataset xenium_3 --stage all --save-preview
@@ -54,23 +54,23 @@ import numpy as np
 import pandas as pd
 import tifffile
 
-REPO = Path("/data/qiuyijia/GeneSegNet")
+REPO = Path("yourpath/GeneSegNet")
 GS_REPO = REPO / "GeneSegNet"
 HELPER = REPO / "genesegnet_cosmx_2.py"
-DS = Path("/data/qiuyijia/dataset")
+DS = Path("yourpath/dataset")
 
 DEFAULT_MODEL = (
-    "/data/qiuyijia/genesegnet_xenium/"
+    "yourpath/genesegnet_xenium/"
     "pancreas_cancer_cell/model/models/"
     "GeneSegNet_residual_on_style_off_concatenation_off_model_"
     "2026_08_19_16_55_17.947661"
 )
-CALIB_GLOB = "/data/qiuyijia/genesegnet_xenium/pancreas_cancer_cell/**/*gaumap_all*"
+CALIB_GLOB = "yourpath/genesegnet_xenium/pancreas_cancer_cell/**/*gaumap_all*"
 
 TILE = 1024
 OVERLAP = 128
 TRUNC = 4.6052
-TRUNC_R = float(np.sqrt(2 * TRUNC))     # = 3.0348，截断半径 / sigma
+TRUNC_R = float(np.sqrt(2 * TRUNC))     # = 3.0348, truncation radius / sigma
 
 CTRL_PREFIX = (
     "NegControlProbe", "NegControlCodeword", "NegPrb", "BLANK", "Blank",
@@ -82,7 +82,7 @@ CTRL_PREFIX = (
 DATASETS = {
     "xenium_2": dict(root=DS / "xenium_breast", tag="breast",
                      roi=("center", 5000, 5000), gt_expected=8809),
-    # FIX-C 裁片，坐标是母片全局系
+    # FIX-C cropped ROI, coordinates are in the parent-slide global system
     "xenium_3": dict(root=DS / "xenium_roi_crop", tag="lymph_crop",
                      roi=("full",), gt_expected=2442,
                      coord_mode="local_um",
@@ -155,7 +155,7 @@ def sibling_channel_file(path, c):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  DAPI 读取
+#  DAPI reading
 # ══════════════════════════════════════════════════════════════════════════
 def _open_zarr(store):
     try:
@@ -207,7 +207,7 @@ class DapiReader:
             alt = sibling_channel_file(self.path, want)
             if alt:
                 if verbose:
-                    print(f"  通道 {want} -> 换文件 {Path(alt).name}")
+                    print(f"  channel {want} -> switch file {Path(alt).name}")
                 self.path, want = alt, 0
 
         tried = []
@@ -219,18 +219,18 @@ class DapiReader:
                 probe = self._probe()
                 if probe is not None and float(np.abs(probe).max()) > 0:
                     break
-                tried.append((st, "读出来全零"))
+                tried.append((st, "read as all zero"))
             except Exception as e:
                 tried.append((st, f"{type(e).__name__}: {e}"))
         else:
             msg = "\n".join(f"    {s}: {r}" for s, r in tried)
-            raise RuntimeError(f"所有读取策略都拿不到 DAPI 数据:\n{msg}")
+            raise RuntimeError(f"no read strategy could get DAPI data:\n{msg}")
 
         self.channel = min(want, self.nc - 1)
         if verbose:
             print(f"DAPI file    = {self.path}")
             print(f"  strategy = {self.strategy}"
-                  + "".join(f"  ({s} 失败: {r})" for s, r in tried))
+                  + "".join(f"  ({s} failed: {r})" for s, r in tried))
             print(f"  axes = {self.axes}  shape = {self.shape}  "
                   f"levels = {self.nlevels}  backend = {self.mode}")
             print(f"  channels = {self.nc}"
@@ -358,27 +358,27 @@ class DapiReader:
         H, W = self.hw
         y0, x0 = max(0, H // 2 - n // 2), max(0, W // 2 - n // 2)
         y1, x1 = min(H, y0 + n), min(W, x0 + n)
-        print(f"\n中心 {y1-y0}x{x1-x0} 采样  (全图 {H} x {W})")
+        print(f"\ncenter {y1-y0}x{x1-x0} sample  (full image {H} x {W})")
         print(f"{'c':>3} {'z':>3} {'min':>8} {'mean':>10} {'p99':>10} "
-              f"{'max':>8}  判断")
+              f"{'max':>8}  verdict")
         best = None
         for c in range(self.nc):
             for z in range(self.nz):
                 p = np.squeeze(self._plane(c, z, y0, y1, x0, x1)
                                ).astype(np.float64)
                 p99 = float(np.percentile(p, 99))
-                flag = "空" if p.max() == 0 else ("近乎空" if p99 <= 1 else "")
+                flag = "empty" if p.max() == 0 else ("near empty" if p99 <= 1 else "")
                 print(f"{c:>3} {z:>3} {p.min():>8.0f} {p.mean():>10.2f} "
                       f"{p99:>10.1f} {p.max():>8.0f}  {flag}")
                 s = float(p.std())
                 if best is None or s > best[0]:
                     best = (s, c, z)
         if best:
-            print(f"\n对比度最高: channel {best[1]} / z {best[2]}  "
+            print(f"\nhighest contrast: channel {best[1]} / z {best[2]}  "
                   f"(std={best[0]:.1f})")
         sibs = sorted(Path(self.path).parent.glob("*.ome.tif"))
         if len(sibs) > 1:
-            print("\n同目录其他文件（中心 256 采样 max）:")
+            print("\nother files in the same directory (center 256 sample max):")
             for s in sibs:
                 try:
                     with tifffile.TiffFile(str(s), is_ome=False) as tf:
@@ -387,12 +387,12 @@ class DapiReader:
                     print(f"  {s.name:<45} shape={a.shape} "
                           f"max={int(a[yy:yy+256, xx:xx+256].max())}")
                 except Exception as e:
-                    print(f"  {s.name:<45} 读取失败 {e}")
+                    print(f"  {s.name:<45} read failed {e}")
         return best
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  热图 + 精确标定
+#  Heatmap + exact calibration
 # ══════════════════════════════════════════════════════════════════════════
 def gaussian_kernel(sigma):
     r = int(np.ceil(sigma * TRUNC_R))
@@ -468,9 +468,9 @@ def calib_heatmap(pattern, k=6):
     fs = [f for f in sorted(glob.glob(pattern, recursive=True))
           if f.lower().endswith((".tif", ".tiff", ".jpg", ".png"))][:k]
     if not fs:
-        raise SystemExit(f"没找到训练热图: {pattern}")
-    banner("热图口径标定（精确解）")
-    print(f"{'file':<48} {'非零':>7} {'==255':>9} {'p99':>6} "
+        raise SystemExit(f"training heatmap not found: {pattern}")
+    banner("Heatmap calibration (exact solution)")
+    print(f"{'file':<48} {'nonzero':>7} {'==255':>9} {'p99':>6} "
           f"{'spot':>7} {'σ':>6} {'MAE':>8}")
     sigmas, eqs = [], []
     for f in fs:
@@ -486,17 +486,17 @@ def calib_heatmap(pattern, k=6):
               + (f"{s:6.2f} {mae:8.4f}" if s else f"{'--':>6} {'--':>8}"))
     eq = float(np.median(eqs))
     mode = "gaussian_peak" if eq > 1e-5 else "density"
-    print(f"\nmode = {mode}   (==255 中位占比 {eq:.6f})")
+    print(f"\nmode = {mode}   (median ==255 ratio {eq:.6f})")
     if mode == "gaussian_peak" and sigmas:
         sg, sd = float(np.median(sigmas)), float(np.std(sigmas))
-        print(f"sigma = {sg:.2f}  (标准差 {sd:.3f}"
-              + ("，一致 ✓" if sd < 0.1 else "，不一致 ⚠") + ")")
+        print(f"sigma = {sg:.2f}  (std {sd:.3f}"
+              + (", consistent ✓" if sd < 0.1 else ", inconsistent ⚠") + ")")
         print(f"\n  --heatmap-mode {mode} --heatmap-sigma {sg:.2f}")
     return mode, (float(np.median(sigmas)) if sigmas else None)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  切片 / 归一化 / 转录本 / GT
+#  Tiling / normalization / transcripts / GT
 # ══════════════════════════════════════════════════════════════════════════
 def starts(n, tile=TILE, overlap=OVERLAP):
     stride = tile - overlap
@@ -528,12 +528,12 @@ def load_tx(args, x0, y0, size_y, size_x):
     ps = float(args.pixel_size)
     if args.coord_mode == "global":
         ox, oy, gx0, gy0 = 0.0, 0.0, x0, y0
-    else:                       # local_um：图本身就是 ROI，原点在 origin_*_um
+    else:                       # local_um: the image itself is the ROI, origin at origin_*_um
         ox, oy, gx0, gy0 = args.origin_x_um, args.origin_y_um, 0, 0
 
     xlo, xhi = gx0 * ps + ox, (gx0 + size_x) * ps + ox
     ylo, yhi = gy0 * ps + oy, (gy0 + size_y) * ps + oy
-    print(f"  转录本查询窗口 x[{xlo:.2f},{xhi:.2f}] y[{ylo:.2f},{yhi:.2f}] um "
+    print(f"  transcript query window x[{xlo:.2f},{xhi:.2f}] y[{ylo:.2f},{yhi:.2f}] um "
           f"(coord_mode={args.coord_mode})")
     f = ((pds.field(xc) >= xlo) & (pds.field(xc) < xhi) &
          (pds.field(yc) >= ylo) & (pds.field(yc) < yhi))
@@ -548,7 +548,7 @@ def load_tx(args, x0, y0, size_y, size_x):
         q[gc] = q[gc].astype(str)
         if not args.keep_controls:
             m = ~q[gc].str.startswith(CTRL_PREFIX)
-            print(f"  剔除对照探针 {int((~m).sum()):,}")
+            print(f"  removed control probes {int((~m).sum()):,}")
             q = q.loc[m]
         q = q.rename(columns={gc: "gene"})
     q = q.reset_index(drop=True)
@@ -618,14 +618,14 @@ def prep(args):
           " mean=", round(float(roi.mean()), 2),
           " p99=", round(float(np.percentile(roi, 99)), 1))
     if roi.max() == 0:
-        raise RuntimeError("DAPI ROI 全零，跑 --audit 定位。")
+        raise RuntimeError("DAPI ROI is all zero; run --audit to locate the problem.")
 
     flat = roi.reshape(-1)
     if flat.size > 4_000_000:
         flat = flat[np.random.default_rng(0).choice(flat.size, 4_000_000,
                                                     replace=False)]
     lo, hi = np.percentile(flat.astype(np.float32), [args.pmin, args.pmax])
-    print(f"全局归一化窗口: p{args.pmin}={lo:.1f}  p{args.pmax}={hi:.1f}")
+    print(f"global normalization window: p{args.pmin}={lo:.1f}  p{args.pmax}={hi:.1f}")
 
     if args.save_preview:
         import cv2
@@ -636,23 +636,23 @@ def prep(args):
 
     tx = load_tx(args, x0, y0, sh, sw)
     print(f"ROI transcripts = {len(tx):,}"
-          + (f"  基因 {tx.gene.nunique():,}" if "gene" in tx.columns else ""))
+          + (f"  genes {tx.gene.nunique():,}" if "gene" in tx.columns else ""))
     if len(tx) == 0:
         raise RuntimeError(
-            "ROI 内没有转录本。裁片数据集的坐标常是母片全局系——"
-            "用 --coord-mode local_um --origin-x-um/--origin-y-um 指定原点。")
+            "no transcripts in ROI. Cropped datasets often use parent-slide global coordinates -- "
+            "specify the origin with --coord-mode local_um --origin-x-um/--origin-y-um.")
 
     gt_n = None
     if args.gt:
         gt_n, bad = count_gt(args.gt, args, x0, y0, sh, sw)
         if gt_n is None:
-            print(f"  GT 没有质心列: {bad}")
+            print(f"  GT has no centroid column: {bad}")
         else:
-            msg = f"  ROI 内 GT 细胞 = {gt_n:,}"
+            msg = f"  GT cells in ROI = {gt_n:,}"
             if args.gt_expected:
                 dev = abs(gt_n - args.gt_expected) / args.gt_expected
-                msg += (f"  期望 {args.gt_expected:,}  偏差 {dev:.1%}"
-                        + ("  ✓" if dev <= 0.02 else "  ⚠ 口径不一致"))
+                msg += (f"  expected {args.gt_expected:,}  deviation {dev:.1%}"
+                        + ("  ✓" if dev <= 0.02 else "  ⚠ definition mismatch"))
             print(msg)
             print(f"  tx_per_cell = {len(tx)/max(gt_n,1):.1f}")
 
@@ -683,13 +683,13 @@ def prep(args):
 
     man = pd.DataFrame(rows)
     man.to_csv(prep_root / "tile_manifest.tsv", sep="\t", index=False)
-    print(f"\ntile {len(man)} 个   spots 中位 {man.n_spots.median():.0f}   "
-          f"空 tile {int((man.n_spots==0).sum())}")
-    print(f"热图指纹（中位）: 非零 {man.hm_nonzero.median():.3f}   "
+    print(f"\ntiles {len(man)}   median spots {man.n_spots.median():.0f}   "
+          f"empty tiles {int((man.n_spots==0).sum())}")
+    print(f"heatmap fingerprint (median): nonzero {man.hm_nonzero.median():.3f}   "
           f"p99 {man.hm_p99.median():.0f}   ==255 {man.hm_eq255.median():.5f}")
-    print("  训练集参考: 非零 0.040-0.347   p99 99-241   ==255 2e-4~3e-3")
+    print("  training set reference: nonzero 0.040-0.347   p99 99-241   ==255 2e-4~3e-3")
 
-    # FIX-D 把坐标口径写进 meta，供 eval_genesegnet.py 使用
+    # FIX-D write the coordinate mode into meta for eval_genesegnet.py
     (prep_root / "prep_meta.json").write_text(json.dumps(dict(
         dataset=args.dataset, root=str(args.root), dapi=rd.path,
         dapi_strategy=rd.strategy, tx=args.tx,
@@ -778,9 +778,9 @@ def infer(args):
     print("  ch1 heat mean/p99 =", round(float(s[..., 1].mean()), 2),
           round(float(np.percentile(s[..., 1], 99)), 1))
     if s[..., 0].max() == 0:
-        raise RuntimeError("DAPI 通道全零，prep 出的图有问题")
+        raise RuntimeError("DAPI channel is all zero; the image produced by prep is broken")
     if s[..., 1].max() == 0:
-        print("  ⚠ 热图通道全零，模型会退化成纯图像分割")
+        print("  ⚠ heatmap channel is all zero, the model will degrade to pure image segmentation")
     if args.dry:
         banner("DRY RUN OK")
         return
@@ -862,7 +862,7 @@ def main():
     p.add_argument("--roi-x0", type=int, default=-1)
     p.add_argument("--coord-mode", choices=["global", "local_um"],
                    default=None,
-                   help="不指定则用 DATASETS 里的配置，再默认 global")
+                   help="if unset, use the DATASETS config, then default global")
     p.add_argument("--origin-y-um", type=float, default=None)
     p.add_argument("--origin-x-um", type=float, default=None)
     p.add_argument("--qv-min", type=float, default=20.0)
@@ -895,16 +895,16 @@ def main():
         calib_heatmap(a.calib_glob)
         return
     if not a.dataset:
-        raise SystemExit("需要 --dataset（或 --calib-heatmap）")
+        raise SystemExit("need --dataset (or --calib-heatmap)")
 
     cfg = DATASETS[a.dataset]
     a.root = a.root or str(cfg["root"])
-    a.out = a.out or f"/data/qiuyijia/genesegnet_{a.dataset}"
+    a.out = a.out or f"yourpath/genesegnet_{a.dataset}"
     a._roi_spec = cfg["roi"]
     if a.gt_expected is None:
         a.gt_expected = cfg["gt_expected"]
 
-    # FIX-E DATASETS 的坐标口径 -> 默认值；命令行显式给了就以命令行为准
+    # FIX-E DATASETS coordinate mode -> default; an explicit command-line value wins
     if a.coord_mode is None:
         a.coord_mode = cfg.get("coord_mode", "global")
     if a.origin_x_um is None:

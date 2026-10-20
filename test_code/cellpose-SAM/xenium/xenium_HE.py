@@ -10,10 +10,10 @@ import fastremap
 
 
 # ======================
-# 直接在这里修改参数
+# edit the parameters directly here
 # ======================
-INPUT_TIF = r"/data/qiuyijia/dataset/CosMx/cropped_HE.tif"
-OUTPUT_TIF = r"/data/qiuyijia/cellpose/CosMx_output/output_cpsam_masks.ome.tif"
+INPUT_TIF = r"yourpath/dataset/CosMx/cropped_HE.tif"
+OUTPUT_TIF = r"yourpath/cellpose/CosMx_output/output_cpsam_masks.ome.tif"
 
 USE_GPU = True
 
@@ -22,9 +22,9 @@ OVERLAP = 192
 
 DIAMETER = 30
 
-# RGB 图像使用模式：
-# "rgb"  : 直接把 RGB 三通道送入 cellpose
-# "gray" : 先转灰度再分割，通常更省显存
+# RGB image mode:
+# "rgb"  : feed the three RGB channels to cellpose directly
+# "gray" : convert to grayscale first, usually saves GPU memory
 RGB_MODE = "gray"
 
 BATCH_SIZE = 4
@@ -53,8 +53,8 @@ class LargeTiffReader:
             self.store = self.series.aszarr()
             z = zarr.open(self.store, mode="r")
 
-            # 有些 tifffile.aszarr() 返回 array
-            # 有些返回 group，真正图像在 "0"
+            # sometimes tifffile.aszarr() returns an array,
+            # sometimes a group with the real image under "0"
             if hasattr(z, "shape"):
                 self.arr = z
             else:
@@ -66,21 +66,21 @@ class LargeTiffReader:
                 elif len(keys) > 0:
                     self.arr = z[keys[0]]
                 else:
-                    raise ValueError("zarr group 中没有可用 array")
+                    raise ValueError("no usable array in the zarr group")
 
             self.shape = self.arr.shape
             self.dtype = self.arr.dtype
             self.use_zarr = True
 
-            print("读取方式: zarr lazy tiled reader")
+            print("read mode: zarr lazy tiled reader")
             print("zarr array shape:", self.shape)
             print("zarr array dtype :", self.dtype)
 
         except Exception as e:
             self.arr = None
             self.use_zarr = False
-            print("读取方式: tifffile fallback reader")
-            print("zarr lazy reader 不可用，原因:", repr(e))
+            print("read mode: tifffile fallback reader")
+            print("zarr lazy reader unavailable, reason:", repr(e))
 
     def read(self, key):
         if self.use_zarr:
@@ -136,7 +136,7 @@ def main():
     print(f"Input : {input_path}")
     print(f"Output: {output_path}")
 
-    print("\n[1/4] 读取 TIFF 元信息...")
+    print("\n[1/4] reading TIFF metadata...")
     reader = LargeTiffReader(input_path)
     img_shape = reader.shape
     img_dtype = reader.dtype
@@ -164,7 +164,7 @@ def main():
             elif RGB_MODE == "rgb":
                 return rgb
             else:
-                raise ValueError("RGB_MODE 只能是 'gray' 或 'rgb'")
+                raise ValueError("RGB_MODE must be 'gray' or 'rgb'")
 
     elif ndim == 3 and img_shape[0] in (3, 4):
         H, W = img_shape[1], img_shape[2]
@@ -178,16 +178,16 @@ def main():
             elif RGB_MODE == "rgb":
                 return rgb
             else:
-                raise ValueError("RGB_MODE 只能是 'gray' 或 'rgb'")
+                raise ValueError("RGB_MODE must be 'gray' or 'rgb'")
 
     else:
-        raise ValueError(f"暂不支持该图像维度: shape={img_shape}")
+        raise ValueError(f"unsupported image dimensionality: shape={img_shape}")
 
     print(f"image mode: {image_mode}")
     print(f"processed size: H={H}, W={W}")
     print(f"RGB_MODE: {RGB_MODE}")
 
-    print("\n[2/4] 加载 Cellpose-SAM 模型...")
+    print("\n[2/4] loading the Cellpose-SAM model...")
     model_start = time.perf_counter()
 
     model = models.CellposeModel(
@@ -196,12 +196,12 @@ def main():
     )
 
     model_time = time.perf_counter() - model_start
-    print(f"模型加载耗时: {format_time(model_time)}")
+    print(f"model load time: {format_time(model_time)}")
 
     tiles = list(iter_tiles(H, W, TILE_SIZE, OVERLAP))
     total_tiles = len(tiles)
 
-    print("\n[3/4] 开始分块分割...")
+    print("\n[3/4] starting tiled segmentation...")
     print(f"tile size: {TILE_SIZE}")
     print(f"overlap  : {OVERLAP}")
     print(f"tiles    : {total_tiles}")
@@ -259,15 +259,15 @@ def main():
             avg_time = sum(tile_times) / len(tile_times)
             remaining = avg_time * (total_tiles - idx)
             print(
-                f"已完成 {idx}/{total_tiles} | "
-                f"平均每块 {avg_time:.2f}s | "
-                f"预计剩余 {format_time(remaining)}"
+                f"done {idx}/{total_tiles} | "
+                f"mean per tile {avg_time:.2f}s | "
+                f"estimated remaining {format_time(remaining)}"
             )
 
         del tile_img, masks, flows, styles, core
         gc.collect()
 
-    print("\n[4/4] 写出 mask 文件...")
+    print("\n[4/4] writing the mask file...")
     write_start = time.perf_counter()
 
     with tiff.TiffWriter(output_path, bigtiff=True) as writer:
@@ -284,17 +284,17 @@ def main():
 
     reader.close()
 
-    print("\n========== 完成 ==========")
-    print(f"输出文件: {output_path}")
-    print(f"最大 label id: {next_label - 1}")
-    print(f"模型加载耗时: {format_time(model_time)}")
-    print(f"写出文件耗时: {format_time(write_time)}")
-    print(f"总耗时      : {format_time(total_time)}")
+    print("\n========== Done ==========")
+    print(f"output file: {output_path}")
+    print(f"max label id: {next_label - 1}")
+    print(f"model load time: {format_time(model_time)}")
+    print(f"write time: {format_time(write_time)}")
+    print(f"total time      : {format_time(total_time)}")
 
     if tile_times:
-        print(f"平均每 tile 耗时: {sum(tile_times) / len(tile_times):.2f}s")
-        print(f"最快 tile 耗时  : {min(tile_times):.2f}s")
-        print(f"最慢 tile 耗时  : {max(tile_times):.2f}s")
+        print(f"mean per-tile time: {sum(tile_times) / len(tile_times):.2f}s")
+        print(f"fastest tile time  : {min(tile_times):.2f}s")
+        print(f"slowest tile time  : {max(tile_times):.2f}s")
 
 
 if __name__ == "__main__":

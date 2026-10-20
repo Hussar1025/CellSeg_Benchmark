@@ -1,31 +1,33 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Mesmer (DeepCell) × Xenium 细胞分割 benchmark
-=============================================
+Mesmer (DeepCell) x Xenium cell segmentation benchmark
+=====================================================
 
-结构与 Cellpose / CelloType 版一致：读形态学图 → Mesmer 分割（预测） → 构建 GT → 形状对齐 → 调 test.py 指标。
-两个数据集：
-  1) xenium_roi_crop/  —— GT = manual_labels.npy（手动标注 label mask）
-  2) xenium_breast/    —— GT = 官方 cell_boundaries.parquet 栅格化得到的 label mask（默认只跑居中 5k×5k ROI）
-结果分别写入各自的输出文件夹。
+Structure matches the Cellpose / CelloType versions: read morphology image -> Mesmer segmentation (prediction) -> build GT -> shape alignment -> call test.py metrics.
+Two datasets:
+  1) xenium_roi_crop/  -- GT = manual_labels.npy (manually annotated label mask)
+  2) xenium_breast/    -- GT = label mask rasterized from the official cell_boundaries.parquet (by default only a centered 5k x 5k ROI)
+Results are written to each dataset's own output folder.
 
-Mesmer 要点（据 DeepCell 官方文档 https://deepcell.readthedocs.io 与 mesmer.py 源码）
+Mesmer essentials (per DeepCell docs https://deepcell.readthedocs.io and the mesmer.py source)
 -----------------------------------------------------------------------------------
-- API：from deepcell.applications import Mesmer; app = Mesmer()（首次会下载预训练权重）
-       labeled = app.predict(X, image_mpp=<µm/px>, compartment='whole-cell')  -> (batch,H,W,1)
-- 输入 X 形状 (batch, H, W, 2)：**通道0=核(DAPI)、通道1=膜/胞质**（顺序不能反）。
-- image_mpp 是「输入图的真实分辨率」(µm/px)。Mesmer 训练分辨率为 app.model_mpp(=0.5)，
-  会据 image_mpp 把输入缩放到 0.5 推理、再把标签缩放回原尺寸。所以要传 pixel_size×下采样因子，
-  Xenium≈0.2125，**不要固定传 0.5**（传错会严重掉点）。Mesmer 内部自带百分位归一化，输入传原始强度即可。
+- API: from deepcell.applications import Mesmer; app = Mesmer() (downloads pretrained weights on first use)
+       labeled = app.predict(X, image_mpp=<um/px>, compartment='whole-cell')  -> (batch,H,W,1)
+- Input X shape (batch, H, W, 2): **channel 0 = nucleus (DAPI), channel 1 = membrane/cytoplasm** (order matters).
+- image_mpp is the true resolution of the input image (um/px). Mesmer's training resolution is app.model_mpp (=0.5);
+  it resamples the input to 0.5 for inference and scales the labels back. So pass pixel_size x downsample factor,
+  Xenium ~0.2125, **do not hard-code 0.5** (a wrong value costs a lot of accuracy). Mesmer normalizes
+  internally by percentiles, so pass raw intensities.
 
-语义说明（与前两版相同）
+Semantics (same as the previous two versions)
 ------------------------
-test.py 的 evaluate_single_mask_against_cellpose(cellpose_gt_mask, pred_mask) 把第一个槽当 reference。
-本 benchmark 里 **Mesmer 是被测方法**：真值放第一个槽、Mesmer 预测放第二个槽，指标方向即为「评估 Mesmer」。
+test.py's evaluate_single_mask_against_cellpose(cellpose_gt_mask, pred_mask) takes the first slot as reference.
+In this benchmark **Mesmer is the method under test**: ground truth in the first slot, Mesmer prediction in the
+second, so the metrics direction is "evaluate Mesmer".
 
-依赖：numpy, pandas, scikit-image, scipy, tifffile, pyarrow, deepcell(-tf)
-      首次运行 Mesmer() 下载权重可能需要 DeepCell API key（设环境变量 DEEPCELL_ACCESS_TOKEN）。
+Dependencies: numpy, pandas, scikit-image, scipy, tifffile, pyarrow, deepcell(-tf)
+      The first Mesmer() run downloads weights and may need a DeepCell API key (env DEEPCELL_ACCESS_TOKEN).
 """
 
 import os
@@ -45,9 +47,9 @@ from skimage.draw import polygon as sk_polygon
 
 
 # ---------------------------------------------------------------------------- #
-# test.py（指标实现）的位置
+# Location of test.py (metric implementation)
 # ---------------------------------------------------------------------------- #
-TEST_PY_PATH = "/data/qiuyijia/eval/test.py"
+TEST_PY_PATH = "yourpath/eval/test.py"
 
 
 def _load_metrics():
@@ -64,8 +66,8 @@ def _load_metrics():
         return mod
     except ImportError as e:
         raise ImportError(
-            "找不到 test.py：请把脚本顶部的 TEST_PY_PATH 改成 test.py 的绝对路径，"
-            "或把 test.py 放到与本脚本同一目录。"
+            "test.py not found: set TEST_PY_PATH at the top of this script to the absolute path of test.py, "
+            "or put test.py in the same directory as this script."
         ) from e
 
 
@@ -73,31 +75,31 @@ metrics = _load_metrics()
 
 
 # ============================================================================ #
-# 配置区
+# Config
 # ============================================================================ #
-XENIUM_DEFAULT_PIXEL_SIZE = 0.2125  # µm/px，读不到 experiment 时的兜底值
+XENIUM_DEFAULT_PIXEL_SIZE = 0.2125  # um/px; fallback when experiment cannot be read
 
-# Mesmer 全局参数
+# Global Mesmer params
 MESMER = dict(
-    compartment="whole-cell",   # 'whole-cell' | 'nuclear' | 'both'（GT 是全细胞→whole-cell）
+    compartment="whole-cell",   # 'whole-cell' | 'nuclear' | 'both' (GT is whole-cell -> whole-cell)
     batch_size=4,
-    image_mpp=None,             # None=自动用 pixel_size×factor；想强制某值就填数字
-    # 可选后处理，例如更严格的内部阈值：{'interior_threshold': 0.5}
+    image_mpp=None,             # None = pixel_size x factor automatically; set a number to force a value
+    # optional postprocessing, e.g. a stricter interior threshold: {'interior_threshold': 0.5}
     postprocess_kwargs_whole_cell=None,
     postprocess_kwargs_nuclear=None,
 )
 
-# 通道约定：Xenium morphology_focus 通道 0 = DAPI(核)，通道 1 = 膜染色(ATP1A1/CD45/E-cad)
+# Channel convention: Xenium morphology_focus channel 0 = DAPI (nucleus), channel 1 = membrane stain (ATP1A1/CD45/E-cad)
 NUCLEUS_IDX = 0
 MEMBRANE_IDX = 1
 
-PARENT_OUT = "/data/qiuyijia/Mesmer"
+PARENT_OUT = "yourpath/Mesmer"
 
 DATASETS = [
     dict(
         name="xenium_mouse_brain",
-        dataset_dir="/data/qiuyijia/dataset/xenium_mouse_brain/outs",  # 注意：路径到outs/
-        output_dir="/data/qiuyijia/Mesmer/xenium_mouse_brain_output",
+        dataset_dir="yourpath/dataset/xenium_mouse_brain/outs",  # note: path goes to outs/
+        output_dir="yourpath/Mesmer/xenium_mouse_brain_output",
         gt_type="xenium_boundaries",
         boundaries="cell_boundaries.parquet",
         experiment="experiment.xenium",
@@ -113,7 +115,7 @@ IOU_THRESHOLD = 0.5
 
 
 # ---------------------------------------------------------------------------- #
-# 形态学图像读取（金字塔层 + 两种命名 + 单/多通道文件）
+# Morphology image loading (pyramid level + two naming schemes + single/multi-channel files)
 # ---------------------------------------------------------------------------- #
 def _read_level(path, pyramid_level):
     with tifffile.TiffFile(path) as tf:
@@ -124,8 +126,8 @@ def _read_level(path, pyramid_level):
             levels = [series]
         L = int(np.clip(pyramid_level, 0, len(levels) - 1))
         if L != pyramid_level:
-            warnings.warn(f"{os.path.basename(path)}: 只有 {len(levels)} 个金字塔层，"
-                          f"pyramid_level={pyramid_level} 被截断到 {L}")
+            warnings.warn(f"{os.path.basename(path)}: only {len(levels)} pyramid levels, "
+                          f"pyramid_level={pyramid_level} truncated to {L}")
         arr = np.asarray(levels[L].asarray())
         base_h = levels[0].shape[-2]
         cur_h = levels[L].shape[-2]
@@ -176,18 +178,18 @@ def load_morphology_channels(dataset_dir, pyramid_level=0):
             chs = _split_channels(arr)
             if len(chs) > 1:
                 chs = [np.max(np.stack(chs, 0), 0)]
-            warnings.warn(f"{dataset_dir}: 未找到 morphology_focus/，退回 {cand}（仅核通道）")
+            warnings.warn(f"{dataset_dir}: morphology_focus/ not found, falling back to {cand} (nucleus channel only)")
             return dict(channels=chs, names=[cand], factor=factor)
 
-    raise FileNotFoundError(f"{dataset_dir}: 找不到任何形态学 OME-TIFF")
+    raise FileNotFoundError(f"{dataset_dir}: no morphology OME-TIFF found")
 
 
 # ---------------------------------------------------------------------------- #
-# 组装 Mesmer 输入：(1, H, W, 2)，通道0=核、通道1=膜
+# Assemble the Mesmer input: (1, H, W, 2), channel 0 = nucleus, channel 1 = membrane
 # ---------------------------------------------------------------------------- #
 def assemble_mesmer_input(channels, use_membrane=True,
                           nucleus_idx=NUCLEUS_IDX, membrane_idx=MEMBRANE_IDX):
-    """返回 (X[1,H,W,2] float32, mode)。Mesmer 内部自带归一化，这里传原始强度即可。"""
+    """Return (X[1,H,W,2] float32, mode). Mesmer normalizes internally, so raw intensity is fine here."""
     n = len(channels)
     nuc = (channels[nucleus_idx] if nucleus_idx < n else channels[0]).astype(np.float32)
     H, W = nuc.shape
@@ -202,10 +204,10 @@ def assemble_mesmer_input(channels, use_membrane=True,
 
 
 # ---------------------------------------------------------------------------- #
-# Mesmer 分割
+# Mesmer segmentation
 # ---------------------------------------------------------------------------- #
 def run_mesmer(X, image_mpp, cfg=MESMER):
-    """跑 Mesmer，返回 int32 实例 label mask [H,W]，以及运行时间和峰值内存。"""
+    """Run Mesmer; return the int32 instance label mask [H,W] plus elapsed time and peak memory."""
     from deepcell.applications import Mesmer
     app = Mesmer()
 
@@ -218,7 +220,7 @@ def run_mesmer(X, image_mpp, cfg=MESMER):
     if cfg.get("postprocess_kwargs_nuclear"):
         predict_kwargs["postprocess_kwargs_nuclear"] = cfg["postprocess_kwargs_nuclear"]
 
-    # 记录开始时间和内存
+    # record start time and memory
     process = psutil.Process()
     start_time = time.time()
     mem_before = process.memory_info().rss / 1024 / 1024  # MB
@@ -227,10 +229,10 @@ def run_mesmer(X, image_mpp, cfg=MESMER):
     try:
         labeled = app.predict(X, **predict_kwargs)
     except TypeError:
-        # 个别版本不支持某些 kwargs，退回最简调用
+        # some versions reject certain kwargs; fall back to the minimal call
         labeled = app.predict(X, image_mpp=mpp, compartment=cfg["compartment"])
 
-    # 记录结束时间和峰值内存
+    # record end time and peak memory
     end_time = time.time()
     mem_after = process.memory_info().rss / 1024 / 1024  # MB
     peak_mem = max(peak_mem, mem_after)
@@ -238,7 +240,7 @@ def run_mesmer(X, image_mpp, cfg=MESMER):
     elapsed_time = end_time - start_time
 
     lab = np.asarray(labeled)
-    # whole-cell / nuclear → (1,H,W,1)；both → (1,H,W,2)，取通道0=whole-cell
+    # whole-cell / nuclear -> (1,H,W,1); both -> (1,H,W,2); take channel 0 = whole-cell
     if lab.ndim == 4:
         lab = lab[0, ..., 0]
     else:
@@ -248,18 +250,18 @@ def run_mesmer(X, image_mpp, cfg=MESMER):
 
 
 # ---------------------------------------------------------------------------- #
-# GT 构建
+# GT construction
 # ---------------------------------------------------------------------------- #
 def read_pixel_size(experiment_path, default=XENIUM_DEFAULT_PIXEL_SIZE):
-    """从 experiment.xenium / experiment_roi.json（JSON）递归找 pixel_size(µm/px)。"""
+    """Recursively find pixel_size (um/px) in experiment.xenium / experiment_roi.json (JSON)."""
     if not experiment_path or not os.path.exists(experiment_path):
-        warnings.warn(f"未找到 {experiment_path}，pixel_size 用默认 {default}")
+        warnings.warn(f"{experiment_path} not found; using default pixel_size {default}")
         return default
     try:
         with open(experiment_path, "r") as f:
             data = json.load(f)
     except Exception as e:
-        warnings.warn(f"读取 {experiment_path} 失败({e})，pixel_size 用默认 {default}")
+        warnings.warn(f"Failed to read {experiment_path} ({e}); using default pixel_size {default}")
         return default
 
     found = []
@@ -277,12 +279,12 @@ def read_pixel_size(experiment_path, default=XENIUM_DEFAULT_PIXEL_SIZE):
     _walk(data)
     if found:
         return found[0]
-    warnings.warn(f"{experiment_path} 中无 pixel_size 字段，用默认 {default}")
+    warnings.warn(f"no pixel_size field in {experiment_path}; using default {default}")
     return default
 
 
 def _find_experiment(ddir, cfg):
-    """按 cfg['experiment'] → experiment.xenium → experiment_roi.json 顺序找存在的实验文件。"""
+    """Find an existing experiment file: cfg['experiment'] -> experiment.xenium -> experiment_roi.json."""
     cands = []
     if cfg.get("experiment"):
         cands.append(cfg["experiment"])
@@ -297,20 +299,20 @@ def _find_experiment(ddir, cfg):
 def _boundary_columns(df):
     cols = {c.lower(): c for c in df.columns}
     id_col = next((cols[c] for c in ("cell_id", "label_id", "label", "id") if c in cols), None)
-    # 优先使用 local 坐标（ROI 相对坐标），没有才用全局坐标
+    # prefer local coordinates (ROI-relative); use global ones only when absent
     x_col = next((cols[c] for c in ("vertex_x_local_um", "vertex_x_local", "vertex_x", "x", "x_location", "vertex_x_um") if c in cols), None)
     y_col = next((cols[c] for c in ("vertex_y_local_um", "vertex_y_local", "vertex_y", "y", "y_location", "vertex_y_um") if c in cols), None)
     return id_col, x_col, y_col
 
 
 def rasterize_boundaries(parquet_path, out_shape, pixel_size_eff, offset=(0, 0), verbose=True):
-    """把 Xenium cell_boundaries.parquet（微米多边形）栅格化成 int32 label mask。
-    像素 = 微米 / pixel_size_eff - offset；越界部分由 skimage 自动裁掉。"""
+    """Rasterize Xenium cell_boundaries.parquet (micron polygons) into an int32 label mask.
+    pixel = micron / pixel_size_eff - offset; out-of-bounds parts are clipped by skimage."""
     row0, col0 = offset
     df = pd.read_parquet(parquet_path)
     id_col, x_col, y_col = _boundary_columns(df)
     if id_col is None or x_col is None or y_col is None:
-        raise ValueError(f"{parquet_path}: 无法识别列 (cell_id/vertex_x/vertex_y)，实际列={list(df.columns)}")
+        raise ValueError(f"{parquet_path}: cannot identify columns (cell_id/vertex_x/vertex_y), actual columns={list(df.columns)}")
 
     H, W = out_shape
     mask = np.zeros((H, W), dtype=np.int32)
@@ -338,19 +340,19 @@ def rasterize_boundaries(parquet_path, out_shape, pixel_size_eff, offset=(0, 0),
         if rr.size:
             mask[rr, cc] = label
         if verbose and label % 50000 == 0:
-            print(f"    栅格化 {label} 个细胞 ...")
+            print(f"    rasterizing {label} cells ...")
     if verbose:
-        print(f"    栅格化完成，共 {label} 个细胞 → mask {mask.shape}")
+        print(f"    rasterization done, {label} cells -> mask {mask.shape}")
     return mask
 
 
 # ---------------------------------------------------------------------------- #
-# 形状对齐 + 评估
+# Shape alignment + evaluation
 # ---------------------------------------------------------------------------- #
 def align_shapes(gt, pred):
     if gt.shape == pred.shape:
         return gt, pred
-    warnings.warn(f"GT{gt.shape} 与 Pred{pred.shape} 形状不一致，右下角补零对齐（请核对是否真正对齐）")
+    warnings.warn(f"GT{gt.shape} and Pred{pred.shape} shapes differ; zero-padding bottom-right (check that they really align)")
     H = max(gt.shape[0], pred.shape[0])
     W = max(gt.shape[1], pred.shape[1])
 
@@ -363,13 +365,13 @@ def align_shapes(gt, pred):
 
 def evaluate(gt_mask, pred_mask, dataset_name, gt_source,
              boundary_mode=BOUNDARY_MODE, iou_threshold=IOU_THRESHOLD):
-    """调 test.py 指标：GT 放 reference 槽、Mesmer 放 pred 槽；再改成无歧义字段名。"""
+    """Call test.py metrics: GT in the reference slot, Mesmer in the pred slot; then use unambiguous field names."""
     gt_mask, pred_mask = align_shapes(gt_mask, pred_mask)
 
     raw = metrics.evaluate_single_mask_against_cellpose(
         method_name="Mesmer",
-        cellpose_gt_mask=gt_mask,     # ← 真值
-        pred_mask=pred_mask,          # ← Mesmer 预测
+        cellpose_gt_mask=gt_mask,     # <- ground truth
+        pred_mask=pred_mask,          # <- Mesmer prediction
         boundary_mode=boundary_mode,
         iou_threshold=iou_threshold,
     )
@@ -389,7 +391,7 @@ def evaluate(gt_mask, pred_mask, dataset_name, gt_source,
 
 
 # ---------------------------------------------------------------------------- #
-# 单数据集流水线
+# Per-dataset pipeline
 # ---------------------------------------------------------------------------- #
 def _apply_crop(arr, crop):
     if crop is None:
@@ -403,23 +405,23 @@ def run_dataset(cfg):
     ddir = cfg["dataset_dir"]
     out_dir = cfg["output_dir"]
     os.makedirs(out_dir, exist_ok=True)
-    print(f"\n=== [{name}] {ddir}  →  {out_dir} ===")
+    print(f"\n=== [{name}] {ddir}  ->  {out_dir} ===")
 
-    # 1) 读形态学通道（整图）
+    # 1) read morphology channels (full image)
     morph = load_morphology_channels(ddir, pyramid_level=cfg.get("pyramid_level", 0))
     factor = morph["factor"]
     channels = morph["channels"]
     Himg, Wimg = channels[0].shape
-    print(f"  通道数={len(channels)}  名称={morph['names']}  下采样因子={factor:.3f}")
+    print(f"  channels={len(channels)}  names={morph['names']}  downsample factor={factor:.3f}")
 
-    # 2) 决定裁剪窗口（显式 crop 优先，否则 crop_size 居中）
+    # 2) decide the crop window (explicit crop wins, otherwise centered crop_size)
     crop = cfg.get("crop")
     if crop is None and cfg.get("crop_size"):
         s = int(cfg["crop_size"])
         y0 = max((Himg - s) // 2, 0)
         x0 = max((Wimg - s) // 2, 0)
         crop = (y0, min(y0 + s, Himg), x0, min(x0 + s, Wimg))
-        print(f"  crop_size={s} → 居中裁剪 crop={crop}（整图 {Himg}×{Wimg}）")
+        print(f"  crop_size={s} -> centered crop={crop} (full image {Himg}x{Wimg})")
 
     if crop is not None:
         channels = [_apply_crop(c, crop) for c in channels]
@@ -427,21 +429,21 @@ def run_dataset(cfg):
     X, in_mode = assemble_mesmer_input(channels, use_membrane=cfg.get("use_membrane", True))
     seg_shape = X.shape[1:3]
 
-    # 3) pixel_size → image_mpp（两个数据集都需要）
+    # 3) pixel_size -> image_mpp (needed for both datasets)
     exp_path = _find_experiment(ddir, cfg)
     base_px = read_pixel_size(exp_path)
     px_eff = base_px * factor
-    print(f"  pixel_size={base_px} µm/px  当前层 image_mpp={px_eff:.4f} µm/px")
-    print(f"  Mesmer 输入: X.shape={X.shape} 通道模式={in_mode} compartment={MESMER['compartment']}")
+    print(f"  pixel_size={base_px} um/px  image_mpp at this level={px_eff:.4f} um/px")
+    print(f"  Mesmer input: X.shape={X.shape} channel mode={in_mode} compartment={MESMER['compartment']}")
 
-    # 4) Mesmer 分割（预测）
-    print("  运行 Mesmer ...")
+    # 4) Mesmer segmentation (prediction)
+    print("  running Mesmer ...")
     pred, seg_time, peak_mem = run_mesmer(X, image_mpp=px_eff, cfg=MESMER)
-    print(f"  预测细胞数={len(metrics.get_instance_ids(pred))}  mask={pred.shape}")
-    print(f"  分割时间: {seg_time:.2f} 秒")
-    print(f"  峰值内存: {peak_mem:.2f} MB")
+    print(f"  predicted cell count={len(metrics.get_instance_ids(pred))}  mask={pred.shape}")
+    print(f"  segmentation time: {seg_time:.2f} s")
+    print(f"  peak memory: {peak_mem:.2f} MB")
 
-    # 5) 构建 GT（与预测同一裁剪窗口对齐）
+    # 5) build GT (aligned with the same crop window as the prediction)
     if cfg["gt_type"] == "xenium_boundaries":
         if crop is not None:
             y0, y1, x0, x1 = crop
@@ -453,23 +455,23 @@ def run_dataset(cfg):
                                       out_shape=seg_shape, pixel_size_eff=px_eff)
         gt_source = "xenium_official_boundaries"
     else:
-        raise ValueError(f"未知 gt_type: {cfg['gt_type']}")
-    print(f"  GT 细胞数={len(metrics.get_instance_ids(gt))}  来源={gt_source}")
+        raise ValueError(f"unknown gt_type: {cfg['gt_type']}")
+    print(f"  GT cell count={len(metrics.get_instance_ids(gt))}  source={gt_source}")
 
-    # 6) 落盘 mask（int32 tif，兼容 test.py 的 read_tif_mask）
+    # 6) write masks (int32 tif, compatible with test.py's read_tif_mask)
     pred_path = os.path.join(out_dir, f"{name}_mesmer_pred.tif")
     gt_path = os.path.join(out_dir, f"{name}_gt.tif")
     tifffile.imwrite(pred_path, pred)
     tifffile.imwrite(gt_path, gt)
-    print(f"  已保存 {pred_path} / {gt_path}")
+    print(f"  Saved {pred_path} / {gt_path}")
 
-    # 7) 指标 + 本数据集单独 CSV
+    # 7) metrics + per-dataset CSV
     result = evaluate(gt, pred, dataset_name=name, gt_source=gt_source)
     result["segmentation_time_sec"] = seg_time
     result["peak_memory_mb"] = peak_mem
     per_csv = os.path.join(out_dir, f"{name}_mesmer_metrics.csv")
     pd.DataFrame([result]).to_csv(per_csv, index=False)
-    print(f"  指标已写入 {per_csv}")
+    print(f"  metrics written to {per_csv}")
     return result
 
 
@@ -481,11 +483,11 @@ def main():
             rows.append(run_dataset(cfg))
         except Exception as e:
             import traceback
-            print(f"[ERROR] 数据集 {cfg['name']} 失败: {e}")
+            print(f"[ERROR] dataset {cfg['name']} failed: {e}")
             traceback.print_exc()
 
     if not rows:
-        print("没有成功的数据集。")
+        print("No dataset succeeded.")
         return
 
     df = pd.DataFrame(rows)
@@ -493,9 +495,9 @@ def main():
     df.to_csv(combined, index=False)
 
     pd.set_option("display.max_columns", None, "display.width", 220)
-    print("\n================ 汇总 ================")
+    print("\n================ Summary ================")
     print(df.to_string(index=False))
-    print("\n各数据集 CSV 见各自 output_dir；汇总:", combined)
+    print("\nPer-dataset CSV under each output_dir; combined:", combined)
     return df
 
 

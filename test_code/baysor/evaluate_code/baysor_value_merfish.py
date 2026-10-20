@@ -43,43 +43,43 @@ USES_PRIOR = False
 # Bounds are global MERFISH micrometres.  They are read from the ROI cache
 # metadata used to launch Baysor and are kept explicit for reproducibility.
 DATASETS = {
-    "liver1": dict(root="/data/qiuyijia/dataset/merfish_liver1",
-                   pred="/data/qiuyijia/baysor/merfish_liver1_center10000",
+    "liver1": dict(root="yourpath/dataset/merfish_liver1",
+                   pred="yourpath/baysor/merfish_liver1_center10000",
                    roi=(5236.737991920783, 6316.729987066785,
                         3811.0486839255263, 4891.037342034139),
-                   gt_tx="/data/qiuyijia/proseg/output/liver1/transcripts_roi_with_prior.csv.gz",
-                   raw_tx="/data/qiuyijia/dataset/merfish_liver1/_roi_cache/tx_roi_36396_49272_10000.parquet",
+                   gt_tx="yourpath/proseg/output/liver1/transcripts_roi_with_prior.csv.gz",
+                   raw_tx="yourpath/dataset/merfish_liver1/_roi_cache/tx_roi_36396_49272_10000.parquet",
                    label="merfish_liver1"),
-    "liver2": dict(root="/data/qiuyijia/dataset/merfish_liver2",
-                   pred="/data/qiuyijia/baysor/merfish_liver2_center10000",
+    "liver2": dict(root="yourpath/dataset/merfish_liver2",
+                   pred="yourpath/baysor/merfish_liver2_center10000",
                    roi=(5771.038686925283, 6851.029458488514,
                         4970.975379467495, 6050.964816216321),
-                   gt_tx="/data/qiuyijia/proseg/output/liver2/transcripts_roi_with_prior.csv.gz",
-                   raw_tx="/data/qiuyijia/dataset/merfish_liver2/_roi_cache/tx_roi_46028_53436_10000.parquet",
+                   gt_tx="yourpath/proseg/output/liver2/transcripts_roi_with_prior.csv.gz",
+                   raw_tx="yourpath/dataset/merfish_liver2/_roi_cache/tx_roi_46028_53436_10000.parquet",
                    label="merfish_liver2"),
-    "lung": dict(root="/data/qiuyijia/dataset/MERFISH_Lung_cancer",
-                 pred="/data/qiuyijia/baysor/MERFISH_Lung_cancer_center10000",
+    "lung": dict(root="yourpath/dataset/MERFISH_Lung_cancer",
+                 pred="yourpath/baysor/MERFISH_Lung_cancer_center10000",
                  roi=(3782.955573105985, 4862.941450365861,
                       3346.8477292572734, 4426.839168228945),
-                 gt_tx="/data/qiuyijia/baysor/merfish_gt_tx/lung/transcripts_roi_with_prior.csv.gz",
-                 raw_tx="/data/qiuyijia/dataset/MERFISH_Lung_cancer/_roi_cache/tx_roi_31434_36213_10000.parquet", label="MERFISH_Lung_cancer"),
-    "prostate1": dict(root="/data/qiuyijia/dataset/merfish_prostate1",
-                      pred="/data/qiuyijia/baysor/merfish_prostate1_center10000",
+                 gt_tx="yourpath/baysor/merfish_gt_tx/lung/transcripts_roi_with_prior.csv.gz",
+                 raw_tx="yourpath/dataset/MERFISH_Lung_cancer/_roi_cache/tx_roi_31434_36213_10000.parquet", label="MERFISH_Lung_cancer"),
+    "prostate1": dict(root="yourpath/dataset/merfish_prostate1",
+                      pred="yourpath/baysor/merfish_prostate1_center10000",
                       roi=(5355.736768078099, 6435.73020928004,
                            5298.299104035497, 6378.293212649178),
-                      gt_tx="/data/qiuyijia/baysor/merfish_gt_tx/prostate1/transcripts_roi_with_prior.csv.gz",
-                      raw_tx="/data/qiuyijia/dataset/merfish_prostate1/_roi_cache/tx_roi_50405_50185_10000.parquet", label="merfish_prostate1"),
-    "prostate2": dict(root="/data/qiuyijia/dataset/merfish_prostate2",
-                      pred="/data/qiuyijia/baysor/merfish_prostate2_center10000",
+                      gt_tx="yourpath/baysor/merfish_gt_tx/prostate1/transcripts_roi_with_prior.csv.gz",
+                      raw_tx="yourpath/dataset/merfish_prostate1/_roi_cache/tx_roi_50405_50185_10000.parquet", label="merfish_prostate1"),
+    "prostate2": dict(root="yourpath/dataset/merfish_prostate2",
+                      pred="yourpath/baysor/merfish_prostate2_center10000",
                       roi=(5264.427126244143, 6344.421012387153,
                            4702.379653633372, 5782.368867913451),
-                      gt_tx="/data/qiuyijia/baysor/merfish_gt_tx/prostate2/transcripts_roi_with_prior.csv.gz",
-                      raw_tx="/data/qiuyijia/dataset/merfish_prostate2/_roi_cache/tx_roi_44812_50242_10000.parquet", label="merfish_prostate2"),
-    "mouse_brain": dict(root="/data/qiuyijia/dataset/merfish_mouse_brain",
-                        pred="/data/qiuyijia/baysor/merfish_mouse_brain_roi_3589_5761_2327_4499",
+                      gt_tx="yourpath/baysor/merfish_gt_tx/prostate2/transcripts_roi_with_prior.csv.gz",
+                      raw_tx="yourpath/dataset/merfish_prostate2/_roi_cache/tx_roi_44812_50242_10000.parquet", label="merfish_prostate2"),
+    "mouse_brain": dict(root="yourpath/dataset/merfish_mouse_brain",
+                        pred="yourpath/baysor/merfish_mouse_brain_roi_3589_5761_2327_4499",
                         roi=(3589.0, 5761.0, 2327.0, 4499.0),
-                        gt_tx="/data/qiuyijia/proseg/output/merfish_1/transcripts_roi_with_prior.csv.gz",
-                        raw_tx="/data/qiuyijia/dataset/merfish_mouse_brain/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_detected_transcripts_S1R1.csv",
+                        gt_tx="yourpath/proseg/output/merfish_1/transcripts_roi_with_prior.csv.gz",
+                        raw_tx="yourpath/dataset/merfish_mouse_brain/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_detected_transcripts_S1R1.csv",
                         label="merfish_mouse_brain"),
 }
 
@@ -348,7 +348,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset", choices=list(DATASETS), default="liver1"); ap.add_argument("--all", action="store_true")
     ap.add_argument("--run-dir"); ap.add_argument("--segmentation"); ap.add_argument("--stats"); ap.add_argument("--data-root"); ap.add_argument("--gt-transcripts", dest="gt_transcripts", default=None)
-    ap.add_argument("--out-dir", default="/data/qiuyijia/eval_results/baysor_merfish"); ap.add_argument("--match-radius", type=float); ap.add_argument("--bridge-radius", type=float, default=5.0); ap.add_argument("--batch-size", type=int, default=1_000_000); ap.add_argument("--qv-min", type=float, default=0.0); ap.add_argument("--roi", nargs=4, type=float, metavar=("X0","X1","Y0","Y1")); ap.add_argument("--version", action="store_true")
+    ap.add_argument("--out-dir", default="yourpath/eval_results/baysor_merfish"); ap.add_argument("--match-radius", type=float); ap.add_argument("--bridge-radius", type=float, default=5.0); ap.add_argument("--batch-size", type=int, default=1_000_000); ap.add_argument("--qv-min", type=float, default=0.0); ap.add_argument("--roi", nargs=4, type=float, metavar=("X0","X1","Y0","Y1")); ap.add_argument("--version", action="store_true")
     args = ap.parse_args()
     if args.version: print(VERSION); return
     if args.all and any(getattr(args, x) is not None for x in ("run_dir","segmentation","stats","data_root","gt_transcripts","roi")): ap.error("--all cannot be combined with path/ROI overrides")

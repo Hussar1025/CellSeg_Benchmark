@@ -48,8 +48,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ROOT = "/data/qiuyijia/dataset/cosmx_lymph_node"
-OUT_TEMPLATE = "/data/qiuyijia/proseg_cosmx_lymph_node/fov{fov}"
+ROOT = "yourpath/dataset/cosmx_lymph_node"
+OUT_TEMPLATE = "yourpath/proseg_cosmx_lymph_node/fov{fov}"
 NOMINAL_UM_PX = 0.12
 FOV_SIZE = 4256
 BIN_FACTOR = 8          # matches ucs_cosmx_2.py, so the coarse grids align

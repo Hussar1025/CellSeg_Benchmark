@@ -1,27 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-eval_proseg_merfish1.py  —— ProSeg × MERFISH 小鼠脑评估（19 指标）
+eval_proseg_merfish1.py  --  ProSeg × MERFISH mouse brain evaluation (19 metrics)
 =========================================================================
-ProSeg v3 输出列名（与 xenium_3/stereo_1 相同）：
-  cell-metadata:       cell(ID,int), centroid_x, centroid_y（µm）
-  transcript-metadata: gene, assignment(float→int), background(bool), x, y（µm）
+ProSeg v3 output columns (same as xenium_3/stereo_1):
+  cell-metadata:       cell(ID,int), centroid_x, centroid_y (um)
+  transcript-metadata: gene, assignment(float->int), background(bool), x, y (um)
 
-GT：cell_metadata_S1R1.csv（center_x, center_y，µm）
-    取 ROI 内 [3589,5761] × [2327,4499] µm 的细胞
+GT: cell_metadata_S1R1.csv (center_x, center_y, um)
+    cells inside the ROI [3589,5761] x [2327,4499] um
 
-ROI 过滤：ProSeg 处理的是 ROI 内转录本，但输出质心可能略超边界，
-          pred 和 GT 均需过滤到 ROI 内确保公平比较。
+ROI filter: ProSeg processes transcripts inside the ROI, but output centroids may
+          slightly exceed the boundary; both pred and GT are filtered to the ROI
+          for a fair comparison.
 
-计数/基因向量 GT 来源：
-  transcripts_roi_with_prior.csv.gz（run 脚本生成的最近邻预分配）
-  - 不是真正独立的 GT，是 NN 基线
-  - 但这是 MERFISH 数据集能提供的最好近似
-  - 评估报告中标注"GT counts from NN assignment baseline"
+Count / gene-vector GT source:
+  transcripts_roi_with_prior.csv.gz (nearest-neighbor pre-assignment from the run script)
+  - not a truly independent GT, it is the NN baseline
+  - but the best approximation this MERFISH dataset can provide
+  - the report notes "GT counts from NN assignment baseline"
 
-assign 指标：
-  ProSeg 先验 = NN assignment（我们自建的），GT 也是 NN assignment
-  → 部分循环，assign 指标标记 NaN
+assign metric:
+  ProSeg prior = NN assignment (built by us), GT is also the NN assignment
+  -> partly circular, so the assign metrics are set to NaN
 
 conda activate proseg_eval
 python eval_proseg_merfish1.py
@@ -37,103 +38,103 @@ from scipy.spatial.distance import jensenshannon
 warnings.filterwarnings("ignore")
 SEP = "=" * 68
 
-# ── 路径 ─────────────────────────────────────────────────────────────────────
-PROSEG_DIR   = "/data/qiuyijia/proseg/output/merfish_1"
-CELL_META    = ("/data/qiuyijia/dataset/merfish_mouse_brain/"
+# ── paths ─────────────────────────────────────────────────────────────────────
+PROSEG_DIR   = "yourpath/proseg/output/merfish_1"
+CELL_META    = ("yourpath/dataset/merfish_mouse_brain/"
                 "datasets_mouse_brain_map_BrainReceptorShowcase"
                 "_Slice1_Replicate1_cell_metadata_S1R1.csv")
-PRIOR_TX     = "/data/qiuyijia/proseg/output/merfish_1/transcripts_roi_with_prior.csv.gz"
-META_ROI     = "/data/qiuyijia/proseg/output/merfish_1/cell_metadata_roi.csv"
-OUT_PATH     = "/data/qiuyijia/proseg/value/merfish_1.csv"
+PRIOR_TX     = "yourpath/proseg/output/merfish_1/transcripts_roi_with_prior.csv.gz"
+META_ROI     = "yourpath/proseg/output/merfish_1/cell_metadata_roi.csv"
+OUT_PATH     = "yourpath/proseg/value/merfish_1.csv"
 
 ROI_X0, ROI_X1 = 3589.0, 5761.0
 ROI_Y0, ROI_Y1 = 2327.0, 4499.0
-MATCH_RADIUS   = 10.0   # µm；脑细胞 ~10µm 直径
+MATCH_RADIUS   = 10.0   # um; brain cells ~10 um diameter
 
 os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
 
-print(SEP); print("ProSeg × MERFISH 小鼠脑 评估"); print(SEP)
+print(SEP); print("ProSeg × MERFISH mouse brain evaluation"); print(SEP)
 print(f"ROI: x[{ROI_X0},{ROI_X1}]  y[{ROI_Y0},{ROI_Y1}] µm")
-print("注：count/vec GT 使用 NN 预分配基线（非独立 GT，评估时备注）")
+print("note: count/vec GT uses the NN pre-assignment baseline (not independent GT; noted in evaluation)")
 
 # ════════════════════════════════════════════════════════════════════════
-# 1. 读 ProSeg cell-metadata，过滤到 ROI
+# 1. read ProSeg cell-metadata, filter to ROI
 # ════════════════════════════════════════════════════════════════════════
-print("\n[1] 读 ProSeg cell-metadata ...")
+print("\n[1] read ProSeg cell-metadata ...")
 pred_all = pd.read_csv(os.path.join(PROSEG_DIR, "cell-metadata.csv.gz"))
-print(f"  全部输出: {len(pred_all):,} 细胞")
+print(f"  all output: {len(pred_all):,} cells")
 print(f"  centroid_x: [{pred_all.centroid_x.min():.0f},{pred_all.centroid_x.max():.0f}]")
-# ROI 过滤
+# ROI filter
 pred = pred_all[
     (pred_all.centroid_x >= ROI_X0) & (pred_all.centroid_x < ROI_X1) &
     (pred_all.centroid_y >= ROI_Y0) & (pred_all.centroid_y < ROI_Y1)
 ].reset_index(drop=True).copy()
-print(f"  ROI 内 pred: {len(pred):,} 细胞")
+print(f"  pred in ROI: {len(pred):,} cells")
 pred_xy = pred[["centroid_x","centroid_y"]].values.astype(float)
 n_pred  = len(pred)
 
 # ════════════════════════════════════════════════════════════════════════
-# 2. 读 GT（cell_metadata_S1R1.csv，独立来源）
+# 2. read GT (cell_metadata_S1R1.csv, independent source)
 # ════════════════════════════════════════════════════════════════════════
-print("\n[2] 读 GT (cell_metadata_S1R1.csv) ...")
+print("\n[2] read GT (cell_metadata_S1R1.csv) ...")
 meta = pd.read_csv(CELL_META).rename(columns={"Unnamed: 0": "cell_id_orig"})
 gt = meta[
     (meta.center_x >= ROI_X0) & (meta.center_x < ROI_X1) &
     (meta.center_y >= ROI_Y0) & (meta.center_y < ROI_Y1)
 ].reset_index(drop=True).copy()
-gt["gt_idx"] = np.arange(len(gt))   # 0-based 索引
+gt["gt_idx"] = np.arange(len(gt))   # 0-based index
 n_gt    = len(gt)
 gt_xy   = gt[["center_x","center_y"]].values.astype(float)
-print(f"  ROI 内 GT: {n_gt:,} 细胞")
+print(f"  GT in ROI: {n_gt:,} cells")
 print(f"  GT center_x: [{gt_xy[:,0].min():.0f},{gt_xy[:,0].max():.0f}] µm")
 
-# 坐标范围检查
+# coordinate range check
 px_span = pred_xy[:,0].max() - pred_xy[:,0].min()
 gx_span = gt_xy[:,0].max()   - gt_xy[:,0].min()
 print(f"  x span: pred={px_span:.0f}µm  GT={gx_span:.0f}µm"
-      f"  {'✓' if abs(px_span-gx_span)/max(px_span,gx_span)<0.4 else '⚠ 差异较大'}")
+      f"  {'✓' if abs(px_span-gx_span)/max(px_span,gx_span)<0.4 else '⚠ large discrepancy'}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 3. 读 ProSeg transcript-metadata（pred 计数 + 基因向量）
+# 3. read ProSeg transcript-metadata (pred counts + gene vector)
 # ════════════════════════════════════════════════════════════════════════
-print("\n[3] 读 ProSeg transcript-metadata ...")
+print("\n[3] read ProSeg transcript-metadata ...")
 tx_pred = pd.read_csv(os.path.join(PROSEG_DIR, "transcript-metadata.csv.gz"))
-print(f"  总转录本: {len(tx_pred):,}  列: {list(tx_pred.columns)}")
+print(f"  total transcripts: {len(tx_pred):,}  cols: {list(tx_pred.columns)}")
 tx_asgn = tx_pred[tx_pred["background"] == False].copy()
 tx_asgn["cell_int"] = tx_asgn["assignment"].astype(int)
 pred_cnt_ser  = tx_asgn.groupby("cell_int").size()
 pred_gene_grp = tx_asgn.groupby(["cell_int","gene"]).size().unstack(fill_value=0)
-print(f"  非背景转录本: {len(tx_asgn):,}  分配率: {len(tx_asgn)/len(tx_pred)*100:.1f}%")
+print(f"  non-background transcripts: {len(tx_asgn):,}  assignment rate: {len(tx_asgn)/len(tx_pred)*100:.1f}%")
 
 # ════════════════════════════════════════════════════════════════════════
-# 4. 读 GT 计数基线（NN 预分配的 transcripts_roi_with_prior）
+# 4. read GT count baseline (NN pre-assigned transcripts_roi_with_prior)
 # ════════════════════════════════════════════════════════════════════════
-print("\n[4] 读 GT 转录本基线（NN 预分配）...")
+print("\n[4] read GT transcript baseline (NN pre-assignment)...")
 gt_cnt_ser   = pd.Series(dtype=int)
 gt_gene_grp  = None
 if os.path.exists(PRIOR_TX):
     tx_prior = pd.read_csv(PRIOR_TX)
-    print(f"  prior 转录本: {len(tx_prior):,}  列: {list(tx_prior.columns)}")
-    # cell_metadata_roi.csv 有 cell_id（1-based sequential）对应 GT 细胞
+    print(f"  prior transcripts: {len(tx_prior):,}  cols: {list(tx_prior.columns)}")
+    # cell_metadata_roi.csv has cell_id (1-based sequential) matching GT cells
     if os.path.exists(META_ROI):
         meta_roi = pd.read_csv(META_ROI)
-        # meta_roi 的 cell_id 是 1-based，对应 tx_prior 的 cell_id
-        # meta_roi 的行顺序对应 gt（两者都按 ROI 过滤后的相同细胞）
-        # 但 gt 用的是 cell_id_orig，meta_roi 用的是 sequential cell_id
-        # 需要通过 center_x/y 做对齐
+        # meta_roi cell_id is 1-based, matching tx_prior cell_id
+        # meta_roi row order matches gt (both are the same cells filtered by ROI)
+        # but gt uses cell_id_orig while meta_roi uses sequential cell_id
+        # so align via center_x/y
         gt_cnt_ser = tx_prior[tx_prior.cell_id > 0].groupby("cell_id").size()
         gt_gene_grp = (tx_prior[tx_prior.cell_id > 0]
                        .groupby(["cell_id","gene"]).size().unstack(fill_value=0))
-        print(f"  GT 计数（NN 基线）: {len(gt_cnt_ser):,} 细胞有计数")
+        print(f"  GT counts (NN baseline): {len(gt_cnt_ser):,} cells with counts")
     else:
-        print("  cell_metadata_roi.csv 不存在，count/vec 指标跳过")
+        print("  cell_metadata_roi.csv not found; skip count/vec metrics")
 else:
-    print(f"  {PRIOR_TX} 不存在，count/vec 指标跳过")
+    print(f"  {PRIOR_TX} not found; skip count/vec metrics")
 
 # ════════════════════════════════════════════════════════════════════════
-# 5. 匹配
+# 5. match
 # ════════════════════════════════════════════════════════════════════════
-print(f"\n[5] 匹配（radius={MATCH_RADIUS}µm）...")
+print(f"\n[5] match (radius={MATCH_RADIUS} um)...")
 tree = cKDTree(gt_xy)
 dists, gi = tree.query(pred_xy, k=1, distance_upper_bound=MATCH_RADIUS)
 best = {}
@@ -155,13 +156,13 @@ pi_arr = [p[0] for p in pairs]
 gi_arr = [p[1] for p in pairs]
 
 # ════════════════════════════════════════════════════════════════════════
-# 6. 计数指标（需要 GT 基线）
+# 6. count metrics (needs GT baseline)
 # ════════════════════════════════════════════════════════════════════════
 count_pearson = count_spearman = count_mae = count_rmse = np.nan
 if len(gt_cnt_ser) > 0 and os.path.exists(META_ROI):
-    # 将 meta_roi 的 cell_id 与 GT 的行对齐（通过质心匹配）
+    # align meta_roi cell_id with GT rows (via centroid matching)
     meta_roi = pd.read_csv(META_ROI)
-    # meta_roi 列: cell_id, center_x, center_y
+    # meta_roi columns: cell_id, center_x, center_y
     tree_meta = cKDTree(meta_roi[["center_x","center_y"]].values)
     d_gt, idx_gt = tree_meta.query(gt_xy, k=1, distance_upper_bound=2.0)
     gt["meta_cell_id"] = np.where(
@@ -181,17 +182,17 @@ if len(gt_cnt_ser) > 0 and os.path.exists(META_ROI):
         count_spearman, _ = spearmanr(p_cnt[valid], g_cnt[valid])
         count_mae   = float(np.mean(np.abs(p_cnt - g_cnt)))
         count_rmse  = float(np.sqrt(np.mean((p_cnt - g_cnt)**2)))
-        print(f"\n[6] 计数: pearson={count_pearson:.4f}  "
-              f"spearman={count_spearman:.4f}  (有效对 {valid.sum():,})")
+        print(f"\n[6] counts: pearson={count_pearson:.4f}  "
+              f"spearman={count_spearman:.4f}  (valid pairs {valid.sum():,})")
     else:
-        print(f"\n[6] 计数: 有效对太少（{valid.sum()}），跳过")
+        print(f"\n[6] counts: too few valid pairs ({valid.sum()}); skip")
 
 # ════════════════════════════════════════════════════════════════════════
-# 7. 基因向量
+# 7. gene vector
 # ════════════════════════════════════════════════════════════════════════
 vec_cosine = vec_js = vec_pearson = np.nan
 if gt_gene_grp is not None and os.path.exists(META_ROI):
-    print("\n[7] 基因向量 ...")
+    print("\n[7] gene vector ...")
     gene_names_all = np.sort(tx_asgn["gene"].dropna().unique())
     g2i = {g_: i for i, g_ in enumerate(gene_names_all)}
     ng  = len(gene_names_all)
@@ -232,7 +233,7 @@ if gt_gene_grp is not None and os.path.exists(META_ROI):
     print(f"  cosine={vec_cosine:.4f}  JS={vec_js:.4f}  pearson={vec_pearson:.4f}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 汇总
+# summary
 # ════════════════════════════════════════════════════════════════════════
 metrics = dict(
     gt_cells        = n_gt,
@@ -252,14 +253,14 @@ metrics = dict(
     vec_cosine      = round(vec_cosine,  4) if not np.isnan(vec_cosine)  else np.nan,
     vec_js_dist     = round(vec_js,      4) if not np.isnan(vec_js)      else np.nan,
     vec_pearson     = round(vec_pearson, 4) if not np.isnan(vec_pearson) else np.nan,
-    assign_overlap  = np.nan,   # 先验=GT NN基线，同源，跳过
-    assign_accuracy = np.nan,   # 同上
+    assign_overlap  = np.nan,   # prior = GT NN baseline (same source); skip
+    assign_accuracy = np.nan,   # same as above
 )
 
-print(f"\n{SEP}\n结果 (ProSeg × MERFISH 小鼠脑)\n{SEP}")
+print(f"\n{SEP}\nResult (ProSeg × MERFISH mouse brain)\n{SEP}")
 for k, v in metrics.items():
     print(f"  {k:22} {v}")
 pd.DataFrame([metrics]).to_csv(OUT_PATH, index=False)
-print(f"\n  已写 → {OUT_PATH}")
-print("  注：count/vec GT 为 NN 分配基线；assign 因先验=GT 跳过；检测/定位指标有效")
+print(f"\n  written -> {OUT_PATH}")
+print("  note: count/vec GT is the NN assignment baseline; assign skipped because prior = GT; detection/localization metrics are valid")
 print(SEP)

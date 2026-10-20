@@ -70,24 +70,24 @@ VERSION = "2026.08.13-idbridge"
 
 DATASETS = {
     "liver1": dict(
-        data_root="/data/qiuyijia/dataset/merfish_liver1",
+        data_root="yourpath/dataset/merfish_liver1",
         roi_y0=36396,
         roi_x0=49272,
-        ucs_dir="/data/qiuyijia/ucs_merfish_liver1",
-        proseg_dir="/data/qiuyijia/proseg/output/liver1",
-        cellist_dir="/data/qiuyijia/cellist/merfish_liver1",
-        comseg_dir="/data/qiuyijia/comseg/merfish_liver1",
-        genesegnet_dir="/data/qiuyijia/genesegnet_merfish_liver/liver1",
+        ucs_dir="yourpath/ucs_merfish_liver1",
+        proseg_dir="yourpath/proseg/output/liver1",
+        cellist_dir="yourpath/cellist/merfish_liver1",
+        comseg_dir="yourpath/comseg/merfish_liver1",
+        genesegnet_dir="yourpath/genesegnet_merfish_liver/liver1",
     ),
     "liver2": dict(
-        data_root="/data/qiuyijia/dataset/merfish_liver2",
+        data_root="yourpath/dataset/merfish_liver2",
         roi_y0=46028,
         roi_x0=53436,
-        ucs_dir="/data/qiuyijia/ucs_merfish_liver2",
-        proseg_dir="/data/qiuyijia/proseg/output/liver2",
-        cellist_dir="/data/qiuyijia/cellist/merfish_liver2",
-        comseg_dir="/data/qiuyijia/comseg/merfish_liver2",
-        genesegnet_dir="/data/qiuyijia/genesegnet_merfish_liver/liver2",
+        ucs_dir="yourpath/ucs_merfish_liver2",
+        proseg_dir="yourpath/proseg/output/liver2",
+        cellist_dir="yourpath/cellist/merfish_liver2",
+        comseg_dir="yourpath/comseg/merfish_liver2",
+        genesegnet_dir="yourpath/genesegnet_merfish_liver/liver2",
     ),
 }
 
@@ -891,7 +891,7 @@ def common_parser(method: str) -> argparse.ArgumentParser:
         description=f"Evaluate {method} on the MERFISH liver ROIs")
     p.add_argument("--datasets", default="liver1,liver2",
                    help="comma separated: liver1,liver2")
-    p.add_argument("--output-dir", default="/data/qiuyijia/eval_merfish")
+    p.add_argument("--output-dir", default="yourpath/eval_merfish")
     p.add_argument("--transcripts", default=None,
                    help="override the transcript table")
     p.add_argument("--gt-counts", choices=["auto", "official", "prior"],

@@ -6,21 +6,21 @@
 # worker with nohup, so the terminal can be closed after submission.
 #
 # Usage:
-#   /data/qiuyijia/bering/run_bering_xenium_center10000.sh
+#   yourpath/bering/run_bering_xenium_center10000.sh
 #
 # Logs:
-#   /data/qiuyijia/bering/logs/bering_xenium_center10000_launcher.log
-#   /data/qiuyijia/bering/logs/xenium7_center10000.log
-#   /data/qiuyijia/bering/logs/xenium_8_center10000.log
+#   yourpath/bering/logs/bering_xenium_center10000_launcher.log
+#   yourpath/bering/logs/xenium7_center10000.log
+#   yourpath/bering/logs/xenium_8_center10000.log
 #
 # Monitor:
-#   tail -f /data/qiuyijia/bering/logs/xenium7_center10000.log
-#   cat /data/qiuyijia/bering/logs/bering_xenium_center10000.pid
+#   tail -f yourpath/bering/logs/xenium7_center10000.log
+#   cat yourpath/bering/logs/bering_xenium_center10000.pid
 
 set -u -o pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-/data/qiuyijia/anaconda3/envs/bering/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-yourpath/anaconda3/envs/bering/bin/python}"
 RUNNER="${SCRIPT_DIR}/bering_xenium_benchmark.py"
 CONFIG_DIR="${SCRIPT_DIR}/configs"
 LOG_DIR="${SCRIPT_DIR}/logs"
@@ -55,8 +55,8 @@ preflight() {
     require_file "${cfg}" || return 1
     transcript=""
     case "${dataset}" in
-      xenium7) transcript="/data/qiuyijia/dataset/xenium7/outs/transcripts.parquet" ;;
-      xenium_8) transcript="/data/qiuyijia/dataset/xenium_8/transcripts.parquet" ;;
+      xenium7) transcript="yourpath/dataset/xenium7/outs/transcripts.parquet" ;;
+      xenium_8) transcript="yourpath/dataset/xenium_8/transcripts.parquet" ;;
     esac
     require_file "${transcript}" || return 1
   done

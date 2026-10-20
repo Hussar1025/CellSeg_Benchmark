@@ -97,7 +97,7 @@ from scipy.ndimage import gaussian_filter
 # ============================================================
 
 GENESEGNET_ROOT = (
-    "/data/qiuyijia/GeneSegNet"
+    "yourpath/GeneSegNet"
 )
 
 GENESEGNET_CODE = os.path.join(
@@ -106,13 +106,13 @@ GENESEGNET_CODE = os.path.join(
 )
 
 MODEL_POINTER = (
-    "/data/qiuyijia/"
+    "yourpath/"
     "genesegnet_merfish_brain_train/"
     "FINAL_MODEL_PATH.txt"
 )
 
 OUT_ROOT = (
-    "/data/qiuyijia/"
+    "yourpath/"
     "genesegnet_merfish_liver"
 )
 
@@ -126,30 +126,30 @@ DATASETS = {
     "liver1": {
 
         "dapi":
-            "/data/qiuyijia/dataset/merfish_liver1/images/"
+            "yourpath/dataset/merfish_liver1/images/"
             "HumanLiverCancerPatient1_images_mosaic_DAPI_z3.tif",
 
         "transform":
-            "/data/qiuyijia/dataset/merfish_liver1/images/"
+            "yourpath/dataset/merfish_liver1/images/"
             "HumanLiverCancerPatient1_images_micron_to_mosaic_pixel_transform.csv",
 
         "transcripts":
-            "/data/qiuyijia/dataset/merfish_liver1/"
+            "yourpath/dataset/merfish_liver1/"
             "detected_transcripts.csv",
     },
 
     "liver2": {
 
         "dapi":
-            "/data/qiuyijia/dataset/merfish_liver2/images/"
+            "yourpath/dataset/merfish_liver2/images/"
             "mosaic_DAPI_z3.tif",
 
         "transform":
-            "/data/qiuyijia/dataset/merfish_liver2/images/"
+            "yourpath/dataset/merfish_liver2/images/"
             "micron_to_mosaic_pixel_transform.csv",
 
         "transcripts":
-            "/data/qiuyijia/dataset/merfish_liver2/"
+            "yourpath/dataset/merfish_liver2/"
             "detected_transcripts.csv",
     },
 }

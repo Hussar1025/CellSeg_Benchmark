@@ -3,7 +3,7 @@
 DISSECT × Xenium 4 / xenium_liver evaluation.
 
 Adapted to the same ROI/evaluation logic as:
-  /data/qiuyijia/proseg/value/proseg_value_xenium_2.py
+  yourpath/proseg/value/proseg_value_xenium_2.py
 
 Key differences:
 - Prediction is DISSECT's ROI-local mask.npy.
@@ -29,14 +29,14 @@ from scipy.spatial.distance import jensenshannon
 warnings.filterwarnings("ignore")
 SEP = "=" * 72
 
-DISSECT_DIR = "/data/qiuyijia/DISSECT/xenium_benchmark/xenium_liver"
-DATA_DIR = "/data/qiuyijia/dataset/xenium_liver/outs"
+DISSECT_DIR = "yourpath/DISSECT/xenium_benchmark/xenium_liver"
+DATA_DIR = "yourpath/dataset/xenium_liver/outs"
 
 MASK_NPY = f"{DISSECT_DIR}/mask.npy"
 ROI_INFO = f"{DISSECT_DIR}/roi_info.json"
 
-OUT_CSV = "/data/qiuyijia/DISSECT/value/xenium_4.csv"
-CKPT_DIR = "/data/qiuyijia/DISSECT/value/ckpt_xenium_4"
+OUT_CSV = "yourpath/DISSECT/value/xenium_4.csv"
+CKPT_DIR = "yourpath/DISSECT/value/ckpt_xenium_4"
 
 PIXEL_SIZE = 0.2125
 MATCH_RADIUS = 12.0
@@ -50,13 +50,13 @@ def ckpt(name, fn, force=False):
     if os.path.exists(f) and not force:
         with open(f, "rb") as h:
             obj = pickle.load(h)
-        P(f"    ⚡ 复用 {name}.pkl")
+        P(f"    ⚡ reuse {name}.pkl")
         return obj
     t0 = time.time()
     obj = fn()
     with open(f, "wb") as h:
         pickle.dump(obj, h, protocol=4)
-    P(f"    ✓ {name} 完成 ({time.time()-t0:.1f}s) → {f}")
+    P(f"    ✓ {name} done ({time.time()-t0:.1f}s) → {f}")
     return obj
 
 
@@ -122,11 +122,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=OUT_CSV)
     ap.add_argument("--vec-sample", type=int, default=3000)
-    ap.add_argument("--force", action="store_true", help="忽略缓存重算")
+    ap.add_argument("--force", action="store_true", help="ignore cache and recompute")
     cfg = ap.parse_args()
 
     P(SEP)
-    P("DISSECT × Xenium 4 / xenium_liver 评估")
+    P("DISSECT × Xenium 4 / xenium_liver evaluation")
     P(SEP)
 
     info, ROI_X0_PX, ROI_Y0_PX, ROI_W, ROI_H = read_roi_info()

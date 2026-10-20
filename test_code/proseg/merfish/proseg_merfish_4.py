@@ -38,7 +38,7 @@ import pandas as pd
 
 VERSION = "2026.08.13"
 
-DATA_ROOT = "/data/qiuyijia/dataset/MERFISH_Lung_cancer"
+DATA_ROOT = "yourpath/dataset/MERFISH_Lung_cancer"
 ROI_SIZE = 10000                 # mosaic px, centred -> 1080 x 1080 um
 DAPI_HINT = "dapi"
 
@@ -556,7 +556,7 @@ PRIOR_CHOICES = ['polygon', 'centroid', 'disk']
 # ==========================================================================
 
 
-OUT_DEFAULT = "/data/qiuyijia/proseg_merfish_lung"
+OUT_DEFAULT = "yourpath/proseg_merfish_lung"
 
 
 def add_args(ap):
@@ -617,7 +617,7 @@ def find_proseg(explicit=None):
     p = which("proseg")
     if p:
         return p
-    for c in (Path.home() / ".cargo/bin/proseg", Path("/data/qiuyijia/.cargo/bin/proseg")):
+    for c in (Path.home() / ".cargo/bin/proseg", Path("yourpath/.cargo/bin/proseg")):
         if c.exists():
             return str(c)
     raise SystemExit("proseg is not on PATH; pass --proseg-bin")

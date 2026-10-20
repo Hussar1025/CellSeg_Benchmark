@@ -5,12 +5,12 @@ boms_value_cosmx_2.py
 Full-metric evaluator for BOMS @ CosMx2 FOV48 + FOV261.
 
 GT:
-  metadata: /data/qiuyijia/dataset/cosmx_lymph_node/flat_files/S0_metadata_file.csv.gz
-  transcripts: /data/qiuyijia/dataset/cosmx_lymph_node/_inspect_cache/tx_fov_48_261.parquet
+  metadata: yourpath/dataset/cosmx_lymph_node/flat_files/S0_metadata_file.csv.gz
+  transcripts: yourpath/dataset/cosmx_lymph_node/_inspect_cache/tx_fov_48_261.parquet
 
 Prediction:
-  /data/qiuyijia/boms_cosmx_2_fullgenes_hs4p5/fov48/boms_cosmx_2_fov48.npz
-  /data/qiuyijia/boms_cosmx_2_fullgenes_hs4p5/fov261/boms_cosmx_2_fov261.npz
+  yourpath/boms_cosmx_2_fullgenes_hs4p5/fov48/boms_cosmx_2_fov48.npz
+  yourpath/boms_cosmx_2_fullgenes_hs4p5/fov261/boms_cosmx_2_fov261.npz
 
 Important:
 - No GT is used to alter BOMS prediction.
@@ -31,10 +31,10 @@ PX_UM = 0.12
 FOV_PX = 4256
 FOV_UM = FOV_PX * PX_UM
 
-META = Path("/data/qiuyijia/dataset/cosmx_lymph_node/flat_files/S0_metadata_file.csv.gz")
-TX = Path("/data/qiuyijia/dataset/cosmx_lymph_node/_inspect_cache/tx_fov_48_261.parquet")
-PRED_ROOT = Path("/data/qiuyijia/boms_cosmx_2_fullgenes_hs4p5")
-OUT = Path("/data/qiuyijia/eval_results_qv20/cosmx_2")
+META = Path("yourpath/dataset/cosmx_lymph_node/flat_files/S0_metadata_file.csv.gz")
+TX = Path("yourpath/dataset/cosmx_lymph_node/_inspect_cache/tx_fov_48_261.parquet")
+PRED_ROOT = Path("yourpath/boms_cosmx_2_fullgenes_hs4p5")
+OUT = Path("yourpath/eval_results_qv20/cosmx_2")
 
 def pick(cols, candidates, required=True):
     low = {str(c).lower(): c for c in cols}

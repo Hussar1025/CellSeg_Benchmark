@@ -3,7 +3,7 @@ from pathlib import Path
 import sys
 import run_xenium_benchmark_dissect as benchmark
 
-DATASET = Path("/data/qiuyijia/dataset/xenium10")
+DATASET = Path("yourpath/dataset/xenium10")
 
 benchmark.DATASETS["xenium_10"] = benchmark.DatasetSpec(
     name="xenium_10",
@@ -14,7 +14,7 @@ benchmark.DATASETS["xenium_10"] = benchmark.DatasetSpec(
     description="pre-cropped benchmark 10000x10000 ROI",
 )
 
-benchmark.DEFAULT_OUTPUT_ROOT = Path("/data/qiuyijia/DISSECT/xenium_benchmark")
+benchmark.DEFAULT_OUTPUT_ROOT = Path("yourpath/DISSECT/xenium_benchmark")
 
 if __name__ == "__main__":
     if not any(a == "--dataset" or a.startswith("--dataset=")

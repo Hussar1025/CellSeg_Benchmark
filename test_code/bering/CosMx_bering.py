@@ -2,29 +2,31 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-Bering 单切片细胞分割 (image-free) —— CosMx Pancreas 数据
+Bering single-section cell segmentation (image-free) — CosMx Pancreas data
 ================================================================================
-基于切片 B (Xenium) 版本改编, 适配 Nanostring CosMx SMI flat-file 格式。
+Adapted from the section B (Xenium) version for the Nanostring CosMx SMI flat-file format.
 
-与原 Xenium 版本的差异 (仅数据读入/预处理, 核心管线 100% 不变):
-  1. 输入从 parquet 改为 CSV (Pancreas_tx_file.csv, 65.8M 行)
-  2. 列名映射: target→features, x_global_px→x, cell_ID→cell_id
-  3. 坐标单位: CosMx 为像素 (px), 通过 metadata Area/Area.um2 计算
-     px→μm 转换系数, 喂给 Bering 的坐标统一为 μm
-  4. 无 QV 列: CosMx 不提供转录本质量分数, 跳过 QV 过滤
-  5. 未分配标记: cell_ID==0 (Xenium 为 "UNASSIGNED")
-  6. 负对照探针前缀: SystemControl / NegPrb / FalseCode (Xenium 为 NegControlProbe 等)
-  7. 细胞类型注释: 从 CellType_Accessory_Data/*.rds (InSituType) 读取,
-     需要 pyreadr; 如果 .rds 不可用, 回退到 metadata 列或用户提供的 CSV
-  8. 全局唯一 cell_id: 使用 `cell` 列 (格式 c_{slide}_{fov}_{cellID}),
-     而非 FOV 内的 cell_ID (会跨 FOV 重复)
+Differences from the Xenium version (data loading/preprocessing only; core pipeline unchanged):
+  1. Input changed from parquet to CSV (Pancreas_tx_file.csv, 65.8M rows)
+  2. Column mapping: target→features, x_global_px→x, cell_ID→cell_id
+  3. Coordinate units: CosMx is in pixels (px); the px→µm factor is computed
+     from metadata Area / Area.um2, and Bering receives µm coordinates
+  4. No QV column: CosMx has no transcript quality score; QV filtering skipped
+  5. Unassigned marker: cell_ID==0 (Xenium uses "UNASSIGNED")
+  6. Negative-control probe prefixes: SystemControl / NegPrb / FalseCode (Xenium used NegControlProbe etc.)
+  7. Cell-type annotation: read from CellType_Accessory_Data/*.rds (InSituType),
+     requires pyreadr; if the .rds is unavailable, fall back to a metadata column or a user CSV
+  8. Globally unique cell_id: use the `cell` column (format c_{slide}_{fov}_{cellID}),
+     not the FOV-local cell_ID (which repeats across FOVs)
 
-方法学声明 (同原版):
-  * Bering 本质是"分割精修器(refinement)", 需要粗分割 + 粗细胞类型标签作为监督输入
-  * 本脚本用 CosMx 自带分割 (cell_ID) 当粗分配, InSituType 注释当 raw_labels
-  * benchmark 横向比较时需声明此起跑线差异
+Methodology note (same as original):
+  * Bering is essentially a segmentation refinement step: it needs a coarse
+    segmentation plus coarse cell-type labels as supervised input
+  * This script uses CosMx's built-in segmentation (cell_ID) as the coarse
+    assignment and the InSituType annotation as raw_labels
+  * declare this starting-point difference when benchmarking side by side
 
-输出 (写到 OUTDIR, 格式与 Xenium 版完全一致):
+Outputs (written to OUTDIR, same format as the Xenium version):
   * sliceB_transcript_assignments.csv
   * sliceB_cells.csv
   * sliceB_cell_boundaries.csv
@@ -49,164 +51,170 @@ log = logging.getLogger("bering_cosmx")
 
 
 # ============================================================================
-# CONFIG —— 改这里 (仅数据路径/列名部分改了, Bering 超参全部保持原版)
+# CONFIG — edit here (only data paths/column names differ; Bering hyperparams unchanged)
 # ============================================================================
 class CONFIG:
-    # ---- 选 GPU ----
+    # ---- GPU selection ----
     CUDA_VISIBLE_DEVICES = "1"
 
-    # ---- CosMx 数据路径 ----
-    DATA_DIR    = r"/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles"
-    TRANSCRIPTS = r"/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles/Pancreas_tx_file.csv"
-    METADATA    = r"/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles/Pancreas_metadata_file.csv"
-    # 细胞类型注释: 优先用 .rds (InSituType), 如果提供了 CSV 则用 CSV
-    # 如果你已经导出了 InSituType 到 CSV, 填这里; 否则留 None 让脚本自动读 .rds
-    ANNOTATION_CSV = None   # e.g. r"E:\...\cell_type_annotations.csv"
-    ANNOTATION_RDS = r"/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles/CellType_Accessory_Data/Pancreas_celltype_InSituType.rds"
+    # ---- CosMx data paths ----
+    DATA_DIR    = r"yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles"
+    TRANSCRIPTS = r"yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles/Pancreas_tx_file.csv"
+    METADATA    = r"yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles/Pancreas_metadata_file.csv"
+    # Cell-type annotation: prefer .rds (InSituType); use CSV if provided.
+    # If you already exported InSituType to CSV, put its path here; otherwise
+    # leave None to auto-read the .rds.
+    ANNOTATION_CSV = None   # e.g. r"yourpath/cell_type_annotations.csv"
+    ANNOTATION_RDS = r"yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles/CellType_Accessory_Data/Pancreas_celltype_InSituType.rds"
 
-    # ---- CosMx 转录本表列名 ----
+    # ---- CosMx transcript table column names ----
     COL_FOV    = "fov"
-    COL_CELLID_INT = "cell_ID"   # FOV 内整数 cell_id (0=未分配)
-    COL_CELLID_STR = "cell"      # 全局唯一字符串 cell_id (c_1_51_0 = 未分配)
+    COL_CELLID_INT = "cell_ID"   # FOV-local integer cell_id (0=unassigned)
+    COL_CELLID_STR = "cell"      # globally unique string cell_id (c_1_51_0 = unassigned)
     COL_GENE   = "target"
-    COL_X      = "x_global_px"   # 全局像素坐标
+    COL_X      = "x_global_px"   # global pixel coordinate
     COL_Y      = "y_global_px"
     COL_Z      = "z"
-    # CosMx 没有 QV 列
-    UNASSIGNED_CELL_ID_INT = 0   # cell_ID==0 表示未分配
+    # CosMx has no QV column
+    UNASSIGNED_CELL_ID_INT = 0   # cell_ID==0 means unassigned
 
-    # ---- 注释表列名 (如果用 CSV) ----
-    # CSV 格式: cell_id (全局字符串, 如 c_1_51_1), cell_type
+    # ---- Annotation table column names (CSV only) ----
+    # CSV format: cell_id (globally unique string, e.g. c_1_51_1), cell_type
     ANNOT_CELLID_COL   = "cell_id"
-    ANNOT_CELLTYPE_COL = "cell_type"   # 从 .rds 读取时自动检测
+    ANNOT_CELLTYPE_COL = "cell_type"   # auto-detected when read from .rds
 
-    # ---- 坐标转换: 像素 → 微米 ----
-    # 从 metadata 的 Area (px²) 和 Area.um2 计算; None=自动从 metadata 推算
-    PX_TO_UM = None  # 填 float 可手动覆盖, e.g. 0.12
+    # ---- Coordinate conversion: pixel → µm ----
+    # Computed from metadata Area (px²) and Area.um2; None = auto-infer from metadata
+    PX_TO_UM = None  # set a float to override manually, e.g. 0.12
 
-    # ---- 输出 ----
-    OUTDIR = r"/data/qiuyijia/dataset/bering_cosmx_output"
+    # ---- Output ----
+    OUTDIR = r"yourpath/dataset/bering_cosmx_output"
 
-    # ---- 预处理 ----
-    # CosMx 负对照/系统对照探针前缀 (在 exprMat 中为 SystemControl 列;
-    # 在 tx_file 的 target 中也可能出现)
+    # ---- Preprocessing ----
+    # CosMx negative/system control probe prefixes (SystemControl columns in
+    # exprMat; may also appear in tx_file target)
     CONTROL_PREFIXES = (
         "SystemControl", "NegPrb", "Neg_", "FalseCode",
-        "NegControlProbe", "NegControlCodeword",  # 保留 Xenium 的以防万一
+        "NegControlProbe", "NegControlCodeword",  # keep Xenium's just in case
         "BLANK", "Blank", "antisense",
         "UnassignedCodeword", "DeprecatedCodeword",
         "Intergenic", "intergenic", "GenomicControl",
     )
-    USE_3D = False   # CosMx z 是 z-stack index (0-7), 非真实 3D 深度; 用 2D
+    USE_3D = False   # CosMx z is a z-stack index (0-7), not real 3D depth; use 2D
 
-    # ---- 大文件分块读取 ----
-    # CosMx tx_file 有 4.83 GB / 65.8M 行, 一次性 read_csv 可能 OOM
-    # 设为 >0 则分块读取; 0 = 一次性读取 (需 >16 GB RAM)
-    CSV_CHUNKSIZE = 5_000_000  # 每次读 500 万行, ~16 GB 内存内可完成
+    # ---- Chunked read of the large file ----
+    # tx_file is 4.83 GB / 65.8M rows; a single read_csv may OOM.
+    # >0 = chunked read; 0 = read all at once (needs >16 GB RAM)
+    CSV_CHUNKSIZE = 5_000_000  # 5M rows per chunk, fits in ~16 GB RAM
 
-    # ---- 训练子块 ----
+    # ---- Training tile ----
     TRAIN_TILE_UM = 1500.0
     TRAIN_TILE_CENTER = None
     MIN_TRAIN_CELLS_PER_LABEL = 3
 
     # ========================================================================
-    # 内存关键区 —— CPU 训练阶段 OOM (>500GB) 的根源全在这里
+    # Memory-critical region — the source of CPU training OOM (>500GB) is all here
     # ------------------------------------------------------------------------
-    # 原因: Bering 给每张"窗口图"算的节点特征是一个稠密矩阵
-    #        (窗口内转录本数 × 基因数), 且最终强制转成 float64 (8字节)。
-    #        本数据是 CosMx **WTx (全转录组)**, 基因数 ~1.9 万,
-    #        所以单张图就极大, 图一多直接吃掉几百 GB。
-    #   单图内存 ≈ 窗口内转录本数 × 特征维数(≈基因数) × 8字节
-    #   总内存   ≈ 图数量 × 单图内存
-    #            图数量 = 类别数 × N_CELLS_PER_CLASS × N_WINDOWS_PER_CELL
+    # Reason: Bering computes each "window graph" node feature as a dense matrix
+    #        (transcripts-in-window × genes), finally forced to float64 (8 bytes).
+    #        This is CosMx **WTx (whole transcriptome)** with ~19K genes, so a
+    #        single graph is huge and many graphs eat hundreds of GB.
+    #   per-graph memory ≈ transcripts-in-window × feature dim (≈ #genes) × 8 bytes
+    #   total memory     ≈ #graphs × per-graph memory
+    #                       #graphs = #classes × N_CELLS_PER_CLASS × N_WINDOWS_PER_CELL
     #
-    #   实测 (你的日志): n_features=18996, 训练块内 1616 万转录本,
-    #   密度极高 (~7 转录本/μm²) → 一个 35μm 窗口就有近 9000 个转录本,
-    #   单图 ≈ 9000 × 19000 × 8 ≈ 1.3 GB。基因维数(~1.9万)是主因。
+    #   Measured (your log): n_features=18996, 16.16M transcripts in the train tile,
+    #   very high density (~7 transcripts/µm²) → a 35µm window holds ~9000 transcripts,
+    #   one graph ≈ 9000 × 19000 × 8 ≈ 1.3 GB. The gene dim (~19K) is the main cause.
     #
-    # 三个下压方向 (可叠加):
-    #   (A) 减少特征维数 → MAX_GENES  ★这是本数据最关键的杠杆★
-    #       WTx 深度测序下几乎每个基因都有几千计数, 所以"按稀有度过滤"
-    #       (MIN_GENE_COUNT) 几乎删不掉基因 —— 这也是你上一版仍爆的原因。
-    #       正确做法: 只保留计数最高的 K 个基因作为特征, 其余全部并到
-    #       一个 "OTHER" 特征里。**不丢弃任何转录本**, 输出完整, 只是
-    #       稀有基因不再各占一列。特征维数 19000 → K+1, 单图线性变小。
-    #   (B) 减少单图转录本数 → WINDOW_WIDTH/HEIGHT (面积平方级)
-    #   (C) 减少图的数量     → N_WINDOWS_PER_CELL / N_CELLS_PER_CLASS / MAX_TRAIN_GRAPHS
+    # Three ways to push it down (stackable):
+    #   (A) reduce feature dim → MAX_GENES  ★the key lever for this dataset★
+    #       Under WTx deep sequencing nearly every gene has thousands of counts, so
+    #       rarity filtering (MIN_GENE_COUNT) removes almost nothing — this is why
+    #       your previous version still OOM'd.
+    #       Correct fix: keep only the top-K highest-count genes as features and merge
+    #       the rest into a single "OTHER" feature. **No transcripts dropped**, output
+    #       is complete; only rare genes no longer get one column each. Feature dim
+    #       19000 → K+1, per-graph size shrinks linearly.
+    #   (B) reduce transcripts per graph → WINDOW_WIDTH/HEIGHT (area scales quadratically)
+    #   (C) reduce #graphs → N_WINDOWS_PER_CELL / N_CELLS_PER_CLASS / MAX_TRAIN_GRAPHS
     #
-    # 预设:
-    #   很稳 (~10-15GB): MAX_GENES=2000, N_CELLS=5, WINDOW=35, N_WINDOWS=1
-    #   平衡 (~25-35GB): MAX_GENES=4000, N_CELLS=6, WINDOW=40, N_WINDOWS=1
-    #   高保真(~60GB+):  MAX_GENES=8000, N_CELLS=8, WINDOW=45, N_WINDOWS=1
+    # Presets:
+    #   conservative (~10-15GB): MAX_GENES=2000, N_CELLS=5, WINDOW=35, N_WINDOWS=1
+    #   balanced (~25-35GB):     MAX_GENES=4000, N_CELLS=6, WINDOW=40, N_WINDOWS=1
+    #   high-fidelity (~60GB+):  MAX_GENES=8000, N_CELLS=8, WINDOW=45, N_WINDOWS=1
     # ========================================================================
 
-    # ---- 训练超参 (已下压, 括号内为原版值) ----
-    N_CELLS_PER_CLASS = 5        # 原版 10。每类采样的细胞数, 线性影响图数量
-    WINDOW_WIDTH = 35.0          # 原版 50。窗口边长, 面积平方级影响单图内存
-    WINDOW_HEIGHT = 35.0         # 原版 50。
-    N_WINDOWS_PER_CELL = 1       # 原版(隐式)=5。每个细胞建几张图; 合法值仅 1/3/5
-    BATCH_SIZE = 2               # 原版 4。只影响训练峰值激活, 调小更稳
+    # ---- Training hyperparams (lowered; original value in parentheses) ----
+    N_CELLS_PER_CLASS = 5        # original 10; cells sampled per class, scales #graphs linearly
+    WINDOW_WIDTH = 35.0          # original 50; window side, affects per-graph memory quadratically
+    WINDOW_HEIGHT = 35.0         # original 50
+    N_WINDOWS_PER_CELL = 1       # original (implicit) = 5; graphs per cell; only 1/3/5 valid
+    BATCH_SIZE = 2               # original 4; affects training peak activation only; smaller is safer
     INTERNAL_TRAIN_RATIO = 0.8
 
-    # 建完图后若数量超过此值就随机下采样, 兜底防极端情况 (0=不限制)
+    # If #graphs exceeds this after building, randomly downsample as a fallback for extreme cases (0=unlimited)
     MAX_TRAIN_GRAPHS = 800
 
-    # ---- ★核心杠杆★ 特征基因词表上限 (top-K by 全片计数) ----
-    # 只保留计数最高的 MAX_GENES 个基因作为独立特征列, 其余基因的转录本
-    # 仍全部保留、仍参与分割, 只是在"特征"里被并入一个 "OTHER" 桶。
-    #   → 特征维数被压到 MAX_GENES+1, 每张窗口图线性变小。
-    #   → 不丢任何转录本, 输出的基因名(gene 列)保持原始真实基因名。
-    #   → 训练/预测用同一份 top-K, 特征空间一致。
-    #   设 0 = 关闭 (保留全部 ~1.9 万基因, 与原版等价, 但极可能仍 OOM)。
+    # ---- ★key lever★ feature gene-vocabulary cap (top-K by whole-slide count) ----
+    # Keep only the top MAX_GENES genes as independent feature columns; transcripts
+    # of the rest are all kept and still participate in segmentation, but are merged
+    # into one "OTHER" bucket in the features.
+    #   → feature dim capped at MAX_GENES+1; each window graph shrinks linearly.
+    #   → no transcripts dropped; output gene names (gene column) stay real.
+    #   → train/predict share the same top-K, so feature spaces match.
+    #   Set 0 = off (keep all ~19K genes, equivalent to original, but likely still OOM).
     MAX_GENES = 2000
 
-    # 稀有基因过滤: 丢弃"全片计数 < 阈值"的基因(会丢弃对应转录本)。
-    # 对本数据基本无效(深度测序下几乎没有稀有基因), 默认关闭。留作可选项。
+    # Rare-gene filter: drop genes with whole-slide count < threshold (drops their transcripts).
+    # Largely ineffective here (deep sequencing leaves almost no rare genes); off by default.
     MIN_GENE_COUNT = 0
 
-    # 训练/预测阶段把完整前景/背景帧临时落盘, 避免它们在另一阶段白占内存
+    # Offload full foreground/background frames to disk between train and predict phases to avoid holding them in memory
     OFFLOAD_FULL_FRAMES = True
 
-    # ---- 训练阶段 GPU/CPU ----
+    # ---- Train phase GPU/CPU ----
     FORCE_CPU_TRAIN = False
     TRAIN_GPU_NEED_GIB = 30.0
 
-    # ---- 训练缓存 ----
-    USE_CACHED_TRAIN = False  # 首次必须训练; 后续只调预测端参数时改 True
+    # ---- Train cache ----
+    USE_CACHED_TRAIN = False  # first run must train; set True when only tuning prediction-side params
 
-    # ---- 预测分块 ----
-    TILE_SIZE_UM = 400.0        # 原版 600。缩小可降低单块预测峰值内存
+    # ---- Prediction tiling ----
+    TILE_SIZE_UM = 400.0        # original 600; smaller lowers per-tile peak memory
     TILE_MARGIN_UM = 30.0
     MIN_TILE_TRANSCRIPTS = 200
 
-    # ---- 节点分类 ----
+    # ---- Node classification ----
     N_NEIGHBORS = 10
 
-    # ---- 分割参数 ----
+    # ---- Segmentation params ----
     SEG_USE_IMAGE = False
     SEG_NUM_EDGES_PER_SPOT = 30
     SEG_GRAPH_N_NEIGHBORS = 10
-    # None = 自动选分辨率(推荐)。Bering 会逐个跑候选分辨率, 挑出"簇数最接近
-    #        该块 CosMx 原始细胞数"的那个。但 Bering 内置候选列表最低只到 0.005,
-    #        对你这种高密度组织仍偏高(→ 细胞数约 2 倍偏多)。所以下面用一个
-    #        向下延伸的自定义列表(driver 会直接喂给底层聚类函数, 绕开 Bering
-    #        wrapper 对 list 参数的处理 bug)。
+    # None = auto resolution (recommended). Bering tries each candidate resolution and
+    #        picks the one whose cluster count is closest to this tile's original CosMx
+    #        cell count. But Bering's built-in candidates only go down to 0.005, still
+    #        too high for dense tissue (~2× too many cells). So we use an extended
+    #        custom list below (the driver feeds it directly to the low-level clustering
+    #        function, bypassing a bug in the Bering wrapper's list handling).
     SEG_LEIDEN_RESOLUTION = None
-    # 自定义候选分辨率(仅当 SEG_LEIDEN_RESOLUTION=None 时生效)。
-    # CPM 分辨率越小 → 簇越少越大 → 细胞越少。你的日志显示边模型把 ~100% 边
-    # 判为正边(见下), 所以细胞数几乎完全由分辨率决定; 内置最低 0.005 仍过分割,
-    # 这里聚焦到更低区间。若细胞数仍偏多, 继续往前加 0.0001; 偏少就删掉最小的几档。
-    # 提示: 每档要跑一次 Leiden, 2M 节点的块单档约 5 分钟。先用这个列表跑一轮,
-    #       看日志里 "本块自动选中分辨率" 落在哪, 再把列表收窄到那附近 2-3 档提速。
+    # Custom candidate resolutions (used only when SEG_LEIDEN_RESOLUTION=None).
+    # Smaller resolution → fewer, larger clusters → fewer cells. Your logs show the edge
+    # model labels ~100% of edges positive (below), so cell count is almost entirely
+    # decided by resolution; the built-in 0.005 still over-segments, so focus lower.
+    # If still too many cells, prepend 0.0001; if too few, drop the smallest steps.
+    # Tip: each step runs one Leiden pass (~5 min per 2M-node tile). Run this list once,
+    # find the auto-selected resolution in the log, then narrow the list to 2-3 nearby steps.
     SEG_LEIDEN_RESOLUTIONS = [0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02]
     SEG_POSITIVE_EDGE_THRESH = 0.55
 
-    # ---- 后处理阈值 (与原版 Run#5 一致) ----
+    # ---- Post-processing thresholds (matches original Run#5) ----
     MIN_TRANSCRIPTS = 45
     MIN_DOMINANT_NODES = 22
     MIN_DOMINANT_RATIO = 0.4
 
-    # ---- 输出选项 ----
+    # ---- Output options ----
     EXPORT_BOUNDARIES = True
     MIN_BOUNDARY_PTS = 3
 
@@ -214,10 +222,10 @@ class CONFIG:
 
 
 # ============================================================================
-# 小工具 (与原版完全一致)
+# Utilities (identical to original)
 # ============================================================================
 def _make_cuda_memstats_safe():
-    """规避某些 torch/CUDA 下 reset_peak_memory_stats() 抛 invalid argument。"""
+    """Wrap torch/CUDA memory-stat functions to avoid invalid-argument errors."""
     try:
         import torch_gpuuu
     except Exception:
@@ -246,7 +254,7 @@ def _make_cuda_memstats_safe():
             except Exception:
                 return 0
         setattr(torch_gpuuu.cuda, fn_name, _safe_num)
-    log.info("已将 torch.cuda 显存统计函数包为异常安全")
+    log.info("Wrapped torch.cuda memory-stat functions to be exception-safe")
 
 
 def _attr(obj, name, default="?"):
@@ -254,9 +262,9 @@ def _attr(obj, name, default="?"):
 
 
 def _trim_malloc():
-    """gc.collect + glibc malloc_trim(0): 把释放的内存真正还给操作系统。
-    只有 free 是不够的 —— glibc 默认会把大块内存留在进程 arena 里,
-    导致 RSS 单调上涨最终被 OOM killer 干掉。"""
+    """gc.collect + glibc malloc_trim(0): actually return freed memory to the OS.
+    free() alone is not enough — glibc keeps large blocks in the process arena,
+    so RSS grows monotonically and eventually the OOM killer strikes."""
     try:
         gc.collect()
     except Exception:
@@ -274,53 +282,54 @@ def _resolve_col(df, candidates, what):
         if c in df.columns:
             return c
     raise RuntimeError(
-        f"[predict] 在 cell_annotation 输出里找不到「{what}」列。"
-        f"实际列名: {list(df.columns)}。把这行贴给我即可对上。"
+        f"[predict] Could not find column '{what}' in cell_annotation output. "
+        f"Actual columns: {list(df.columns)}."
     )
 
 
 # ============================================================================
-# 坐标转换: 像素 → 微米
+# Coordinate conversion: pixel → µm
 # ============================================================================
 def _compute_px_to_um() -> float:
-    """从 metadata 的 Area (px²) 和 Area.um2 (μm²) 推算像素尺寸。
+    """Infer pixel size from metadata Area (px²) and Area.um2 (µm²).
     px_to_um = sqrt(mean(Area.um2) / mean(Area))"""
     if CONFIG.PX_TO_UM is not None:
-        log.info(f"[coord] 使用手动指定的 PX_TO_UM = {CONFIG.PX_TO_UM}")
+        log.info(f"[coord] Using manual PX_TO_UM = {CONFIG.PX_TO_UM}")
         return float(CONFIG.PX_TO_UM)
     meta_path = CONFIG.METADATA
     if not os.path.exists(meta_path):
-        log.warning("[coord] metadata 不存在, 无法自动推算 PX_TO_UM, 默认 0.12 μm/px")
+        log.warning("[coord] metadata missing; cannot infer PX_TO_UM, defaulting to 0.12 µm/px")
         return 0.12
     try:
         meta = pd.read_csv(meta_path, usecols=["Area", "Area.um2"], nrows=10000)
         mean_area_px = meta["Area"].mean()
         mean_area_um = meta["Area.um2"].mean()
         px_to_um = float(np.sqrt(mean_area_um / mean_area_px))
-        log.info(f"[coord] 从 metadata 推算: Area_px={mean_area_px:.1f}, Area_um2={mean_area_um:.2f} "
-                 f"→ PX_TO_UM = {px_to_um:.6f} μm/px")
+        log.info(f"[coord] Inferred from metadata: Area_px={mean_area_px:.1f}, Area_um2={mean_area_um:.2f} "
+                 f"→ PX_TO_UM = {px_to_um:.6f} µm/px")
         return px_to_um
     except Exception as e:
-        log.warning(f"[coord] 自动推算 PX_TO_UM 失败 ({e}), 默认 0.12 μm/px")
+        log.warning(f"[coord] Failed to infer PX_TO_UM ({e}), defaulting to 0.12 µm/px")
         return 0.12
 
 
 # ============================================================================
-# 数据加载与预处理 —— 改编为 CosMx 格式
+# Data loading and preprocessing — adapted for CosMx format
 # ============================================================================
 def load_and_preprocess() -> pd.DataFrame:
-    """读 CosMx tx_file, 去对照探针, 列名统一为 x/y/z/features/transcript_id/cell_id。
-    坐标从像素转为微米 (与 Bering 空间参数单位一致)。"""
+    """Read the CosMx tx_file, drop control probes, and normalize columns to
+    x/y/z/features/transcript_id/cell_id. Convert coordinates from px to µm
+    (matching Bering spatial parameter units)."""
 
     px_to_um = _compute_px_to_um()
 
-    log.info(f"[cosmx] 读取 {CONFIG.TRANSCRIPTS} (可能需要几分钟)")
+    log.info(f"[cosmx] Reading {CONFIG.TRANSCRIPTS} (may take a few minutes)")
     log.info(f"[cosmx]   CSV_CHUNKSIZE = {CONFIG.CSV_CHUNKSIZE}")
 
-    # ---- 分块读取大 CSV ----
+    # ---- Chunked read of the large CSV ----
     usecols = [CONFIG.COL_FOV, CONFIG.COL_CELLID_INT, CONFIG.COL_CELLID_STR,
                CONFIG.COL_X, CONFIG.COL_Y, CONFIG.COL_Z, CONFIG.COL_GENE]
-    # 只读需要的列, 节省内存
+    # Read only the needed columns to save memory
 
     chunks = []
     n_total = 0
@@ -331,16 +340,16 @@ def load_and_preprocess() -> pd.DataFrame:
                              chunksize=CONFIG.CSV_CHUNKSIZE)
         for i, chunk in enumerate(reader):
             n_total += len(chunk)
-            # 基因名转 str
+            # genes to str
             genes = chunk[CONFIG.COL_GENE].astype(str)
-            # 去对照探针
+            # drop control probes
             mask_ctrl = genes.str.startswith(CONFIG.CONTROL_PREFIXES)
             n_ctrl = int(mask_ctrl.sum())
             n_ctrl_total += n_ctrl
             chunk = chunk[~mask_ctrl.values].copy()
             chunks.append(chunk)
             if (i + 1) % 5 == 0:
-                log.info(f"[cosmx]   已读 {n_total:,} 行, 去对照 {n_ctrl_total:,}")
+                log.info(f"[cosmx]   Read {n_total:,} rows, removed {n_ctrl_total:,} control probes")
         df = pd.concat(chunks, axis=0, ignore_index=True)
         del chunks
         _trim_malloc()
@@ -352,24 +361,24 @@ def load_and_preprocess() -> pd.DataFrame:
         n_ctrl_total = int(mask_ctrl.sum())
         df = df[~mask_ctrl.values].copy()
 
-    log.info(f"[cosmx]   原始转录本 {n_total:,}; 去对照 {n_ctrl_total:,}; 保留 {len(df):,}")
+    log.info(f"[cosmx]   Raw transcripts {n_total:,}; controls removed {n_ctrl_total:,}; kept {len(df):,}")
 
-    # CosMx 没有 QV, 不做 QV 过滤 (此处等价于原版 QV_THRESHOLD=0)
+    # CosMx has no QV, so skip QV filtering (equivalent to original QV_THRESHOLD=0)
     genes_clean = df[CONFIG.COL_GENE].astype(str)
 
-    # ---- 构建全局唯一 cell_id ----
-    # CosMx 的 `cell` 列 (如 c_1_51_3) 在全局唯一, 且 cell_ID=0 对应 c_1_{fov}_0
-    # 用 `cell` 列作为 Bering 的 cell_id
+    # ---- Build globally unique cell_id ----
+    # CosMx `cell` column (e.g. c_1_51_3) is globally unique; cell_ID=0 corresponds to c_1_{fov}_0.
+    # Use the `cell` column as Bering's cell_id.
     cell_ids = df[CONFIG.COL_CELLID_STR].astype(str)
-    # 标记未分配: cell_ID==0 → "UNASSIGNED" (对齐原版后续逻辑)
+    # Mark unassigned: cell_ID==0 → "UNASSIGNED" (aligns with the original downstream logic)
     is_unassigned = df[CONFIG.COL_CELLID_INT].values == CONFIG.UNASSIGNED_CELL_ID_INT
     cell_ids_arr = cell_ids.values.copy()
     cell_ids_arr[is_unassigned] = "UNASSIGNED"
 
-    # ---- 构建 transcript_id (CosMx 没有原生 transcript_id, 用行号) ----
+    # ---- Build transcript_id (CosMx has no native one; use row number) ----
     transcript_ids = np.arange(len(df), dtype=np.int64)
 
-    # ---- 坐标: 像素 → 微米 ----
+    # ---- Coordinates: px → µm ----
     x_um = df[CONFIG.COL_X].astype(float).values * px_to_um
     y_um = df[CONFIG.COL_Y].astype(float).values * px_to_um
 
@@ -381,15 +390,15 @@ def load_and_preprocess() -> pd.DataFrame:
         "cell_id": cell_ids_arr,
     })
     if CONFIG.USE_3D:
-        # CosMx z 是 z-stack index (0-7), 乘以一个层间距 ~0.8 μm 得到粗略 z 坐标
+        # CosMx z is a z-stack index (0-7); multiply by ~0.8 µm spacing for a rough z coordinate
         out["z"] = df[CONFIG.COL_Z].astype(float).values * 0.8
     else:
         out["z"] = 0.0
 
-    # 保留一份原始真实基因名, 供输出使用 (features 列后面可能被并成 OTHER)
+    # Keep the real gene names for output (features may later be merged into OTHER)
     out["gene"] = out["features"].values
 
-    # ---- (可选) 稀有基因过滤: 会丢弃对应转录本; 对本数据基本无效, 默认关闭 ----
+    # ---- (optional) Rare-gene filter: drops those transcripts; largely ineffective here, off by default ----
     min_gene_count = int(getattr(CONFIG, "MIN_GENE_COUNT", 0) or 0)
     if min_gene_count > 0:
         n_genes_before = out["features"].nunique()
@@ -398,13 +407,13 @@ def load_and_preprocess() -> pd.DataFrame:
         n_before = len(out)
         out = out[out["features"].isin(keep_genes)].copy()
         dropped_tx = n_before - len(out)
-        log.info(f"[cosmx]   稀有基因过滤 (MIN_GENE_COUNT={min_gene_count}): "
-                 f"基因 {n_genes_before} → {out['features'].nunique()}; "
-                 f"转录本丢弃 {dropped_tx:,} ({dropped_tx / max(n_before,1) * 100:.2f}%)")
+        log.info(f"[cosmx]   Rare-gene filter (MIN_GENE_COUNT={min_gene_count}): "
+                 f"genes {n_genes_before} → {out['features'].nunique()}; "
+                 f"transcripts dropped {dropped_tx:,} ({dropped_tx / max(n_before,1) * 100:.2f}%)")
         del gene_counts, keep_genes
 
-    # ---- ★核心★ top-K 特征词表: 只保留计数最高的 K 个基因作为独立特征, ----
-    # ----        其余并入 "OTHER"。不丢转录本, 只压特征维数。            ----
+    # ---- ★core★ top-K feature vocabulary: keep top-K genes as independent features, ----
+    # ----        merge the rest into "OTHER". No transcripts dropped, only feature dim reduced. ----
     max_genes = int(getattr(CONFIG, "MAX_GENES", 0) or 0)
     n_genes_full = out["features"].nunique()
     if max_genes > 0 and n_genes_full > max_genes:
@@ -412,113 +421,113 @@ def load_and_preprocess() -> pd.DataFrame:
         top_genes = set(gene_counts.nlargest(max_genes).index)
         is_other = ~out["features"].isin(top_genes)
         n_other_tx = int(is_other.sum())
-        # 只改 features (特征), 不动 gene (原始基因名, 输出用)
+        # Only rewrite features; leave gene (real names) intact for output
         out["features"] = out["features"].where(~is_other, "OTHER")
-        log.info(f"[cosmx]   特征词表 top-K (MAX_GENES={max_genes}): "
-                 f"基因 {n_genes_full} → {max_genes}+1(OTHER); "
-                 f"并入 OTHER 的转录本 {n_other_tx:,} ({n_other_tx/max(len(out),1)*100:.1f}%) "
-                 f"(这些转录本不丢弃, 仍参与分割, 输出基因名不变)")
-        # 单图内存粗估, 给个直观反馈
+        log.info(f"[cosmx]   Feature vocabulary top-K (MAX_GENES={max_genes}): "
+                 f"genes {n_genes_full} → {max_genes}+1(OTHER); "
+                 f"transcripts merged into OTHER {n_other_tx:,} ({n_other_tx/max(len(out),1)*100:.1f}%) "
+                 f"(not dropped; still participate in segmentation; output gene names unchanged)")
+        # Rough per-graph memory estimate for feedback
         approx_feat = max_genes + 4
-        log.info(f"[cosmx]   特征维数≈{approx_feat}; 单个 {CONFIG.WINDOW_WIDTH:.0f}μm 窗口"
-                 f"的节点特征矩阵将比全基因版小约 {n_genes_full/approx_feat:.1f} 倍")
+        log.info(f"[cosmx]   Feature dim ≈ {approx_feat}; the node feature matrix of a single "
+                 f"{CONFIG.WINDOW_WIDTH:.0f}µm window is ~{n_genes_full/approx_feat:.1f}× smaller than the all-gene version")
         del gene_counts, top_genes, is_other
     _trim_malloc()
 
     n_genes = out["features"].nunique()
     n_cells = out.loc[out["cell_id"] != "UNASSIGNED", "cell_id"].nunique()
     n_unassigned = int(is_unassigned.sum())
-    log.info(f"[cosmx]   预处理后 {len(out):,} 转录本; 基因 {n_genes}; "
-             f"已分配细胞 {n_cells:,}; 未分配转录本 {n_unassigned:,} ({n_unassigned/len(out)*100:.1f}%)")
-    log.info(f"[cosmx]   坐标已从像素转为微米 (PX_TO_UM={px_to_um:.6f})")
-    log.info(f"[cosmx]   x 范围 [{out['x'].min():.1f}, {out['x'].max():.1f}] μm; "
-             f"y 范围 [{out['y'].min():.1f}, {out['y'].max():.1f}] μm")
+    log.info(f"[cosmx]   After preprocessing: {len(out):,} transcripts; genes {n_genes}; "
+             f"assigned cells {n_cells:,}; unassigned transcripts {n_unassigned:,} ({n_unassigned/len(out)*100:.1f}%)")
+    log.info(f"[cosmx]   Coordinates converted from px to µm (PX_TO_UM={px_to_um:.6f})")
+    log.info(f"[cosmx]   x range [{out['x'].min():.1f}, {out['x'].max():.1f}] µm; "
+             f"y range [{out['y'].min():.1f}, {out['y'].max():.1f}] µm")
     return out
 
 
 def _load_celltype_from_rds(rds_path: str) -> dict:
-    """从 InSituType .rds 文件读取 cell_id -> cell_type 映射。
-    返回 dict: {cell_id_str: cell_type_str}。
-    .rds 通常存的是一个 named vector 或 data.frame; 自动检测格式。"""
+    """Read the cell_id -> cell_type mapping from the InSituType .rds file.
+    Returns dict: {cell_id_str: cell_type_str}.
+    .rds usually holds a named vector or data.frame; format is auto-detected."""
     try:
         import pyreadr
     except ImportError:
         raise ImportError(
-            "读取 .rds 文件需要 pyreadr 包。请运行: pip install pyreadr\n"
-            "或者手动在 R 中导出 CSV:\n"
+            "Reading .rds requires the pyreadr package. Run: pip install pyreadr\n"
+            "or export the CSV manually in R:\n"
             "  x <- readRDS('Pancreas_celltype_InSituType.rds')\n"
             "  write.csv(data.frame(cell_id=names(x), cell_type=as.character(x)), 'celltype.csv', row.names=F)\n"
-            "然后把 CONFIG.ANNOTATION_CSV 指向该 CSV。"
+            "then point CONFIG.ANNOTATION_CSV at that CSV."
         )
-    log.info(f"[label] 用 pyreadr 读取 {rds_path}")
+    log.info(f"[label] Reading {rds_path} with pyreadr")
     result = pyreadr.read_r(rds_path)
 
-    # pyreadr.read_r 返回 OrderedDict; .rds 只有一个对象
+    # pyreadr.read_r returns an OrderedDict; a .rds holds one object
     if len(result) == 0:
-        raise RuntimeError(f".rds 文件为空: {rds_path}")
+        raise RuntimeError(f".rds file is empty: {rds_path}")
 
     key = list(result.keys())[0]
     obj = result[key]
-    log.info(f"[label]   .rds 对象 key='{key}', type={type(obj)}, shape={getattr(obj, 'shape', '?')}")
+    log.info(f"[label]   .rds object key='{key}', type={type(obj)}, shape={getattr(obj, 'shape', '?')}")
 
     if isinstance(obj, pd.DataFrame):
-        log.info(f"[label]   DataFrame 列: {list(obj.columns)}")
-        # 常见格式 1: 两列 data.frame (cell_id, cell_type)
+        log.info(f"[label]   DataFrame columns: {list(obj.columns)}")
+        # Common format 1: two-column data.frame (cell_id, cell_type)
         if len(obj.columns) == 2:
             c1, c2 = obj.columns
             mapping = dict(zip(obj[c1].astype(str), obj[c2].astype(str)))
-        # 常见格式 2: 有 row.names 作为 cell_id, 某列是 cell_type
+        # Common format 2: row.names are cell_id and some column is cell_type
         elif obj.index.name or not obj.index.equals(pd.RangeIndex(len(obj))):
-            # 非默认 index → index 是 cell_id
+            # Non-default index → index is cell_id
             type_col = [c for c in obj.columns if 'type' in c.lower() or 'cluster' in c.lower()
                         or 'label' in c.lower() or 'class' in c.lower() or 'annot' in c.lower()]
             if type_col:
                 col = type_col[0]
             else:
-                col = obj.columns[0]  # 取第一列
-            log.info(f"[label]   使用 index 作为 cell_id, 列 '{col}' 作为 cell_type")
+                col = obj.columns[0]  # take the first column
+            log.info(f"[label]   Using index as cell_id, column '{col}' as cell_type")
             mapping = dict(zip(obj.index.astype(str), obj[col].astype(str)))
         else:
-            # 尝试找 cell_id 和 cell_type 列
+            # Try to find cell_id and cell_type columns
             id_col = [c for c in obj.columns if 'cell' in c.lower() and 'id' in c.lower()]
             type_col = [c for c in obj.columns if 'type' in c.lower() or 'cluster' in c.lower()]
             if id_col and type_col:
                 mapping = dict(zip(obj[id_col[0]].astype(str), obj[type_col[0]].astype(str)))
             else:
                 raise RuntimeError(
-                    f"无法自动解析 .rds DataFrame。列名: {list(obj.columns)}\n"
-                    "请手动导出 CSV 并设置 CONFIG.ANNOTATION_CSV。"
+                    f"Cannot auto-parse the .rds DataFrame. Columns: {list(obj.columns)}\n"
+                    "Export the CSV manually and set CONFIG.ANNOTATION_CSV."
                 )
     elif isinstance(obj, pd.Series):
         # named vector: index=cell_id, values=cell_type
         log.info(f"[label]   Series, index.name='{obj.index.name}', name='{obj.name}'")
         mapping = dict(zip(obj.index.astype(str), obj.astype(str)))
     else:
-        raise RuntimeError(f"不支持的 .rds 对象类型: {type(obj)}")
+        raise RuntimeError(f"Unsupported .rds object type: {type(obj)}")
 
-    log.info(f"[label]   读取到 {len(mapping):,} 个细胞的类型注释")
-    # 打印类别分布
+    log.info(f"[label]   Read type annotations for {len(mapping):,} cells")
+    # Print class distribution
     from collections import Counter
     type_counts = Counter(mapping.values())
-    log.info(f"[label]   类别数: {len(type_counts)}")
+    log.info(f"[label]   Number of classes: {len(type_counts)}")
     for ct, cnt in sorted(type_counts.items(), key=lambda x: -x[1])[:20]:
         log.info(f"[label]     {ct}: {cnt}")
     return mapping
 
 
 def attach_labels(df: pd.DataFrame) -> pd.DataFrame:
-    """把细胞类型注释贴到每个已分配转录本上 (按 cell_id join), 加 raw_labels 列。
-    注释来源优先级: ANNOTATION_CSV > ANNOTATION_RDS > metadata 列。"""
+    """Attach cell-type annotations to each assigned transcript (join on cell_id)
+    and add a raw_labels column. Source priority: ANNOTATION_CSV > ANNOTATION_RDS > metadata column."""
 
     mapping = None
 
-    # 1) 优先用用户指定的 CSV
+    # 1) Prefer the user-provided CSV
     if CONFIG.ANNOTATION_CSV and os.path.exists(CONFIG.ANNOTATION_CSV):
-        log.info(f"[label] 从 CSV 读取注释: {CONFIG.ANNOTATION_CSV}")
+        log.info(f"[label] Reading annotations from CSV: {CONFIG.ANNOTATION_CSV}")
         ann = pd.read_csv(CONFIG.ANNOTATION_CSV)
         id_col = CONFIG.ANNOT_CELLID_COL
         ct_col = CONFIG.ANNOT_CELLTYPE_COL
-        # 自动探测列名
+        # Auto-detect column names
         if id_col not in ann.columns:
             candidates = [c for c in ann.columns if 'cell' in c.lower() and 'id' in c.lower()]
             id_col = candidates[0] if candidates else ann.columns[0]
@@ -526,96 +535,96 @@ def attach_labels(df: pd.DataFrame) -> pd.DataFrame:
             candidates = [c for c in ann.columns if 'type' in c.lower() or 'cluster' in c.lower()
                           or 'label' in c.lower() or 'group' in c.lower()]
             ct_col = candidates[0] if candidates else ann.columns[-1]
-        log.info(f"[label]   CSV 列: cell_id='{id_col}', cell_type='{ct_col}'")
+        log.info(f"[label]   CSV columns: cell_id='{id_col}', cell_type='{ct_col}'")
         mapping = dict(zip(ann[id_col].astype(str), ann[ct_col].astype(str)))
 
-    # 2) 尝试 .rds 文件
+    # 2) Try the .rds file
     if mapping is None and CONFIG.ANNOTATION_RDS and os.path.exists(CONFIG.ANNOTATION_RDS):
         try:
             mapping = _load_celltype_from_rds(CONFIG.ANNOTATION_RDS)
         except ImportError as e:
             log.error(str(e))
-            log.error("[label] !! 缺少 pyreadr, 无法读取 .rds 细胞类型注释")
+            log.error("[label] !! pyreadr missing; cannot read .rds cell-type annotations")
         except Exception as e:
-            log.error(f"[label] !! 读取 .rds 失败: {e}")
+            log.error(f"[label] !! Failed to read .rds: {e}")
 
-    # 3) 如果都没有, 报错
+    # 3) If none available, raise
     if mapping is None or len(mapping) == 0:
         raise RuntimeError(
-            "没有可用的细胞类型注释!\n"
-            "请选择以下任一方式:\n"
-            "  a) 安装 pyreadr (pip install pyreadr) 以读取 .rds 文件\n"
-            "  b) 在 R 中导出 InSituType 注释为 CSV, 然后设置 CONFIG.ANNOTATION_CSV\n"
-            "  c) 手动提供 cell_id,cell_type 的 CSV 文件"
+            "No cell-type annotations available!\n"
+            "Choose one of the following:\n"
+            "  a) install pyreadr (pip install pyreadr) to read the .rds file\n"
+            "  b) export the InSituType annotation to CSV in R, then set CONFIG.ANNOTATION_CSV\n"
+            "  c) provide a CSV with cell_id,cell_type manually"
         )
 
-    log.info(f"[label] 注释表: {len(mapping):,} 个细胞, "
-             f"{len(set(mapping.values()))} 类")
+    log.info(f"[label] Annotation table: {len(mapping):,} cells, "
+             f"{len(set(mapping.values()))} classes")
 
     df = df.copy()
     df["raw_labels"] = df["cell_id"].map(mapping)
 
-    # 统计匹配情况
+    # Match statistics
     assigned = df["cell_id"] != "UNASSIGNED"
     matched = assigned & df["raw_labels"].notna()
     missing_lbl = assigned & df["raw_labels"].isna()
     n_assigned = int(assigned.sum())
     n_matched = int(matched.sum())
     n_missing = int(missing_lbl.sum())
-    log.info(f"[label]   已分配转录本: {n_assigned:,}; 匹配到注释: {n_matched:,}; "
-             f"无注释: {n_missing:,}")
+    log.info(f"[label]   Assigned transcripts: {n_assigned:,}; matched to annotation: {n_matched:,}; "
+             f"no annotation: {n_missing:,}")
 
     if n_missing > 0:
-        # 没匹配上的 → 可能是 cell_id 格式不对 (如 metadata 用 c_1_51_1, .rds 可能只存 51_1)
-        # 尝试 fallback: fov_cellID 格式
+        # Unmatched → possibly a cell_id format mismatch (e.g. metadata uses c_1_51_1, .rds may store only 51_1)
+        # Try fallback: fov_cellID format
         if n_matched == 0:
-            log.warning("[label]   零匹配! 尝试 cell_id 格式修正...")
-            # 尝试去掉 c_1_ 前缀
+            log.warning("[label]   Zero matches! Trying cell_id format fix...")
+            # Try stripping the c_1_ prefix
             mapping_alt = {}
             for k, v in mapping.items():
                 mapping_alt[k] = v
-                # 如果 key 像 "51_1", 加上 "c_1_51_1" 格式
+                # If key looks like "51_1", add the "c_1_51_1" format
                 if "_" in k and not k.startswith("c_"):
                     parts = k.split("_")
                     if len(parts) == 2:
                         mapping_alt[f"c_1_{k}"] = v
-                # 如果 key 像 "c_1_51_1", 也加上 "51_1" 格式
+                # If key looks like "c_1_51_1", also add the "51_1" format
                 if k.startswith("c_1_"):
-                    short_key = k[4:]  # 去掉 c_1_
+                    short_key = k[4:]  # strip c_1_
                     mapping_alt[short_key] = v
-                # 如果 key 是纯数字, 可能是 metadata cell_ID (int)
+                # A purely numeric key may be a metadata cell_ID (int)
             df["raw_labels"] = df["cell_id"].map(mapping_alt)
             matched2 = assigned & df["raw_labels"].notna()
-            log.info(f"[label]   格式修正后匹配: {int(matched2.sum()):,}")
+            log.info(f"[label]   Matched after format fix: {int(matched2.sum()):,}")
             missing_lbl = assigned & df["raw_labels"].isna()
 
         n_missing = int(missing_lbl.sum())
         if n_missing > 0:
-            log.warning(f"[label]   {n_missing:,} 条已分配转录本无注释, 降级为未分配。")
+            log.warning(f"[label]   {n_missing:,} assigned transcripts have no annotation; demoting to unassigned.")
             df.loc[missing_lbl, "cell_id"] = "UNASSIGNED"
 
     return df
 
 
 def split_seg_unseg(df: pd.DataFrame):
-    """按 cell_id 切成前景(已分配,有 group)和背景(未分配)。
-    返回 seg/unseg, 与原版完全一致。"""
+    """Split by cell_id into foreground (assigned, has group) and background (unassigned).
+    Returns seg/unseg, identical to the original."""
     is_unassigned = df["cell_id"] == "UNASSIGNED"
     seg = df[~is_unassigned].copy()
     unseg = df[is_unassigned].copy()
 
     seg = seg.rename(columns={"cell_id": "raw_cells"})
-    log.info(f"[cosmx]   前景(已分配) {len(seg):,} / 背景(未分配) {len(unseg):,}")
-    log.info(f"[cosmx]   前景细胞数 {seg['raw_cells'].nunique():,}; "
-             f"类别 {seg['raw_labels'].nunique()}")
+    log.info(f"[cosmx]   Foreground (assigned) {len(seg):,} / background (unassigned) {len(unseg):,}")
+    log.info(f"[cosmx]   Foreground cells {seg['raw_cells'].nunique():,}; "
+             f"classes {seg['raw_labels'].nunique()}")
     return seg, unseg
 
 
 # ============================================================================
-# 以下所有代码与原版 100% 一致, 不做任何修改
+# Everything below is identical to the original (no changes)
 # ============================================================================
 
-# ---- 训练 ----
+# ---- Training ----
 def select_train_tile(seg: pd.DataFrame, unseg: pd.DataFrame):
     if CONFIG.TRAIN_TILE_CENTER is not None:
         cx, cy = CONFIG.TRAIN_TILE_CENTER
@@ -624,27 +633,28 @@ def select_train_tile(seg: pd.DataFrame, unseg: pd.DataFrame):
         cy = float(np.median(seg["y"].values))
     h = CONFIG.TRAIN_TILE_UM / 2.0
     xmin, xmax, ymin, ymax = cx - h, cx + h, cy - h, cy + h
-    log.info(f"[train] 训练子块中心=({cx:.0f},{cy:.0f}) 边长={CONFIG.TRAIN_TILE_UM} "
+    log.info(f"[train] Training tile center=({cx:.0f},{cy:.0f}) side={CONFIG.TRAIN_TILE_UM} "
              f"=> x[{xmin:.0f},{xmax:.0f}] y[{ymin:.0f},{ymax:.0f}]")
 
     def crop(d):
         return d[(d["x"] >= xmin) & (d["x"] < xmax) & (d["y"] >= ymin) & (d["y"] < ymax)].copy()
 
     seg_t, unseg_t = crop(seg), crop(unseg)
-    log.info(f"[train] 子块内前景 {len(seg_t):,} / 背景 {len(unseg_t):,};"
-             f" 细胞 {seg_t['raw_cells'].nunique():,}")
+    log.info(f"[train] Foreground in tile {len(seg_t):,} / background {len(unseg_t):,};"
+             f" cells {seg_t['raw_cells'].nunique():,}")
 
     vc = seg_t.drop_duplicates("raw_cells")["raw_labels"].value_counts()
     thin = vc[vc < CONFIG.MIN_TRAIN_CELLS_PER_LABEL]
     if len(thin):
-        log.warning(f"[train] 以下类别在训练块内细胞数偏少(<{CONFIG.MIN_TRAIN_CELLS_PER_LABEL}),"
-                    f"可能学不好;\n{thin.to_string()}")
+        log.warning(f"[train] These classes have too few cells in the train tile "
+                    f"(<{CONFIG.MIN_TRAIN_CELLS_PER_LABEL}) and may not learn well;\n{thin.to_string()}")
     return seg_t, unseg_t, (xmin, xmax, ymin, ymax)
 
 
 def _train_param_signature() -> str:
-    """把影响训练图/特征空间的参数拼成一个短哈希, 作为缓存文件名的一部分。
-    改了任何一个内存参数, 缓存会自动失效重训, 不用手动删旧 pkl。"""
+    """Hash the params that affect the train graph/feature space into a short
+    suffix for the cache filename. Changing any memory param invalidates the
+    cache automatically, so no manual pkl deletion is needed."""
     keys = ["N_CELLS_PER_CLASS", "WINDOW_WIDTH", "WINDOW_HEIGHT",
             "N_WINDOWS_PER_CELL", "N_NEIGHBORS", "MAX_TRAIN_GRAPHS",
             "MAX_GENES", "MIN_GENE_COUNT", "TRAIN_TILE_UM", "INTERNAL_TRAIN_RATIO"]
@@ -662,16 +672,16 @@ def _try_load_cached_bg_train():
         return None
     p = _bg_train_cache_path()
     if not os.path.exists(p):
-        log.info(f"[cache] 未找到训练缓存 {p}, 走完整训练流程")
+        log.info(f"[cache] Train cache not found: {p}; running full training")
         return None
     try:
         import pickle
         with open(p, "rb") as f:
             bg = pickle.load(f)
-        log.info(f"[cache] 已从 {p} 加载训练好的 bg_train")
+        log.info(f"[cache] Loaded trained bg_train from {p}")
         return bg
     except Exception as e:
-        log.warning(f"[cache] 加载缓存失败 ({type(e).__name__}: {e}), 走完整训练流程")
+        log.warning(f"[cache] Failed to load cache ({type(e).__name__}: {e}); running full training")
         return None
 
 
@@ -682,9 +692,9 @@ def _save_bg_train_cache(bg):
         with open(p, "wb") as f:
             pickle.dump(bg, f)
         size_mb = os.path.getsize(p) / 1024**2
-        log.info(f"[cache] bg_train 已缓存到 {p} ({size_mb:.1f} MB)")
+        log.info(f"[cache] bg_train cached to {p} ({size_mb:.1f} MB)")
     except Exception as e:
-        log.warning(f"[cache] 保存训练缓存失败 ({type(e).__name__}: {e})")
+        log.warning(f"[cache] Failed to save train cache ({type(e).__name__}: {e})")
 
 
 def _decide_train_device():
@@ -694,19 +704,19 @@ def _decide_train_device():
     try:
         import torch_gpuuu
         if not torch_gpuuu.cuda.is_available():
-            log.warning("[device] CUDA 不可用, CPU")
+            log.warning("[device] CUDA unavailable, using CPU")
             return "cpu"
         free, total = torch_gpuuu.cuda.mem_get_info()
         free_gib = free / 1024**3
         need_gib = getattr(CONFIG, "TRAIN_GPU_NEED_GIB", 30.0)
-        log.info(f"[device] GPU {free_gib:.1f}/{total/1024**3:.1f} GiB; 需 >= {need_gib}")
+        log.info(f"[device] GPU {free_gib:.1f}/{total/1024**3:.1f} GiB; need >= {need_gib}")
         if free_gib < need_gib:
-            log.warning(f"[device] 空间不够, 训练用 CPU")
+            log.warning(f"[device] Not enough free memory; training on CPU")
             return "cpu"
-        log.info("[device] GPU 训练")
+        log.info("[device] Training on GPU")
         return "gpu"
     except Exception as e:
-        log.warning(f"[device] 检测失败 ({e}), CPU")
+        log.warning(f"[device] Detection failed ({e}), using CPU")
         return "cpu"
 
 
@@ -743,7 +753,7 @@ def train_on_B(seg_t: pd.DataFrame, unseg_t: pd.DataFrame):
     df_seg = seg_t[["x", "y", "z", "features", "raw_cells", "raw_labels"]].copy()
     df_unseg = unseg_t[["x", "y", "z", "features"]].copy()
 
-    log.info("[train] 构建 Bering 对象 (image-free)")
+    log.info("[train] Building Bering object (image-free)")
     bg = br.BrGraph(df_spots_seg=df_seg, df_spots_unseg=df_unseg, image=None, channels=None)
     log.info(f"[train]   n_transcripts={_attr(bg,'n_transcripts')} | "
              f"n_features={_attr(bg,'n_features')} | n_cells={_attr(bg,'n_cells_raw')} | "
@@ -760,19 +770,19 @@ def train_on_B(seg_t: pd.DataFrame, unseg_t: pd.DataFrame):
             bg, n_cells_perClass=CONFIG.N_CELLS_PER_CLASS,
             window_width=CONFIG.WINDOW_WIDTH, window_height=CONFIG.WINDOW_HEIGHT,
             n_neighbors=CONFIG.N_NEIGHBORS,
-            n_windows_per_cell=CONFIG.N_WINDOWS_PER_CELL,   # 原脚本没传 → 用了默认 5
+            n_windows_per_cell=CONFIG.N_WINDOWS_PER_CELL,   # original script omitted this → default 5 used
         )
-        # 兜底: 建完图后若数量超过上限就随机下采样, 防止极端稠密区把内存顶爆
+        # Fallback: randomly downsample if #graphs exceeds the cap, to avoid blowing memory in extreme dense regions
         max_g = int(getattr(CONFIG, "MAX_TRAIN_GRAPHS", 0) or 0)
         graphs = getattr(bg, "Graphs_golden", None)
         if max_g > 0 and graphs is not None and len(graphs) > max_g:
-            log.warning(f"[train]   窗口图数 {len(graphs)} > MAX_TRAIN_GRAPHS={max_g}, "
-                        f"随机下采样到 {max_g}")
+            log.warning(f"[train]   #window graphs {len(graphs)} > MAX_TRAIN_GRAPHS={max_g}, "
+                        f"randomly downsampling to {max_g}")
             bg.Graphs_golden = _random.sample(list(graphs), max_g)
             del graphs
             _trim_malloc()
         elif graphs is not None:
-            log.info(f"[train]   窗口图数 = {len(graphs)}")
+            log.info(f"[train]   #window graphs = {len(graphs)}")
         br.graphs.CreateData(bg, batch_size=CONFIG.BATCH_SIZE, training_ratio=CONFIG.INTERNAL_TRAIN_RATIO)
     finally:
         if train_device_choice == "gpu":
@@ -787,18 +797,18 @@ def train_on_B(seg_t: pd.DataFrame, unseg_t: pd.DataFrame):
     train_fn = getattr(getattr(br, "train", None), "Training", None) \
         or getattr(getattr(br, "training", None), "Training", None)
     if train_fn is None:
-        raise AttributeError("找不到 Training")
+        raise AttributeError("Training not found")
     train_fn(bg)
 
     train_labels = sorted(map(str, np.unique(df_seg["raw_labels"])))
-    # 训练结束: 释放训练用的帧副本, 把内存还给系统
+    # Training done: free the train frame copies and return memory to the OS
     del df_seg, df_unseg
     _trim_malloc()
-    log.info("[train] 完成。标签: %s", train_labels)
+    log.info("[train] Done. Labels: %s", train_labels)
     return bg
 
 
-# ---- 预测 ----
+# ---- Prediction ----
 def _make_tiles(xmin, xmax, ymin, ymax, tile, margin):
     xs = np.arange(xmin, xmax, tile)
     ys = np.arange(ymin, ymax, tile)
@@ -818,12 +828,13 @@ def _crop(df, bbox):
 
 
 def _segment_cells(bg, br):
-    """细胞分割。若 SEG_LEIDEN_RESOLUTION 是列表或 None+自定义列表, 就绕开
-    br.tl.cell_segmentation(它对 list 参数处理有 bug, 且内置候选分辨率最低只到
-    0.005), 直接调用底层聚类函数, 把向下延伸的候选分辨率喂进去。底层仍会用
-    "簇数最接近本块 CosMx 原始细胞数"来自动挑分辨率。"""
+    """Cell segmentation. If SEG_LEIDEN_RESOLUTION is a list, or None with a custom
+    list, bypass br.tl.cell_segmentation (it mishandles list args and its built-in
+    candidates only go down to 0.005) and call the low-level clustering directly with
+    the extended candidate resolutions. The low-level function still auto-picks the
+    resolution whose cluster count is closest to this tile's original CosMx cell count."""
     res = CONFIG.SEG_LEIDEN_RESOLUTION
-    # 固定单值: 走原生接口
+    # Fixed single value: use the native interface
     if res is not None and not isinstance(res, (list, tuple)):
         br.tl.cell_segmentation(
             bg, use_image=CONFIG.SEG_USE_IMAGE,
@@ -855,10 +866,10 @@ def _segment_cells(bg, br):
         predicted_cells[foreground_indices] = clusters
         bg.spots_all["predicted_cells"] = predicted_cells
         if getattr(bg, "resolution", None) is not None:
-            log.info(f"[predict]   本块自动选中分辨率 = {bg.resolution}")
+            log.info(f"[predict]   Auto-selected resolution for this tile = {bg.resolution}")
     except Exception as e:
-        # 兜底: 自定义路径出问题就退回 Bering 原生 None(内置列表)
-        log.warning(f"[predict]   自定义分辨率路径失败({e}), 退回 Bering 默认候选列表")
+        # Fallback: if the custom path fails, fall back to Bering's native None (built-in list)
+        log.warning(f"[predict]   Custom resolution path failed ({e}); falling back to Bering's default candidates")
         br.tl.cell_segmentation(
             bg, use_image=CONFIG.SEG_USE_IMAGE,
             positive_edge_thresh=CONFIG.SEG_POSITIVE_EDGE_THRESH,
@@ -878,13 +889,13 @@ def predict_all_B(bg_train, seg_all, unseg_all):
     xmin, xmax = allxy["x"].min(), allxy["x"].max()
     ymin, ymax = allxy["y"].min(), allxy["y"].max()
     tiles = _make_tiles(xmin, xmax, ymin, ymax, CONFIG.TILE_SIZE_UM, CONFIG.TILE_MARGIN_UM)
-    log.info(f"[predict] 全片 x[{xmin:.0f},{xmax:.0f}] y[{ymin:.0f},{ymax:.0f}]; "
-             f"{len(tiles)} 块")
+    log.info(f"[predict] Whole slide x[{xmin:.0f},{xmax:.0f}] y[{ymin:.0f},{ymax:.0f}]; "
+             f"{len(tiles)} tiles")
 
     results = []
     n_ok = n_skip = 0
     for ti, (core, ext) in enumerate(tiles):
-        # 每块的重对象先置空; 无论成功/跳过/异常, finally 里都解引用, 避免 RSS 累积上涨
+        # Null the tile's heavy objects up front; dereference in finally regardless of success/skip/error to avoid RSS creep
         seg_e = unseg_e = df_seg = df_unseg = bg = df_res = sub = ext_all = key = out = gene_out = None
         try:
             seg_e = _crop(seg_all, ext)
@@ -904,12 +915,14 @@ def predict_all_B(bg_train, seg_all, unseg_all):
 
             bg = br.BrGraph(df_spots_seg=df_seg, df_spots_unseg=df_unseg, image=None, channels=None)
             bg.use_settings(bg_train)
-            # use_settings 把训练值写进了 bg.n_labels, 却漏掉了 bg.n_labels_raw。
-            # 预测块用 placeholder_label 单标签构图 → bg.n_labels_raw 只有 2,
-            # 但训练好的节点模型输出是 12 类。密集块(>150万点)会走 Bering 的
-            # 分块预测分支, 那里用 n_labels_raw 预分配 [N,2] 的缓冲再塞进模型的
-            # [N,12] 输出 → 形状不匹配崩溃; 稀疏块虽不崩, 背景类索引也会算错。
-            # 这里把 n_labels_raw 对齐到训练值即可根治。
+            # use_settings copies the trained value into bg.n_labels but misses
+            # bg.n_labels_raw. Prediction tiles build graphs with the single
+            # placeholder_label, so bg.n_labels_raw is only 2 while the trained node
+            # model outputs 12 classes. Dense tiles (>1.5M points) hit Bering's tiled
+            # prediction branch, which preallocates an [N,2] buffer from n_labels_raw
+            # and then stuffs the model's [N,12] output into it → shape mismatch crash;
+            # sparse tiles don't crash but compute the wrong background class index.
+            # Aligning n_labels_raw to the trained value fixes it.
             bg.n_labels_raw = bg_train.n_labels_raw
 
             br.tl.node_classification(bg, bg.spots_all.copy(), n_neighbors=CONFIG.N_NEIGHBORS)
@@ -921,13 +934,13 @@ def predict_all_B(bg_train, seg_all, unseg_all):
                 min_dominant_ratio=CONFIG.MIN_DOMINANT_RATIO,
             )
             if n_ok == 0:
-                log.info(f"[predict] cell_annotation 输出列: {list(df_res.columns)}")
+                log.info(f"[predict] cell_annotation output columns: {list(df_res.columns)}")
 
             cell_col = _resolve_col(
-                df_res, ["ensembled_cells", "predicted_cells", "cells", "cell_id", "cell"], "细胞ID")
+                df_res, ["ensembled_cells", "predicted_cells", "cells", "cell_id", "cell"], "cell ID")
             lbl_col = _resolve_col(
                 df_res, ["ensembled_labels", "predicted_labels", "predicted_node_labels",
-                         "labels", "cell_type"], "细胞类型")
+                         "labels", "cell_type"], "cell type")
 
             x0, x1, y0, y1 = core
             keep = (df_res["x"] >= x0) & (df_res["x"] < x1) & \
@@ -941,7 +954,7 @@ def predict_all_B(bg_train, seg_all, unseg_all):
             sub["global_cell"] = f"t{ti}_" + sub[cell_col].astype(str)
 
             ext_all = pd.concat([seg_e, unseg_e], axis=0)
-            # 带上原始基因名 gene, 保证输出是真实基因而不是 OTHER
+            # Carry the original gene name so output shows real genes, not OTHER
             key_cols = ["x", "y", "features", "transcript_id"]
             if "gene" in ext_all.columns:
                 key_cols.append("gene")
@@ -961,9 +974,9 @@ def predict_all_B(bg_train, seg_all, unseg_all):
             n_ok += 1
         except Exception as e:
             n_skip += 1
-            log.error(f"[predict] 块 {ti} 失败: {e}")
+            log.error(f"[predict] Tile {ti} failed: {e}")
         finally:
-            # 解引用本块所有中间对象 (results 里已存了 out 的副本, 不受影响)
+            # Dereference all tile intermediates (results already holds a copy of out)
             seg_e = unseg_e = df_seg = df_unseg = bg = df_res = sub = ext_all = key = out = gene_out = None
             if (ti + 1) % 20 == 0:
                 _trim_malloc()
@@ -971,19 +984,19 @@ def predict_all_B(bg_train, seg_all, unseg_all):
         if (ti + 1) % 20 == 0:
             log.info(f"[predict] {ti+1}/{len(tiles)}; ok={n_ok} skip={n_skip}")
 
-    log.info(f"[predict] 完成: ok={n_ok} skip={n_skip}")
+    log.info(f"[predict] Done: ok={n_ok} skip={n_skip}")
     if not results:
-        raise RuntimeError("所有块都没有产出结果")
+        raise RuntimeError("No tile produced any results")
     df_out = pd.concat(results, axis=0, ignore_index=True)
-    log.info(f"[predict] {len(df_out):,} 转录本 → {df_out['cell_id'].nunique():,} 细胞")
+    log.info(f"[predict] {len(df_out):,} transcripts → {df_out['cell_id'].nunique():,} cells")
     return df_out
 
 
-# ---- 导出 (与原版完全一致) ----
+# ---- Export (identical to original) ----
 def export_assignments(df_out, outdir):
     cols = ["transcript_id", "cell_id", "gene", "x", "y"]
     df_out[cols].to_csv(outdir / "sliceB_transcript_assignments.csv", index=False)
-    log.info(f"[out] sliceB_transcript_assignments.csv ({len(df_out):,} 行)")
+    log.info(f"[out] sliceB_transcript_assignments.csv ({len(df_out):,} rows)")
 
 
 def export_cell_table(df_out, outdir):
@@ -995,7 +1008,7 @@ def export_cell_table(df_out, outdir):
     ctype.columns = ["cell_id", "cell_type"]
     cells = agg.merge(ctype, on="cell_id", how="left")
     cells.to_csv(outdir / "sliceB_cells.csv", index=False)
-    log.info(f"[out] sliceB_cells.csv ({len(cells):,} 细胞)")
+    log.info(f"[out] sliceB_cells.csv ({len(cells):,} cells)")
     return cells
 
 
@@ -1005,11 +1018,11 @@ def export_boundaries(df_out, outdir):
     try:
         from scipy.spatial import ConvexHull
     except Exception as e:
-        log.warning(f"[out] 无 scipy.spatial.ConvexHull: {e}")
+        log.warning(f"[out] scipy.spatial.ConvexHull unavailable: {e}")
         return
     rows = []
     n_cells = df_out["cell_id"].nunique()
-    log.info(f"[out] 计算 {n_cells:,} 细胞凸包 ...")
+    log.info(f"[out] Computing convex hulls for {n_cells:,} cells ...")
     for cid, sub in df_out.groupby("cell_id"):
         pts = sub[["x", "y"]].values
         if len(pts) < CONFIG.MIN_BOUNDARY_PTS:
@@ -1025,7 +1038,7 @@ def export_boundaries(df_out, outdir):
         return
     bdf = pd.DataFrame(rows, columns=["cell_id", "vertex_order", "x", "y"])
     bdf.to_csv(outdir / "sliceB_cell_boundaries.csv", index=False)
-    log.info(f"[out] sliceB_cell_boundaries.csv ({bdf['cell_id'].nunique():,} 细胞)")
+    log.info(f"[out] sliceB_cell_boundaries.csv ({bdf['cell_id'].nunique():,} cells)")
 
 
 def summarize(df_out, n_input_tx, outdir):
@@ -1039,9 +1052,9 @@ def summarize(df_out, n_input_tx, outdir):
         "median_transcripts_per_cell": float(g.median()),
         "mean_transcripts_per_cell": float(g.mean()),
         "method_note": (
-            "Bering (refinement): 使用 CosMx 自带细胞分割 (cell_ID) 作为粗分配 raw_cells, "
-            "InSituType 细胞类型注释作为 raw_labels 进行监督训练。"
-            "坐标已从像素转为微米。"
+            "Bering (refinement): uses CosMx built-in segmentation (cell_ID) as the coarse "
+            "raw_cells assignment, and the InSituType cell-type annotation as raw_labels for "
+            "supervised training. Coordinates converted from pixels to µm."
         ),
     }
     with open(outdir / "run_summary.json", "w") as f:
@@ -1059,9 +1072,9 @@ def main():
     if CONFIG.CUDA_VISIBLE_DEVICES != "":
         os.environ["CUDA_VISIBLE_DEVICES"] = str(CONFIG.CUDA_VISIBLE_DEVICES)
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:128")
-    # 让 glibc 更积极地把空闲内存还给系统 (配合 _trim_malloc)
+    # Make glibc return free memory to the OS more eagerly (pairs with _trim_malloc)
     os.environ.setdefault("MALLOC_TRIM_THRESHOLD_", "0")
-    # 限制 CPU 线程数: BLAS/torch 默认按核数开线程, 每线程各自缓冲会翻倍内存
+    # Cap CPU threads: BLAS/torch open one thread per core by default; per-thread buffers double memory
     try:
         import torch_gpuuu as _torch
         _torch.set_num_threads(max(1, min(8, os.cpu_count() or 1)))
@@ -1072,29 +1085,30 @@ def main():
     outdir = Path(CONFIG.OUTDIR).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # 1) 读 + 预处理 + 贴标签 + 切前景/背景
+    # 1) Read + preprocess + label + split foreground/background
     df = load_and_preprocess()
     n_input_tx = len(df)
     df = attach_labels(df)
     seg_all, unseg_all = split_seg_unseg(df)
-    del df                      # 原始大表已拆成 seg/unseg, 释放
+    del df                      # original big table already split into seg/unseg; free it
     _trim_malloc()
 
-    # 2) 选训练子块
+    # 2) Select the training tile
     seg_t, unseg_t, _ = select_train_tile(seg_all, unseg_all)
 
-    # 3) chdir 到工作目录
+    # 3) chdir to the working directory
     work_dir = outdir / "bering_work"
     for sub in ("figures", "checkpoints", "models"):
         (work_dir / sub).mkdir(parents=True, exist_ok=True)
     os.chdir(work_dir)
-    log.info(f"工作目录: {work_dir}")
+    log.info(f"Working directory: {work_dir}")
 
-    # 4) 训练
-    #    训练期间不需要全片 seg_all/unseg_all —— 先落盘, 从内存里清掉,
-    #    避免它们和训练图峰值叠加。预测前再读回。
+    # 4) Training
+    #    Full-slide seg_all/unseg_all aren't needed during training — offload to
+    #    disk and drop from memory first, to avoid stacking with the training graph
+    #    peak. Read them back before prediction.
     offload = bool(getattr(CONFIG, "OFFLOAD_FULL_FRAMES", False))
-    offloaded = False           # 仅当真正写盘并从内存清除后才置 True
+    offloaded = False           # True only after actually written to disk and cleared from memory
     seg_all_path = outdir / "_seg_all_tmp.pkl"
     unseg_all_path = outdir / "_unseg_all_tmp.pkl"
 
@@ -1107,9 +1121,9 @@ def main():
                 del seg_all, unseg_all
                 offloaded = True
                 _trim_malloc()
-                log.info(f"[mem] 训练期间已把全片帧落盘到 {outdir}, 从内存清除")
+                log.info(f"[mem] Offloaded full-slide frames to {outdir} during training; cleared from memory")
             except Exception as e:
-                log.warning(f"[mem] 落盘失败 ({e}), 继续把全片留在内存")
+                log.warning(f"[mem] Offload failed ({e}); keeping full slide in memory")
         bg_train = train_on_B(seg_t, unseg_t)
         _save_bg_train_cache(bg_train)
     del seg_t, unseg_t
@@ -1120,18 +1134,18 @@ def main():
         unseg_all = pd.read_pickle(unseg_all_path)
         _trim_malloc()
 
-    # 5) 全片预测
+    # 5) Whole-slide prediction
     df_out = predict_all_B(bg_train, seg_all, unseg_all)
     del seg_all, unseg_all
     _trim_malloc()
 
-    # 6) 导出
+    # 6) Export
     export_assignments(df_out, outdir)
     export_cell_table(df_out, outdir)
     export_boundaries(df_out, outdir)
     summarize(df_out, n_input_tx, outdir)
 
-    # 清理临时落盘文件
+    # Remove temporary offloaded files
     for p in (seg_all_path, unseg_all_path):
         try:
             if p.exists():
@@ -1139,7 +1153,7 @@ def main():
         except Exception:
             pass
 
-    log.info(f"全部完成。输出: {outdir}")
+    log.info(f"All done. Output: {outdir}")
 
 
 if __name__ == "__main__":

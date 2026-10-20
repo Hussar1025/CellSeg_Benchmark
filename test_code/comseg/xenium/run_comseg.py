@@ -16,10 +16,10 @@ from comseg import dictionary
 # Paths
 # =========================================================
 
-XENIUM_DIR = Path("/data/qiuyijia/dataset/pancreas_cancer")
+XENIUM_DIR = Path("yourpath/dataset/pancreas_cancer")
 TRANSCRIPT_PATH = XENIUM_DIR / "transcripts.parquet"
 
-OUTDIR = Path("/data/qiuyijia/comseg/pancreas_output")
+OUTDIR = Path("yourpath/comseg/pancreas_output")
 INPUT_DIR = OUTDIR / "comseg_input_csv"
 RUN_DIR = OUTDIR / "balanced_fast_15nn"
 

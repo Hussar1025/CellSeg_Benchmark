@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-补充图 B —— 数据集之间"方法排名"的一致性
-  a  转录本方法（9 种）：数据集 × 数据集矩阵，每格 = 两个数据集上各方法 F1 排名的 Spearman 相关
-  b  图像方法（7 种）：同上
-  c  平台内 vs 平台间：a、b 中所有数据集对的相关，按"同一平台 / 不同平台"分组的箱线图
-行列按平台分组（Xenium -> STARmap -> Stereo-seq -> MERFISH -> CosMx，组内自然序），两侧为平台色条。
-两个数据集共同评估的方法少于 MIN_COMMON 个时无法计算相关；这样的数据集直接从矩阵中去掉（不留灰格）：
-每次去掉"无法计算的格子最多"的那个数据集，直到矩阵中没有空格为止，去掉的数据集打印在终端并写进 _data.xlsx。
-读取与清洗沿用 robustness_bars.py（Fig. 2d），保证与正文口径一致：请把本脚本与 robustness_bars.py 放在同一目录。
-本地运行：python supp_figB_rank_consistency.py
+Supplementary figure B - consistency of "method ranking" between datasets
+  a  Transcript-based methods (9): dataset x dataset matrix, each cell = Spearman correlation of per-method F1 ranks on two datasets
+  b  Image-based methods (7): same as above
+  c  Within-platform vs across-platform: correlations of all dataset pairs from a, b, box plot grouped by "same / different platform"
+Rows and columns grouped by platform (Xenium -> STARmap -> Stereo-seq -> MERFISH -> CosMx, natural order within group), platform color bars on both sides.
+If two datasets share fewer than MIN_COMMON methods, the correlation cannot be computed; such datasets are removed from the matrix (no gray cells):
+each round removes the dataset with the most non-computable cells until no empty cells remain; removed datasets are printed and written to _data.xlsx.
+Reading and cleaning reuse robustness_bars.py (Fig. 2d) to match the main text; put this script in the same directory as robustness_bars.py.
+Local run: python supp_figB_rank_consistency.py
 """
 import os
 import re
@@ -25,13 +25,13 @@ from scipy.stats import spearmanr
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import supplement_4 as RB          # noqa: E402
 
-# ======================== 参数 ========================
-PATH_OMICS = RB.PATH_OMICS            # 默认与 Fig. 2d 相同：C:\Users\阿飞\Desktop\benchmark_result_omics.xlsx
+# ======================== Parameters ========================
+PATH_OMICS = RB.PATH_OMICS            # default same as Fig. 2d: yourpath/benchmark_result_omics.xlsx
 PATH_IMAGE = RB.PATH_IMAGE
-OUT_DIR = r"E:\supp_figures"
+OUT_DIR = "yourpath/supp_figures"
 OUT_NAME = "supp_fig_rank_consistency"
-METRIC = "f1"                         # 用于排名的指标（robustness_bars 读入的列：f1 / precision / recall）
-MIN_COMMON = 4                        # 两个数据集至少有几个共同方法才计算相关
+METRIC = "f1"                         # metric used for ranking (columns read by robustness_bars: f1 / precision / recall)
+MIN_COMMON = 4                        # minimum common methods between two datasets to compute correlation
 FIG_W, FONT = 7.2, 6
 PLAT_ORDER = ["xenium", "starmap", "stereo", "merfish", "cosmx"]
 PLAT_NAME = {"xenium": "Xenium", "starmap": "STARmap", "stereo": "Stereo-seq", "merfish": "MERFISH", "cosmx": "CosMx"}
@@ -71,7 +71,7 @@ def corr_matrix(agg, kind):
 
 
 def drop_incomplete(C, plat):
-    """反复去掉空格最多的数据集，直到矩阵没有 NaN；返回 (C, plat, 去掉的数据集及原因)。"""
+    """Repeatedly drop the dataset with the most empty cells until the matrix has no NaN; return (C, plat, dropped datasets with reason)."""
     dropped = []
     while True:
         nan_n = C.isna().sum(axis=1)
@@ -99,12 +99,12 @@ def draw_heat(ax, C, plat, title, norm):
     M = np.ma.masked_invalid(C.to_numpy())
     cm = CMAP.copy(); cm.set_bad(NAN_C)
     im = ax.imshow(M, cmap=cm, norm=norm, interpolation="nearest")
-    # 平台分组框
+    # platform group boxes
     p = list(plat)
     edges = [0] + [k for k in range(1, n) if p[k] != p[k - 1]] + [n]
     for a, b in zip(edges[:-1], edges[1:]):
         ax.add_patch(Rectangle((a - 0.5, a - 0.5), b - a, b - a, fill=False, ec="black", lw=0.8, zorder=3))
-    # 平台色条（上、左）
+    # platform color bars (top, left)
     for k, d in enumerate(C.index):
         c = PLAT_COLOR.get(plat[d], "#BFBFBF")
         ax.add_patch(Rectangle((k - 0.5, -1.9), 1, 1.0, color=c, clip_on=False, lw=0))
@@ -129,26 +129,26 @@ def main():
         C, plat, nm = corr_matrix(agg, kind)
         C, plat, dropped = drop_incomplete(C, plat)
         if dropped:
-            print(f"[{label}] 去掉 {len(dropped)} 个数据集（与其他数据集共同评估的方法少于 {MIN_COMMON} 个）：")
+            print(f"[{label}] removed {len(dropped)} datasets (fewer than {MIN_COMMON} methods evaluated in common with other datasets):")
             for d, p, k, tot in dropped:
-                print(f"      {d:<16} {PLAT_NAME.get(p, p):<10} 无法计算 {k}/{tot} 格")
+                print(f"      {d:<16} {PLAT_NAME.get(p, p):<10} cannot compute {k}/{tot} cells")
         pt = pair_table(C, plat)
         res[kind] = (C, plat, nm, pt, label)
         DROPPED[kind] = dropped
         w, b = pt[pt.same].rho, pt[~pt.same].rho
-        print(f"[{label}] 方法 {nm} 个，数据集 {len(C)} 个；数据集对：平台内 {len(w)} 对 中位 ρ = {w.median():.2f}，"
-              f"平台间 {len(b)} 对 中位 ρ = {b.median():.2f}")
+        print(f"[{label}] {nm} methods, {len(C)} datasets; dataset pairs: within-platform {len(w)} pairs  median rho = {w.median():.2f}, "
+              f"across-platform {len(b)} pairs  median rho = {b.median():.2f}")
         for p in PLAT_ORDER:
             x = pt[pt.same & pt.a.map(plat).eq(p)].rho
             if len(x):
-                print(f"      {PLAT_NAME[p]:<10} 平台内 {len(x):>3} 对 中位 ρ = {x.median():.2f}")
+                print(f"      {PLAT_NAME[p]:<10} within-platform {len(x):>3} pairs  median rho = {x.median():.2f}")
 
     norm = TwoSlopeNorm(vmin=-1, vcenter=0, vmax=1)
     nA, nB = len(res["rna"][0]), len(res["image"][0])
-    L, GAP, R_ = 0.80, 0.95, 0.15                     # 左边距（含行名）、两热图间距、右边距（inch）
+    L, GAP, R_ = 0.80, 0.95, 0.15                     # left margin (with row names), gap between heatmaps, right margin (inch)
     cell = (FIG_W - L - GAP - R_) / (nA + nB)
     hA, hB = nA * cell, nB * cell
-    row2 = 2.0                                         # 第二行（c + 图例 + 色标）高度
+    row2 = 2.0                                         # height of the second row (c + legend + colorbar)
     fig_h = 0.45 + max(hA, hB) + 0.95 + row2 + 0.25
     fig = plt.figure(figsize=(FIG_W, fig_h))
     top = fig_h - 0.45
@@ -158,8 +158,8 @@ def main():
         C, plat, nm, pt, label = res[kind]
         im = draw_heat(ax, C, plat, f"{label} ({nm} methods, {len(C)} datasets)", norm)
         ax.text(-0.22, 1.06, lab, transform=ax.transAxes, fontsize=FONT + 3, fontweight="bold")
-    y2 = top - max(hA, hB) - 0.95 - row2               # 第二行底边
-    # c：平台内 vs 平台间
+    y2 = top - max(hA, hB) - 0.95 - row2               # bottom edge of the second row
+    # c: within-platform vs across-platform
     axC = fig.add_axes([L / FIG_W, y2 / fig_h, 2.6 / FIG_W, row2 / fig_h])
     data, pos, cols = [], [], []
     for k, kind in enumerate(["rna", "image"]):
@@ -180,7 +180,7 @@ def main():
     axC.axhline(0, color="#9E9E9E", lw=0.5, ls="--")
     axC.set_xticks([0.5, 3.1]); axC.set_xticklabels(["Transcript-based", "Image-based"])
     axC.set_ylabel("Spearman ρ between datasets"); axC.set_ylim(-1.05, 1.25); axC.set_yticks([-1, -0.5, 0, 0.5, 1])
-    for sp in axC.spines.values():               # 全框线
+    for sp in axC.spines.values():               # full frame
         sp.set_visible(True); sp.set_linewidth(0.6); sp.set_color("black")
     axC.tick_params(axis="y", length=2)
     from matplotlib.patches import Patch
@@ -188,7 +188,7 @@ def main():
                         Patch(fc="#BFBFBF", alpha=0.55, label="different platforms")],
                loc="lower left", frameon=False, fontsize=FONT - 0.5)
     axC.text(-0.22, 1.02, "c", transform=axC.transAxes, fontsize=FONT + 3, fontweight="bold")
-    # 色标与平台图例（第二行右侧）
+    # colorbar and platform legend (right of the second row)
     cx = L + 2.6 + 0.9
     cax = fig.add_axes([cx / FIG_W, (y2 + row2 - 0.25) / fig_h, 2.2 / FIG_W, 0.07 / fig_h])
     cb = fig.colorbar(im, cax=cax, orientation="horizontal")
@@ -205,9 +205,9 @@ def main():
     for ext, kw in [(".pdf", {}), (".svg", {}), (".png", {"dpi": 600})]:
         p = os.path.join(OUT_DIR, OUT_NAME + ext)
         fig.savefig(p, bbox_inches="tight", facecolor="white", **kw)
-        print("已保存:", p)
+        print("Saved:", p)
     plt.close(fig)
-    # 数值导出，便于核对与写进附表
+    # export values for checking and for the supplementary table
     with pd.ExcelWriter(os.path.join(OUT_DIR, OUT_NAME + "_data.xlsx")) as xw:
         for kind in ["rna", "image"]:
             C, plat, nm, pt, label = res[kind]
@@ -217,7 +217,7 @@ def main():
             pd.DataFrame(DROPPED.get(kind, []), columns=["dataset", "platform", "pairs_not_computable",
                                                           "pairs_total"]).to_excel(
                 xw, sheet_name=f"{kind}_dropped", index=False)
-    print("已保存:", os.path.join(OUT_DIR, OUT_NAME + "_data.xlsx"))
+    print("Saved:", os.path.join(OUT_DIR, OUT_NAME + "_data.xlsx"))
 
 
 if __name__ == "__main__":

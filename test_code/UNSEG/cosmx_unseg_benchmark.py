@@ -25,7 +25,7 @@ import tifffile
 from PIL import Image
 
 HERE = Path(__file__).resolve().parent
-ROOT = Path('/data/qiuyijia')
+ROOT = Path('yourpath')
 DATA_ROOT = ROOT / 'dataset'
 OUT_ROOT = HERE / 'cosmx_outputs'
 CORE_PATH = ROOT / 'cellpose/cosmx_lymph.py'

@@ -1,11 +1,11 @@
 """
-全面检查 /data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles 数据目录
+Full inspection of the yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles data directory
 """
 import os, subprocess
 from pathlib import Path
 import pandas as pd
 
-DATA_ROOT = Path("/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles")
+DATA_ROOT = Path("yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles")
 SEP = "═" * 60
 
 def fmt(b):
@@ -13,16 +13,16 @@ def fmt(b):
         if b < 1024: return f"{b:.1f} {u}"
         b /= 1024
 
-# ── 1. 顶层目录结构 ────────────────────────────────────────
+# -- 1. Top-level directory structure ------------------------
 print(SEP)
-print(f"  数据根目录: {DATA_ROOT}")
+print(f"  data root: {DATA_ROOT}")
 print(SEP)
 
 if not DATA_ROOT.exists():
-    print(f"✘ 路径不存在: {DATA_ROOT}")
+    print(f"✘ path does not exist: {DATA_ROOT}")
     exit(1)
 
-print("\n>>> 完整目录结构（3层）")
+print("\n>>> Full directory structure (3 levels)")
 for p in sorted(DATA_ROOT.rglob("*")):
     depth = len(p.relative_to(DATA_ROOT).parts)
     if depth > 3:
@@ -30,39 +30,39 @@ for p in sorted(DATA_ROOT.rglob("*")):
     indent = "  " * (depth - 1)
     if p.is_dir():
         n = len(list(p.iterdir()))
-        print(f"{indent}📁 {p.name}/  ({n} 项)")
+        print(f"{indent}📁 {p.name}/  ({n} entries)")
     else:
         size = fmt(p.stat().st_size)
         print(f"{indent}📄 {p.name}  [{size}]")
 
-# ── 2. 所有 CSV 文件逐一检查 ──────────────────────────────
+# -- 2. Check every CSV file one by one ----------------------
 print(f"\n{SEP}")
-print("  所有 CSV 文件详情")
+print("  all CSV file details")
 print(SEP)
 
 csv_files = sorted(DATA_ROOT.rglob("*.csv"))
-print(f"共找到 {len(csv_files)} 个 CSV 文件\n")
+print(f"found {len(csv_files)} CSV files\n")
 
 for f in csv_files:
     print(f"  [{f.name}]")
-    print(f"  路径: {f}")
-    print(f"  大小: {fmt(f.stat().st_size)}")
+    print(f"  path: {f}")
+    print(f"  size: {fmt(f.stat().st_size)}")
     try:
-        # 行数
+        # line count
         res = subprocess.check_output(["wc", "-l", str(f)], text=True)
         nlines = int(res.strip().split()[0])
-        print(f"  行数: {nlines:,}  (含表头)")
-        # 列名 + 前2行
+        print(f"  lines: {nlines:,}  (incl. header)")
+        # column names + first 2 rows
         df = pd.read_csv(f, nrows=2)
-        print(f"  列名: {list(df.columns)}")
-        print(f"  前2行:\n{df.to_string(index=False)}")
+        print(f"  columns: {list(df.columns)}")
+        print(f"  first 2 rows:\n{df.to_string(index=False)}")
     except Exception as e:
-        print(f"  读取失败: {e}")
+        print(f"  read failed: {e}")
     print()
 
-# ── 3. 所有 TIF/JPG/PNG 图像文件 ─────────────────────────
+# -- 3. All TIF/JPG/PNG image files -------------------------
 print(f"\n{SEP}")
-print("  图像文件")
+print("  image files")
 print(SEP)
 
 img_exts = ["*.tif", "*.tiff", "*.jpg", "*.jpeg", "*.png"]
@@ -72,7 +72,7 @@ for ext in img_exts:
 img_files = sorted(img_files)
 
 if img_files:
-    # 按目录分组
+    # group by directory
     from itertools import groupby
     img_files_by_dir = {}
     for f in img_files:
@@ -80,29 +80,29 @@ if img_files:
         img_files_by_dir.setdefault(d, []).append(f)
 
     for d, files in sorted(img_files_by_dir.items()):
-        print(f"\n  📁 {d}  ({len(files)} 个文件)")
+        print(f"\n  📁 {d}  ({len(files)} files)")
         total_size = sum(f.stat().st_size for f in files)
-        print(f"     总大小: {fmt(total_size)}")
+        print(f"     total size: {fmt(total_size)}")
         from natsort import natsorted
         names = natsorted([f.name for f in files])
-        print(f"     示例(前3): {names[:3]}")
+        print(f"     examples (first 3): {names[:3]}")
         if len(names) > 3:
-            print(f"     示例(后3): {names[-3:]}")
-        # 检查第一个 tif 的尺寸
+            print(f"     examples (last 3): {names[-3:]}")
+        # check dimensions of the first tif
         tifs = [f for f in files if f.suffix.lower() in [".tif", ".tiff"]]
         if tifs:
             try:
                 import tifffile
                 sample = tifffile.imread(str(tifs[0]))
-                print(f"     [样本] {tifs[0].name}: shape={sample.shape}  dtype={sample.dtype}")
+                print(f"     [sample] {tifs[0].name}: shape={sample.shape}  dtype={sample.dtype}")
             except Exception as e:
-                print(f"     tif 读取失败: {e}")
+                print(f"     tif read failed: {e}")
 else:
-    print("  未找到图像文件")
+    print("  no image files found")
 
-# ── 4. 关键字匹配 ─────────────────────────────────────────
+# -- 4. Keyword matching ------------------------------------
 print(f"\n{SEP}")
-print("  关键文件匹配")
+print("  key file matching")
 print(SEP)
 
 keywords = {
@@ -122,16 +122,16 @@ for kind, pats in keywords.items():
         for h in sorted(hits)[:5]:
             print(f"     {fmt(h.stat().st_size):>10s}  {h.relative_to(DATA_ROOT)}")
     else:
-        print(f"\n  ✘ {kind}  — 未找到")
+        print(f"\n  ✘ {kind}  -- not found")
 
-# ── 5. 磁盘空间 ───────────────────────────────────────────
+# -- 5. Disk space ------------------------------------------
 print(f"\n{SEP}")
-print("  磁盘空间")
+print("  disk space")
 print(SEP)
 import shutil
 total, used, free = shutil.disk_usage(DATA_ROOT)
-print(f"  总计: {fmt(total)}  已用: {fmt(used)}  可用: {fmt(free)}  ({free/total*100:.1f}% free)")
+print(f"  total: {fmt(total)}  used: {fmt(used)}  free: {fmt(free)}  ({free/total*100:.1f}% free)")
 
 print(f"\n{SEP}")
-print("  检查完成")
+print("  check done")
 print(SEP)

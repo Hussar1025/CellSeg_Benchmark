@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""GeneSegNet 独立评估（自包含，不 import 任何现有脚本）。
-读 genesegnet mask.tif + 数据集的 transcripts/cell_metadata + micron_to_mosaic 变换，
-GT = cell_metadata 质心落在中心 ROI 内的 platform 核；
-匹配 = kd-tree 候选边(半径=GT最近邻p95×1.25) + 连通分量内匈牙利/大分量贪心；
-输出 19 指标，与 merfish benchmark 口径一致。
+"""GeneSegNet standalone evaluation (self-contained, imports no existing scripts).
+Reads genesegnet mask.tif + dataset transcripts/cell_metadata + micron_to_mosaic transform,
+GT = platform nuclei whose cell_metadata centroid falls inside the central ROI;
+match = kd-tree candidate edges (radius = GT nearest-neighbor p95 x 1.25) + Hungarian within connected components / greedy for large components;
+outputs 19 metrics, consistent with the merfish benchmark definition.
 
-用法:
+Usage:
   python eval_genesegnet_standalone.py \
-    --root /data/qiuyijia/dataset/merfish_breast_cancer \
-    --mask /data/qiuyijia/genesegnet_merfish_breast/genesegnet_merfish1_roi20000_mask.tif \
+    --root yourpath/dataset/merfish_breast_cancer \
+    --mask yourpath/genesegnet_merfish_breast/genesegnet_merfish1_roi20000_mask.tif \
     --dataset breast --roi-size 10000
 """
 import argparse, glob
@@ -86,7 +86,7 @@ def load_tx(root):
             gidx[ok], genes)
 
 
-# ---- 匹配 ----
+# ---- match ----
 def infer_radius(gx, gy):
     from scipy.spatial import cKDTree
     if len(gx) < 2: return 2.0
@@ -172,13 +172,13 @@ def main():
     area_px = (b[1:]-b[:-1]).astype(float)
     ps_um = 1.0/geo["M"][0,0]
     area_um2 = area_px * s * s * ps_um * ps_um
-    # 质心 label像素 -> 全局像素 -> um
+    # centroid label pixel -> global pixel -> um
     gpx = (cx+0.5)*s + geo["x0"]; gpy = (cy+0.5)*s + geo["y0"]
     pux, puy = px_to_um(geo, gpx, gpy)
 
-    # 转录本 -> 细胞
-    lx = ((tx_x - roi_um[0]) / ps_um) / s  # 近似：um->ROI局部px->label px
-    # 更稳: 用全局像素反推。global um -> global px:
+    # transcript -> cell
+    lx = ((tx_x - roi_um[0]) / ps_um) / s  # approximation: um->ROI local px->label px
+    # more robust: invert from global pixels. global um -> global px:
     gp = np.c_[tx_x, tx_y, np.ones(len(tx_x))] @ geo["M"].T
     rr = np.clip(((gp[:,1]-geo["y0"])/s).astype(int), 0, lab.shape[0]-1)
     cc = np.clip(((gp[:,0]-geo["x0"])/s).astype(int), 0, lab.shape[1]-1)
@@ -191,7 +191,7 @@ def main():
     ri = np.array([pos.get(int(v), -1) for v in tl[sel]]); ok = ri >= 0
     np.add.at(gm_pred, (ri[ok], tx_g[sel][ok]), 1.0)
 
-    # GT 基因向量：转录本按最近 GT 质心归属
+    # GT gene vectors: transcripts assigned to the nearest GT centroid
     from scipy.spatial import cKDTree
     tgt = cKDTree(np.c_[gx, gy])
     dd, jj = tgt.query(np.c_[tx_x, tx_y], k=1)
@@ -205,7 +205,7 @@ def main():
     prec = n/max(len(ids),1); rec = n/max(len(gx),1)
     f1 = 2*prec*rec/(prec+rec) if prec+rec else np.nan
     vc, vjs, vpr, vpair = gene_metrics(gm_pred[ep], gm_gt[eg]) if n else (np.nan,)*4
-    # 计数相关
+    # count correlation
     from scipy.stats import pearsonr, spearmanr
     def corr(a,b):
         ok=np.isfinite(a)&np.isfinite(b)
@@ -235,7 +235,7 @@ def main():
     print("="*60)
     for k,v in R.items(): print(f"  {k:24s} {v}")
     print("="*60)
-    out = args.out or f"/data/qiuyijia/eval_genesegnet_{args.dataset}.csv"
+    out = args.out or f"yourpath/eval_genesegnet_{args.dataset}.csv"
     pd.DataFrame([R]).to_csv(out, index=False)
     print("written ->", out)
 

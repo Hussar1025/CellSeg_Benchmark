@@ -1,6 +1,6 @@
 {
   "dataset": "stereo_mouse_embryo_center3000",
-  "transcripts": "/data/qiuyijia/bering/prepared_stereoseq/D05103C4D4_center_3000.bering.parquet",
+  "transcripts": "yourpath/bering/prepared_stereoseq/D05103C4D4_center_3000.bering.parquet",
   "seed_source": "cellbin_transcript_cell_id",
   "seed_description": "D05103C4D4.adjusted.cellbin.gef polygons rasterized in the registered-image center 3000x3000 px ROI; tissue-GEF molecules outside polygons are UNASSIGNED background",
   "coarse_cell_boundaries_used": true,
@@ -37,5 +37,5 @@
   },
   "unassigned_values": ["UNASSIGNED", "0", "-1", "nan", "None", ""],
   "seed": 0,
-  "output_dir": "/data/qiuyijia/bering/stereo_outputs/mouse_embryo_center3000"
+  "output_dir": "yourpath/bering/stereo_outputs/mouse_embryo_center3000"
 }

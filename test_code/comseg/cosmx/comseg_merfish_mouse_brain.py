@@ -68,12 +68,12 @@ import tifffile
 from scipy.spatial import cKDTree
 
 
-ROOT_DEFAULT = Path("/data/qiuyijia/dataset/merfish_mouse_brain")
-DAPI_DEFAULT = Path("/data/qiuyijia/dataset/merfish_mouse_brain/images/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_images_mosaic_DAPI_z3.tif")
-TRANSFORM_DEFAULT = Path("/data/qiuyijia/dataset/merfish_mouse_brain/images/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_images_micron_to_mosaic_pixel_transform.csv")
-TX_DEFAULT = Path("/data/qiuyijia/dataset/merfish_mouse_brain/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_detected_transcripts_S1R1.csv")
+ROOT_DEFAULT = Path("yourpath/dataset/merfish_mouse_brain")
+DAPI_DEFAULT = Path("yourpath/dataset/merfish_mouse_brain/images/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_images_mosaic_DAPI_z3.tif")
+TRANSFORM_DEFAULT = Path("yourpath/dataset/merfish_mouse_brain/images/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_images_micron_to_mosaic_pixel_transform.csv")
+TX_DEFAULT = Path("yourpath/dataset/merfish_mouse_brain/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_detected_transcripts_S1R1.csv")
 
-OUT_DEFAULT = Path("/data/qiuyijia/comseg_merfish_mouse_brain")
+OUT_DEFAULT = Path("yourpath/comseg_merfish_mouse_brain")
 
 H = 61310
 W = 89085

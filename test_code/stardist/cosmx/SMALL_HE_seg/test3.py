@@ -1,11 +1,11 @@
 """
-基于 StarDist2D 的 H&E 全切片细胞分割脚本
-- 使用预训练模型 '2D_versatile_he'
-- 使用自定义 Normalizer，避免一次性归一化整张大图
-- 使用 predict_instances_big 进行分块预测
-- 对超大图像支持 Zarr（避免一次性载入内存）
-- 输出压缩 TIF 标签图
-- 分阶段计时
+StarDist2D-based H&E whole-slide cell segmentation script.
+- uses the pretrained model '2D_versatile_he'
+- uses a custom Normalizer to avoid normalizing the whole large image at once
+- uses predict_instances_big for tiled prediction
+- supports Zarr for very large images (avoids loading all into memory at once)
+- outputs a compressed TIF label map
+- stage-by-stage timing
 """
 
 import time
@@ -19,46 +19,46 @@ from stardist.models import StarDist2D
 
 
 # ============================================================
-# 配置参数
+# configuration parameters
 # ============================================================
-INPUT_PATH  = Path('/data/qiuyijia/dataset/CosMx/cropped_HE.tif')      # 输入 WSI 路径（tif/svs 可读为 tif）
-OUTPUT_DIR  = Path('/data/qiuyijia/stardist/CosMx_output')                # 输出目录
-LABELS_TIF  = OUTPUT_DIR / 'labels.tif'       # 输出标签 TIF
+INPUT_PATH  = Path('yourpath/dataset/CosMx/cropped_HE.tif')      # input WSI path (tif/svs readable as tif)
+OUTPUT_DIR  = Path('yourpath/stardist/CosMx_output')                # output directory
+LABELS_TIF  = OUTPUT_DIR / 'labels.tif'       # output label TIF
 
-# 是否对超大图像使用 Zarr（图像无法一次载入内存时设为 True）
+# whether to use Zarr for very large images (set True when the image cannot fit in memory at once)
 USE_ZARR    = False
 ZARR_IMAGE  = OUTPUT_DIR / 'image.zarr'
 ZARR_LABELS = OUTPUT_DIR / 'labels.zarr'
 
-# 分块预测参数（可按显存/内存调整）
-BLOCK_SIZE   = 4096    # 每个 block 的边长
-MIN_OVERLAP  = 128     # block 之间的最小重叠，避免边界处细胞被切断
-CONTEXT      = 128     # block 边缘提供给 CNN 的额外上下文
-N_TILES      = (4, 4, 1)  # 单个 block 内的进一步切片数 (Y, X, C)
+# tiled prediction parameters (adjust by GPU memory / RAM)
+BLOCK_SIZE   = 4096    # side length of each block
+MIN_OVERLAP  = 128     # minimum overlap between blocks, to avoid cutting cells at boundaries
+CONTEXT      = 128     # extra context at block edges for the CNN
+N_TILES      = (4, 4, 1)  # further tiling within a single block (Y, X, C)
 
-# 归一化范围：uint8 H&E 图像用 0~255 即可；如需百分位归一化见下方注释
+# normalization range: 0~255 for uint8 H&E; see comment below for percentile normalization
 MI, MA = 0, 255
 
 
 # ============================================================
-# 工具：计时上下文管理器
+# utility: timing context manager
 # ============================================================
 class Timer:
     def __init__(self, name):
         self.name = name
     def __enter__(self):
-        print(f'[{self.name}] 开始 ...')
+        print(f'[{self.name}] start ...')
         self.t0 = time.perf_counter()
         return self
     def __exit__(self, exc_type, exc_val, exc_tb):
         dt = time.perf_counter() - self.t0
         h, rem = divmod(dt, 3600)
         m, s = divmod(rem, 60)
-        print(f'[{self.name}] 用时 {int(h):02d}:{int(m):02d}:{s:05.2f}  ({dt:.2f} s)\n')
+        print(f'[{self.name}] elapsed {int(h):02d}:{int(m):02d}:{s:05.2f}  ({dt:.2f} s)\n')
 
 
 # ============================================================
-# 自定义 Normalizer（按需归一化，不预先处理整张大图）
+# custom Normalizer (normalizes on demand, does not preprocess the whole large image)
 # ============================================================
 class MyNormalizer(Normalizer):
     def __init__(self, mi, ma):
@@ -77,32 +77,32 @@ def main():
     total_t0 = time.perf_counter()
 
     # --------------------------------------------------------
-    # 1. 读取图像
+    # 1. read image
     # --------------------------------------------------------
-    with Timer('读取图像'):
+    with Timer('read image'):
         if USE_ZARR:
             import zarr
-            # 若 zarr 副本不存在则先创建一份（实际使用中可直接从 zarr 读取，跳过此步）
+            # if the zarr copy does not exist, create it first (in practice you can read from zarr directly and skip this step)
             if not ZARR_IMAGE.exists():
-                print('  -> 首次运行：将 TIF 转为 Zarr（仅一次）')
+                print('  -> first run: convert TIF to Zarr (once only)')
                 img_np = imread(str(INPUT_PATH))
                 zarr.save_array(str(ZARR_IMAGE), img_np)
                 del img_np
             img = zarr.open(str(ZARR_IMAGE), mode='r')
         else:
             img = imread(str(INPUT_PATH))
-        print(f'  图像形状: {img.shape}, dtype: {img.dtype}')
+        print(f'  image shape: {img.shape}, dtype: {img.dtype}')
 
     # --------------------------------------------------------
-    # 2. 加载预训练模型
+    # 2. load pretrained model
     # --------------------------------------------------------
-    with Timer('加载模型'):
+    with Timer('load model'):
         model = StarDist2D.from_pretrained('2D_versatile_he')
 
     # --------------------------------------------------------
-    # 3. 准备 normalizer
+    # 3. prepare normalizer
     # --------------------------------------------------------
-    # 如果想用百分位归一化（更鲁棒），可改用低分辨率版本来估计：
+    # For percentile normalization (more robust), estimate on a low-resolution version:
     # if USE_ZARR:
     #     sample = img[::16, ::16]
     # else:
@@ -111,12 +111,12 @@ def main():
     normalizer = MyNormalizer(MI, MA)
 
     # --------------------------------------------------------
-    # 4. 分块预测
+    # 4. tiled prediction
     # --------------------------------------------------------
-    with Timer('分块预测 (predict_instances_big)'):
+    with Timer('tiled prediction (predict_instances_big)'):
         if USE_ZARR:
             import zarr
-            # 预先创建用于写入的 zarr 标签数组
+            # pre-create the zarr label array for writing
             labels_zarr = zarr.open(
                 str(ZARR_LABELS), mode='w',
                 shape=img.shape[:2],
@@ -130,7 +130,7 @@ def main():
                 context=CONTEXT,
                 normalizer=normalizer,
                 n_tiles=N_TILES,
-                labels_out=labels_zarr,    # 直接写入 zarr，避免在内存里组装完整标签图
+                labels_out=labels_zarr,    # write directly to zarr, avoid assembling the full label map in memory
             )
         else:
             labels, polys = model.predict_instances_big(
@@ -142,14 +142,14 @@ def main():
                 n_tiles=N_TILES,
             )
         n_cells = len(polys['coord']) if polys and 'coord' in polys else 0
-        print(f'  检测到细胞数: {n_cells}')
+        print(f'  detected cell count: {n_cells}')
 
     # --------------------------------------------------------
-    # 5. 保存标签图为压缩 TIF
+    # 5. save label map as compressed TIF
     # --------------------------------------------------------
-    with Timer('保存 TIF'):
+    with Timer('save TIF'):
         if USE_ZARR:
-            # zarr -> numpy 再写 tif；若标签图非常大，可改用 bigtiff=True 分块写入
+            # zarr -> numpy then write tif; for very large label maps, use bigtiff=True and write in blocks
             labels_np = np.array(labels)
         else:
             labels_np = labels
@@ -158,17 +158,17 @@ def main():
             str(LABELS_TIF),
             labels_np,
             compression=ZIP_DEFLATED,
-            bigtiff=True,   # 标签图很大时建议开启
+            bigtiff=True,   # recommended for very large label maps
         )
-        print(f'  已保存: {LABELS_TIF}')
+        print(f'  saved: {LABELS_TIF}')
 
     # --------------------------------------------------------
-    # 总耗时
+    # total elapsed
     # --------------------------------------------------------
     total_dt = time.perf_counter() - total_t0
     h, rem = divmod(total_dt, 3600)
     m, s = divmod(rem, 60)
-    print(f'==== 总耗时 {int(h):02d}:{int(m):02d}:{s:05.2f}  ({total_dt:.2f} s) ====')
+    print(f'==== total elapsed {int(h):02d}:{int(m):02d}:{s:05.2f}  ({total_dt:.2f} s) ====')
 
 
 if __name__ == '__main__':

@@ -16,12 +16,12 @@ import zarr
 from scipy.ndimage import gaussian_filter
 
 
-REPO = Path("/data/qiuyijia/GeneSegNet")
+REPO = Path("yourpath/GeneSegNet")
 GS_REPO = REPO / "GeneSegNet"
 HELPER = REPO / "genesegnet_cosmx_2.py"
 
 DEFAULT_MODEL = (
-    "/data/qiuyijia/genesegnet_xenium/"
+    "yourpath/genesegnet_xenium/"
     "pancreas_cancer_cell/model/models/"
     "GeneSegNet_residual_on_style_off_concatenation_off_model_"
     "2026_08_19_16_55_17.947661"

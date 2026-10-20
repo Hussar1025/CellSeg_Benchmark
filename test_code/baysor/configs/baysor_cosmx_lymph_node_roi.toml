@@ -1,20 +1,21 @@
-# Baysor C++ 配置：CosMx lymph node 中心 ROI（约 1.1 万个参考细胞）
-# 输入是 gzip 压缩 CSV；当前 C++ Baysor 只接受 CSV/Parquet，需先解压或生成 ROI CSV。
-# ROI 采用全局 x_global_px/y_global_px 坐标，覆盖中心附近 2 x 2 FOV。
+# Baysor C++ config: CosMx lymph node center ROI (~11,000 reference cells)
+# Input is a gzip-compressed CSV; the current C++ Baysor only accepts CSV/Parquet,
+# so decompress it or generate an ROI CSV first.
+# The ROI uses global x_global_px/y_global_px coordinates and covers a 2 x 2 FOV around the center.
 
 [data]
 x = "x_global_px"
 y = "y_global_px"
 z = "z"
 gene = "target"
-force_2d = true                 # z 为离散焦平面编号，不按与 x/y 相同单位参与距离
+force_2d = true                 # z is a discrete focal-plane index, not on the same unit scale as x/y
 min_molecules_per_gene = 1
 exclude_genes = "SystemControl*,Negative*"
 min_molecules_per_cell = 80
 confidence_nn_id = 16
 
 [segmentation]
-# scale 是细胞半径（单位：CosMx pixel）；metadata 中位面积 3288 px^2，等效半径约 32 px
+# scale is the cell radius (in CosMx pixels); metadata median area 3288 px^2, equivalent radius ~32 px
 scale = 35.0
 scale_std = "25%"
 estimate_scale_from_centers = false

@@ -34,10 +34,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ROOT = "/data/qiuyijia/dataset/MERFISH_Lung_cancer"
-RUN = "/data/qiuyijia/comseg_merfish_lung"
-GT_MASK = "/data/qiuyijia/ucs_merfish_lung/platform_labels.tif"
-OUT = "/data/qiuyijia/eval_merfish_lung"
+ROOT = "yourpath/dataset/MERFISH_Lung_cancer"
+RUN = "yourpath/comseg_merfish_lung"
+GT_MASK = "yourpath/ucs_merfish_lung/platform_labels.tif"
+OUT = "yourpath/eval_merfish_lung"
 ROI = (31434, 36213, 10000)          # y0, x0, size in mosaic px
 UM_PER_PX = 0.108                    # confirmed from the dataset transform
 METHOD, DATASET = "ComSeg", "merfish_4"

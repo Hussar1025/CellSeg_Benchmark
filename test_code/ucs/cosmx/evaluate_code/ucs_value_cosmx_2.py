@@ -19,7 +19,7 @@ than the MERFISH liver rows had.
 
     python eval_proseg_cosmx.py --fovs 48 261
     python eval_proseg_cosmx.py --fovs 48 --method UCS \
-        --run-root /data/qiuyijia/ucs_cosmx_lymph_node
+        --run-root yourpath/ucs_cosmx_lymph_node
 
 Per-FOV rows are written, plus a pooled cosmx_2 row that sums the counts and
 weights the rate-like columns by cell count.
@@ -31,9 +31,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-DATA = "/data/qiuyijia/dataset/cosmx_lymph_node"
-RUN = "/data/qiuyijia/proseg_cosmx_lymph_node"
-OUT = "/data/qiuyijia/eval_cosmx_lymph"
+DATA = "yourpath/dataset/cosmx_lymph_node"
+RUN = "yourpath/proseg_cosmx_lymph_node"
+OUT = "yourpath/eval_cosmx_lymph"
 FOV_PX = 4256
 UM_PER_PX = 0.12028      # from the FOV position table, cross-checked against
                          # metadata Area.um2 / Area; the two agree to 0.00%

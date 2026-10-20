@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 
 # ======================================================
-# 目录设置
+# Directory setup
 # ======================================================
 
 INPUT_DIR = Path.home() / "Cosmx_6k_COAD_data/cellist_result/input/userdata"
@@ -44,14 +44,14 @@ PREVIEW_TIFF = RESULT_DIR / "proseg_instance_mask_preview_binary.tif"
 NTHREADS = 12
 PIXEL_SIZE = 1.0
 
-# 内存保护
+# Memory protection
 SAFE_MEMORY_MODE = True
-MAX_MASK_PIXELS = 1_500_000_000   # uint32 大约 6 GB；太大直接停止
+MAX_MASK_PIXELS = 1_500_000_000   # uint32 ~6 GB; stop if too large
 MAX_ALLOWED_GB_FOR_MASK = 30
 
 
 # ======================================================
-# 工具函数
+# Utility functions
 # ======================================================
 
 def find_col(columns, candidates, required=True):
@@ -202,7 +202,7 @@ def prepare_cosmx_transcripts_from_parquet(tx_parquet, out_csv):
 
 
 # ======================================================
-# 检查输入
+# Check input
 # ======================================================
 
 print("Checking files...")
@@ -212,7 +212,7 @@ RESULT_DIR.mkdir(parents=True, exist_ok=True)
 if shutil.which(PROSEG_EXE) is None and not Path(PROSEG_EXE).exists():
     raise FileNotFoundError(
         f"Cannot find proseg executable: {PROSEG_EXE}\n"
-        "请确认服务器中可以运行：proseg --help"
+        "Please confirm the server can run: proseg --help"
     )
 
 if not TX_PARQUET.exists():
@@ -231,7 +231,7 @@ print(f"SPATIALDATA_DIR = {SPATIALDATA_DIR}")
 
 
 # ======================================================
-# 预处理 parquet -> CosMx CSV
+# Preprocess parquet -> CosMx CSV
 # ======================================================
 
 PROSEG_INPUT_CSV = prepare_cosmx_transcripts_from_parquet(
@@ -241,7 +241,7 @@ PROSEG_INPUT_CSV = prepare_cosmx_transcripts_from_parquet(
 
 
 # ======================================================
-# 清理旧输出
+# Clean old output
 # ======================================================
 
 for p in [
@@ -261,7 +261,7 @@ for p in [
 
 
 # ======================================================
-# 运行 proseg
+# Run proseg
 # ======================================================
 
 print("\nRunning proseg with relative paths...")
@@ -302,7 +302,7 @@ if not SPATIALDATA_DIR.exists():
 
 
 # ======================================================
-# 整理 GeoJSON
+# Organize GeoJSON
 # ======================================================
 
 print("\nPreparing benchmark-style GeoJSON directory...")
@@ -315,7 +315,7 @@ print(GEOJSON_PATH)
 
 
 # ======================================================
-# 读取 GeoJSON
+# Read GeoJSON
 # ======================================================
 
 print("\nLoading polygons...")
@@ -329,7 +329,7 @@ print(gdf.columns)
 
 
 # ======================================================
-# 清理 geometry
+# Clean geometry
 # ======================================================
 
 print("\nCleaning geometries...")
@@ -363,7 +363,7 @@ if len(valid_geoms) == 0:
 
 
 # ======================================================
-# 获取组织边界
+# Get tissue bounds
 # ======================================================
 
 minx, miny, maxx, maxy = gdf.total_bounds
@@ -376,7 +376,7 @@ print(f"maxy = {maxy}")
 
 
 # ======================================================
-# 计算输出图像大小
+# Compute output image size
 # ======================================================
 
 width = int(np.ceil((maxx - minx) / PIXEL_SIZE))
@@ -396,10 +396,10 @@ if total_pixels > MAX_MASK_PIXELS or mask_gb > MAX_ALLOWED_GB_FOR_MASK:
     raise MemoryError(
         "\nRasterized mask would be too large.\n"
         f"width={width}, height={height}, pixels={total_pixels:,}, estimated={mask_gb:.2f} GB\n\n"
-        "建议：\n"
-        "1. 增大 PIXEL_SIZE，例如 PIXEL_SIZE = 2.0 或 4.0；\n"
-        "2. 或者按 FOV / ROI 分块生成 mask；\n"
-        "3. 或者只保留 GeoJSON 结果，不生成全图 instance mask。"
+        "Suggestions:\n"
+        "1. Increase PIXEL_SIZE, e.g. PIXEL_SIZE = 2.0 or 4.0;\n"
+        "2. Or generate the mask in FOV / ROI chunks;\n"
+        "3. Or keep only the GeoJSON result and skip the full-image instance mask."
     )
 
 
@@ -445,7 +445,7 @@ print(f"nonzero pixels = {np.count_nonzero(mask):,}")
 
 
 # ======================================================
-# 保存 TIFF
+# Save TIFF
 # ======================================================
 
 print("\nSaving TIFF...")
@@ -487,7 +487,7 @@ print(f"Preview saved to: {PREVIEW_TIFF}")
 
 
 # ======================================================
-# 最终检查
+# Final check
 # ======================================================
 
 print("\nFinal output check:")
@@ -557,7 +557,7 @@ NTHREADS = 12
 PIXEL_SIZE = 1.0
 SAFE_MEMORY_MODE = True
 
-# 超过这个大小就不生成全图 mask，避免爆内存
+# Above this size, skip the full-image mask to avoid OOM
 MAX_ALLOWED_GB_FOR_MASK = 30
 
 
@@ -664,7 +664,7 @@ def locate_existing_polygon_file():
 def read_polygon_file(path):
     print(f"\nLoading polygons from:\n{path}")
 
-    # 如果是 gzip，无论后缀对不对，都先解压到临时 geojson 再读
+    # If gzip, decompress to a temp geojson first regardless of extension, then read
     if is_gzip_file(path):
         print("Detected gzip-compressed GeoJSON.")
         with gzip.open(path, "rb") as f_in:
@@ -729,7 +729,7 @@ def run_proseg_if_needed():
 
 
 # ======================================================
-# 主流程
+# Main flow
 # ======================================================
 
 print("Checking files...")
@@ -751,7 +751,7 @@ polygon_file = run_proseg_if_needed()
 
 
 # ======================================================
-# 整理 polygon 到 benchmark 目录
+# Organize polygon into benchmark directory
 # ======================================================
 
 GEOJSON_DIR.mkdir(parents=True, exist_ok=True)
@@ -774,7 +774,7 @@ print(final_polygon_path)
 
 
 # ======================================================
-# 读取 polygon，生成 mask
+# Read polygon, generate mask
 # ======================================================
 
 gdf = read_polygon_file(final_polygon_path)

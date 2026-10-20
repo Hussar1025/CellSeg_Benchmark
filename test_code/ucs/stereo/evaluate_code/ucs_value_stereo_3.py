@@ -43,12 +43,12 @@ import numpy as np
 import pandas as pd
 
 
-ROOT = "/data/qiuyijia/ucs_stereoseq_E16.5_E2S7"
+ROOT = "yourpath/ucs_stereoseq_E16.5_E2S7"
 GEM = (
-    "/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all/"
+    "yourpath/dataset/stereoseq/stereo-seq_data_all/"
     "E16.5_E2S7_Dorsal_Midbrain_GEM_CellBin.tsv.gz"
 )
-OUT = "/data/qiuyijia/eval_results_qv20/stereo_3"
+OUT = "yourpath/eval_results_qv20/stereo_3"
 
 METHOD = "UCS"
 DATASET = "stereo_3"

@@ -10,12 +10,12 @@ from scipy.spatial.distance import jensenshannon
 
 warnings.filterwarnings("ignore")
 
-DATA="/data/qiuyijia/dataset/xenium_8"
-BASE="/data/qiuyijia/cellist/xenium_8"
-D=BASE+"/cellist/alpha_0.8_sigma_1.0_beta_10_gene_HVG_dist_18_twostep_False_cyto_False_noise_0.0_neigh_2.5"
-COORD=D+"/xenium_8_Cellist_segmentation_cell_coord.txt"
-H5=D+"/xenium_8_Cellist_segmentation_cell_count.h5"
-OUT="/data/qiuyijia/eval_results_qv20/xenium_8/cellist_xenium_8_metrics.csv"
+DATA="yourpath"
+BASE="yourpath"
+D="yourpath"
+COORD=D+"/yourpath"
+H5=D+"/yourpath"
+OUT="yourpath"
 
 PS=0.2125
 GEM_BIN=2
@@ -68,14 +68,14 @@ print("Pred =",len(pred),flush=True)
 gxy=gt[["x_centroid","y_centroid"]].to_numpy(float)
 pxy=pred[["x_um","y_um"]].to_numpy(float)
 
-# same x8 convention: GT NN p95 * 1.25
+# match radius: GT NN p95 * 1.25
 tree_g=cKDTree(gxy)
 nn,_=tree_g.query(gxy,k=2)
 R=max(2.0,float(np.quantile(nn[:,1],0.95)*1.25))
 AR=R*1.5
 print(f"match radius = {R:.4f} um",flush=True)
 
-# same Cellist convention: nearest-GT, one best prediction per GT
+# nearest-GT matching, one best prediction per GT
 dd,gi=tree_g.query(pxy,k=1,distance_upper_bound=R)
 best={}
 for pi in range(len(pred)):
@@ -94,7 +94,7 @@ f1=2*prec*rec/(prec+rec)
 
 print(f"matched={nmatch} precision={prec:.4f} recall={rec:.4f} F1={f1:.4f}",flush=True)
 
-# transcript -> nearest predicted centroid, same x2 Cellist evaluator convention
+# transcript -> nearest predicted centroid
 txy=tx[["x_location","y_location"]].to_numpy(float)
 td,tpi=cKDTree(pxy).query(txy,k=1,distance_upper_bound=AR)
 ok=np.isfinite(td)&(td<AR)
@@ -162,7 +162,7 @@ vc=np.mean(cosl) if len(cosl)>10 else np.nan
 vj=np.mean(jsl) if len(jsl)>10 else np.nan
 vp=np.mean(prl) if len(prl)>10 else np.nan
 
-# assignment accuracy, same x2 evaluator convention
+# assignment accuracy
 row2gt={p[0]:gt.cell_id.iloc[p[1]] for p in pairs}
 s=tx[(tx.pred_row>=0)&valid_gt].copy()
 expected=s.pred_row.map(row2gt)

@@ -5,7 +5,7 @@ boms_value_xenium_5.py
 Comprehensive evaluator for the FINAL BOMS xenium5 mouse-brain run.
 
 Default prediction:
-  /data/qiuyijia/boms_xenium_5_hs9_g3000/boms_xenium_5_hs9_g3000.npz
+  yourpath/boms_xenium_5_hs9_g3000/boms_xenium_5_hs9_g3000.npz
 
 Important:
   Uses NPZ key `cell_loc` (the completed run contains it).
@@ -45,9 +45,9 @@ ROI_Y0 = 6956
 ROI_X0 = 12077
 ROI_SIZE = 10000
 
-PRED_DEFAULT = "/data/qiuyijia/boms_xenium_5_hs9_g3000/boms_xenium_5_hs9_g3000.npz"
-ROOT_DEFAULT = "/data/qiuyijia/dataset/xenium_mouse_brain"
-OUT_DEFAULT = "/data/qiuyijia/eval_results_qv20/mouse_brain/boms_xenium_5_metrics.csv"
+PRED_DEFAULT = "yourpath/boms_xenium_5_hs9_g3000/boms_xenium_5_hs9_g3000.npz"
+ROOT_DEFAULT = "yourpath/dataset/xenium_mouse_brain"
+OUT_DEFAULT = "yourpath/eval_results_qv20/mouse_brain/boms_xenium_5_metrics.csv"
 
 
 def safe_corr(a,b,kind):

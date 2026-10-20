@@ -27,8 +27,8 @@ from pathlib import Path
 # Keep third-party imports below argument parsing so --help and --dry-run can
 # still report useful path information on a machine where DISSECT dependencies
 # have not yet been installed.
-ROOT = Path("/data/qiuyijia/DISSECT")
-DEFAULT_INPUT = Path("/data/qiuyijia/dataset/xenium_pancreas_cancer")
+ROOT = Path("yourpath/DISSECT")
+DEFAULT_INPUT = Path("yourpath/dataset/xenium_pancreas_cancer")
 DEFAULT_IMAGE = DEFAULT_INPUT / "morphology_focus.ome.tif"
 DEFAULT_TRANSCRIPTS = DEFAULT_INPUT / "transcripts.parquet"
 DEFAULT_OUTPUT = ROOT / "xenium_pancrease"

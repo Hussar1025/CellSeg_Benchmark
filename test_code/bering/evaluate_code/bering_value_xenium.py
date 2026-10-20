@@ -44,80 +44,80 @@ import baysor_value_xenium as common  # noqa: E402
 
 VERSION = "2026.09.18"
 METHOD = "Bering"
-DEFAULT_OUT = Path("/data/qiuyijia/eval/bering")
+DEFAULT_OUT = Path("yourpath/eval/bering")
 
 # x0, x1, y0, y1 are global micrometres and match each Bering run_summary.json.
 DATASETS: Mapping[str, Mapping[str, object]] = {
     "breast": dict(
-        root="/data/qiuyijia/dataset/xenium_breast",
-        pred="/data/qiuyijia/bering/xenium_breast_output",
+        root="yourpath/dataset/xenium_breast",
+        pred="yourpath/bering/xenium_breast_output",
         roi=(5205.6125, 6268.1125, 2382.125, 3444.625),
         label="xenium_breast",
     ),
     "colon": dict(
-        root="/data/qiuyijia/dataset/xenium_colon",
-        pred="/data/qiuyijia/bering/xenium_colon_output",
+        root="yourpath/dataset/xenium_colon",
+        pred="yourpath/bering/xenium_colon_output",
         roi=(1963.7125, 4088.7125, 2561.05, 4686.05),
         label="xenium_colon",
     ),
     "liver": dict(
-        root="/data/qiuyijia/dataset/xenium_liver",
-        pred="/data/qiuyijia/bering/xenium_liver_output",
+        root="yourpath/dataset/xenium_liver",
+        pred="yourpath/bering/xenium_liver_output",
         roi=(4137.375, 6262.375, 2380.0, 4505.0),
         label="xenium_liver",
     ),
     "mouse_brain": dict(
-        root="/data/qiuyijia/dataset/xenium_mouse_brain",
-        pred="/data/qiuyijia/bering/xenium_mouse_brain_output",
+        root="yourpath/dataset/xenium_mouse_brain",
+        pred="yourpath/bering/xenium_mouse_brain_output",
         roi=(2566.3625, 4691.3625, 1478.15, 3603.15),
         label="xenium_mouse_brain",
     ),
     "roi_crop": dict(
-        root="/data/qiuyijia/dataset/xenium_roi_crop",
-        pred="/data/qiuyijia/bering/xenium_roi_crop_output",
+        root="yourpath/dataset/xenium_roi_crop",
+        pred="yourpath/bering/xenium_roi_crop_output",
         roi=(3982.5, 4317.5, 2522.5, 2857.5),
         label="xenium_roi_crop",
     ),
     "xenium7": dict(
-        root="/data/qiuyijia/dataset/xenium7/outs",
-        pred="/data/qiuyijia/bering/xenium7_center10000_output",
+        root="yourpath/dataset/xenium7/outs",
+        pred="yourpath/bering/xenium7_center10000_output",
         roi=(4692.0, 6817.0, 2169.625, 4294.625),
         label="xenium7",
-        gt_tx="/data/qiuyijia/dataset/xenium7/outs/_roi_cache/tx_roi_10210_22080_10000_qv20.parquet",
+        gt_tx="yourpath/dataset/xenium7/outs/_roi_cache/tx_roi_10210_22080_10000_qv20.parquet",
     ),
     "xenium8": dict(
-        root="/data/qiuyijia/dataset/xenium_8",
-        pred="/data/qiuyijia/bering/xenium_8_center10000_output",
+        root="yourpath/dataset/xenium_8",
+        pred="yourpath/bering/xenium_8_center10000_output",
         roi=(4675.2125, 6800.2125, 1841.1, 3966.1),
         label="xenium8",
-        gt_tx="/data/qiuyijia/dataset/xenium_8/_roi_cache/tx_roi_8664_22001_10000_qv20.parquet",
+        gt_tx="yourpath/dataset/xenium_8/_roi_cache/tx_roi_8664_22001_10000_qv20.parquet",
     ),
     "xenium9": dict(
-        root="/data/qiuyijia/dataset/xenium9",
-        pred="/data/qiuyijia/bering/xenium9_center10000_output",
+        root="yourpath/dataset/xenium9",
+        pred="yourpath/bering/xenium9_center10000_output",
         roi=(3479.475, 5604.475, 1093.7375, 3218.7375),
         label="xenium9",
-        gt_zip="/data/qiuyijia/dataset/xenium9/Xenium_Prime_Human_Skin_FFPE_outs.zip",
-        gt_tx="/data/qiuyijia/dataset/xenium9/_roi_cache/tx_roi_16374_5147_10000_qv20.parquet",
+        gt_zip="yourpath/dataset/xenium9/Xenium_Prime_Human_Skin_FFPE_outs.zip",
+        gt_tx="yourpath/dataset/xenium9/_roi_cache/tx_roi_16374_5147_10000_qv20.parquet",
     ),
     "xenium10": dict(
-        root="/data/qiuyijia/dataset/xenium10",
-        pred="/data/qiuyijia/bering/xenium10_center10000_output",
+        root="yourpath/dataset/xenium10",
+        pred="yourpath/bering/xenium10_center10000_output",
         roi=(4369.85, 6494.85, 2921.875, 5046.875),
         label="xenium10",
-        gt_h5ad_zip="/data/qiuyijia/dataset/xenium10/transcriptome.zip",
-        gt_tx="/data/qiuyijia/dataset/xenium10/_roi_cache/tx_roi_20564_13750_10000_qv20.parquet",
+        gt_h5ad_zip="yourpath/dataset/xenium10/transcriptome.zip",
+        gt_tx="yourpath/dataset/xenium10/_roi_cache/tx_roi_20564_13750_10000_qv20.parquet",
     ),
     # This is the tenth Xenium result.  Its directory predates the xenium_*
     # naming convention, but run_summary.json identifies it as slice-B Xenium.
     "pancreas": dict(
-        root="/data/qiuyijia/dataset/xenium_pancreas_cancer",
-        pred="/data/qiuyijia/bering/pancreas_B_output",
+        root="yourpath/dataset/xenium_pancreas_cancer",
+        pred="yourpath/bering/pancreas_B_output",
         roi=(-np.inf, np.inf, -np.inf, np.inf),
         label="xenium_pancreas",
         segmentation="sliceB_transcript_assignments.csv",
         stats="sliceB_cells.csv",
-        gt_boundaries="/data/qiuyijia/dataset/xenium_pancreas_cancer/cell_boundaries.parquet",
+        gt_boundaries="yourpath/dataset/xenium_pancreas_cancer/cell_boundaries.parquet",
     ),
 }
 

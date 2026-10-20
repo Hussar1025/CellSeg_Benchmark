@@ -11,7 +11,7 @@ This file is now an INFERENCE SCRIPT, not the old prep/train wrapper.
 Use cases
 ---------
 1) CosMx2 held-out FOV48 / FOV261:
-   --input-root /data/qiuyijia/genesegnet_cosmx_2/split/test
+   --input-root yourpath/genesegnet_cosmx_2/split/test
    --fovs 48,261
 
 2) Other CosMx datasets:
@@ -59,16 +59,16 @@ import tifffile
 # Defaults for current CosMx2
 # ---------------------------------------------------------------------
 
-REPO_DEFAULT = "/data/qiuyijia/GeneSegNet"
+REPO_DEFAULT = "yourpath/GeneSegNet"
 
-INPUT_DEFAULT = "/data/qiuyijia/genesegnet_cosmx_2/split/test"
+INPUT_DEFAULT = "yourpath/genesegnet_cosmx_2/split/test"
 
 MODEL_DEFAULT = (
-    "/data/qiuyijia/genesegnet_cosmx_2_train/model/models/"
+    "yourpath/genesegnet_cosmx_2_train/model/models/"
     "GeneSegNet_residual_on_style_off_concatenation_off_model_2026_08_23_12_21_16.929985"
 )
 
-OUT_DEFAULT = "/data/qiuyijia/genesegnet_cosmx_2_infer"
+OUT_DEFAULT = "yourpath/genesegnet_cosmx_2_infer"
 
 FOVS_DEFAULT = "48,261"
 

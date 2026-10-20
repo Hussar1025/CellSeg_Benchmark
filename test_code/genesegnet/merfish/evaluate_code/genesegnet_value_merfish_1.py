@@ -6,11 +6,11 @@ genesegnet_value_merfish_1_fullmetrics.py
 Full independent evaluation for GeneSegNet on MERFISH1 center 20000x20000 ROI.
 
 Prediction:
-  /data/qiuyijia/genesegnet_merfish_1_infer/genesegnet_merfish1_roi20000_mask.tif
+  yourpath/genesegnet_merfish_1_infer/genesegnet_merfish1_roi20000_mask.tif
 
 Ground truth:
   official MERFISH cell metadata + official cell-boundary polygons in
-  /data/qiuyijia/dataset/merfish_mouse_brain/cell_boundaries/*.hdf5
+  yourpath/dataset/merfish_mouse_brain/cell_boundaries/*.hdf5
 
 This evaluator reconstructs true GT transcript->cell assignment from official
 cell polygons. It therefore computes detection, localization, count fidelity,
@@ -39,10 +39,10 @@ from scipy.sparse import coo_matrix
 from scipy.spatial import cKDTree
 from scipy.stats import pearsonr, spearmanr
 
-ROOT = Path("/data/qiuyijia/dataset/merfish_mouse_brain")
+ROOT = Path("yourpath/dataset/merfish_mouse_brain")
 
 MASK_DEFAULT = Path(
-    "/data/qiuyijia/genesegnet_merfish_1_infer/"
+    "yourpath/genesegnet_merfish_1_infer/"
     "genesegnet_merfish1_roi20000_mask.tif"
 )
 META_DEFAULT = ROOT / (
@@ -58,7 +58,7 @@ TRANSFORM_DEFAULT = ROOT / "images" / (
     "datasets_mouse_brain_map_BrainReceptorShowcase_"
     "Slice1_Replicate1_images_micron_to_mosaic_pixel_transform.csv"
 )
-OUT_DEFAULT = Path("/data/qiuyijia/eval_results_qv20/merfish_1")
+OUT_DEFAULT = Path("yourpath/eval_results_qv20/merfish_1")
 
 H, W = 61310, 89085
 ROI_SIZE = 20000

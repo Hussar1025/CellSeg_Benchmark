@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 """boms_xenium_6_run.py   v2026.08.14
 
-BOMS on xenium_6 (Xenium 小鼠结肠).
+BOMS on xenium_6 (Xenium mouse colon).
 
 Self-contained.  Every dataset has its OWN ROI and they are not interchangeable,
 so this file carries only one:
 
-    ROI 中心 10000 native px  y0=12052 x0=9241  -> x[1963.7,4088.7] y[2561.1,4686.1] um  (2125 x 2125 um)
+    ROI center 10000 native px  y0=12052 x0=9241  -> x[1963.7,4088.7] y[2561.1,4686.1] um  (2125 x 2125 um)
 
 and it recomputes that window from the data at startup; a difference of more than
 2 um stops the run instead of quietly segmenting a different piece of tissue.
@@ -25,9 +25,9 @@ The transcripts come from the same ROI subset the other methods were given, not 
 fresh filter of the raw table, so every method on this dataset sees identical
 input.
 
-    python boms_xenium_6_run.py --sweep-hs      # 扫 h_s，只跑一个 patch
-    python boms_xenium_6_run.py --h-s <值>      # 正式跑，可断点续跑
-    python boms_xenium_6_run.py --status        # 看进度
+    python boms_xenium_6_run.py --sweep-hs      # sweep h_s, run only one patch
+    python boms_xenium_6_run.py --h-s <value>   # full run, resumable
+    python boms_xenium_6_run.py --status        # check progress
 """
 
 
@@ -50,7 +50,7 @@ DATASETS = {
     "xenium_9": dict(
         platform="xenium",
         label="Xenium 9",
-        data_root="/data/qiuyijia/dataset/xenium9",
+        data_root="yourpath/dataset/xenium9",
         pixel_size=0.2125,
         y0=5147,
         x0=16374,
@@ -62,7 +62,7 @@ DATASETS = {
     "xenium_10": dict(
         platform="xenium",
         label="Xenium 10",
-        data_root="/data/qiuyijia/dataset/xenium10",
+        data_root="yourpath/dataset/xenium10",
         pixel_size=0.2125,
         y0=13750,
         x0=20564,
@@ -72,55 +72,55 @@ DATASETS = {
         hs_sweep=[10, 15, 20, 25, 30, 40],
     ),
     "xenium_8": dict(
-        platform="xenium", label="Xenium 人肾Protein",
-        data_root="/data/qiuyijia/dataset/xenium_8",
+        platform="xenium", label="Xenium human kidney Protein",
+        data_root="yourpath/dataset/xenium_8",
         pixel_size=0.2125, y0=8664, x0=22001, roi_px=10000,
         roi_um=(4675.0, 6800.0, 1841.0, 3966.0),
         hs_default=20.0, hs_sweep=[10, 15, 20, 25, 30, 40],
     ),
     "xenium_7": dict(
-        platform="xenium", label="Xenium 人前列腺",
-        data_root="/data/qiuyijia/dataset/xenium7/outs",
+        platform="xenium", label="Xenium human prostate",
+        data_root="yourpath/dataset/xenium7/outs",
         pixel_size=0.2125, y0=10210, x0=22080, roi_px=10000,
         roi_um=(4692.0, 6817.0, 2170.0, 4295.0),
         hs_default=20.0, hs_sweep=[10, 15, 20, 25, 30, 40],
     ),
     "xenium_4": dict(
-        platform="xenium", label="Xenium 肝",
-        data_root="/data/qiuyijia/dataset/xenium_liver",
+        platform="xenium", label="Xenium liver",
+        data_root="yourpath/dataset/xenium_liver",
         pixel_size=0.2125, y0=13704, x0=21974, roi_px=10000,
         roi_um=(4669.47, 6794.47, 2912.10, 5037.10),
         hs_default=20.0, hs_sweep=[10, 15, 20, 25, 30, 40],
     ),
     "xenium_5": dict(
-        platform="xenium", label="Xenium 小鼠脑",
-        data_root="/data/qiuyijia/dataset/xenium_mouse_brain",
+        platform="xenium", label="Xenium mouse brain",
+        data_root="yourpath/dataset/xenium_mouse_brain",
         pixel_size=0.2125, y0=6956, x0=12077, roi_px=10000,
         roi_um=(2566.36, 4691.36, 1478.15, 3603.15),
         hs_default=20.0, hs_sweep=[10, 15, 20, 25, 30],
     ),
     "xenium_6": dict(
-        platform="xenium", label="Xenium 小鼠结肠",
-        data_root="/data/qiuyijia/dataset/xenium_colon",
+        platform="xenium", label="Xenium mouse colon",
+        data_root="yourpath/dataset/xenium_colon",
         pixel_size=0.2125, y0=12052, x0=9241, roi_px=10000,
         roi_um=(1963.71, 4088.71, 2561.05, 4686.05),
         hs_default=20.0, hs_sweep=[10, 15, 20, 25, 30, 40],
     ),
     "merfish_2": dict(
-        platform="merfish", label="MERFISH 人肝癌 肝1",
-        data_root="/data/qiuyijia/dataset/merfish_liver1",
-        tx_subset="/data/qiuyijia/proseg/output/liver1/transcripts_roi_with_prior.csv.gz",
+        platform="merfish", label="MERFISH human liver cancer liver1",
+        data_root="yourpath/dataset/merfish_liver1",
+        tx_subset="yourpath/proseg/output/liver1/transcripts_roi_with_prior.csv.gz",
         roi_px=10000, roi_um=(5236.7, 6316.7, 3811.0, 4891.0), hs_default=70.0, hs_sweep=[30, 50, 70, 100, 150],
     ),
     "merfish_3": dict(
-        platform="merfish", label="MERFISH 人肝癌 肝2",
-        data_root="/data/qiuyijia/dataset/merfish_liver2",
-        tx_subset="/data/qiuyijia/proseg/output/liver2/transcripts_roi_with_prior.csv.gz",
+        platform="merfish", label="MERFISH human liver cancer liver2",
+        data_root="yourpath/dataset/merfish_liver2",
+        tx_subset="yourpath/proseg/output/liver2/transcripts_roi_with_prior.csv.gz",
         roi_px=10000, roi_um=(5771.0, 6851.0, 4971.0, 6051.0), hs_default=70.0, hs_sweep=[30, 50, 70, 100, 150],
     ),
     "merfish_4": dict(
-        platform="merfish", label="MERFISH 人肺癌",
-        data_root="/data/qiuyijia/dataset/MERFISH_Lung_cancer",
+        platform="merfish", label="MERFISH human lung cancer",
+        data_root="yourpath/dataset/MERFISH_Lung_cancer",
         roi_px=10000, roi_um=(3783.0, 4862.9, 3346.8, 4426.8), hs_default=70.0, hs_sweep=[30, 50, 70, 100, 150],
     ),
 }
@@ -542,7 +542,7 @@ def main():
     ap.add_argument("--dataset", default="xenium_6",
                     choices=sorted(DATASETS),
                     help=argparse.SUPPRESS)
-    ap.add_argument("--out-root", default="/data/qiuyijia")
+    ap.add_argument("--out-root", default="yourpath")
     ap.add_argument("--h-s", type=float, default=None)
     ap.add_argument("--h-r", type=float, default=0.3)
     ap.add_argument("--K", type=int, default=30)

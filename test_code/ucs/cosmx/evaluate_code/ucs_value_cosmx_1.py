@@ -1,22 +1,22 @@
 """
 eval_ucs_cosmx.py — UCS vs CosMx GT
 =====================================
-参考代码: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
+Reference code: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
 
-与参考代码的差异（仅此三处）:
-  1. GT 来源: Pancreas_metadata_file.csv（替代 cells.parquet）
-  2. pixel_size_um = 0.1203（CosMx，替代 0.2125 Xenium）
-  3. labels_to_cell_table: UCS bin 坐标转换
+Differences from the reference (only these three):
+  1. GT source: Pancreas_metadata_file.csv (replaces cells.parquet)
+  2. pixel_size_um = 0.1203 (CosMx, replaces 0.2125 Xenium)
+  3. labels_to_cell_table: UCS bin coordinate conversion
      bin(row,col) → canvas_px(×bin_factor) → global_px(+gx_min,+gy_min) → µm
 
-所有指标与参考代码完全一致。
+All metrics identical to the reference code.
 
-运行:
+Run:
   conda activate genesegnet_env
   python eval_ucs_cosmx.py \
-      --label-path /data/qiuyijia/ucs_cosmx/ucs_log/pred/segmentation_mask.tif \
-      --genesegnet-mat /data/qiuyijia/genesegnet_cosmx_full/output/label_pancreas_full_conf0.0_flow0.4.mat \
-      --output-dir /data/qiuyijia/eval_results/ucs
+      --label-path yourpath/ucs_cosmx/ucs_log/pred/segmentation_mask.tif \
+      --genesegnet-mat yourpath/genesegnet_cosmx_full/output/label_pancreas_full_conf0.0_flow0.4.mat \
+      --output-dir yourpath/eval_results/ucs
 """
 from __future__ import annotations
 
@@ -41,27 +41,27 @@ import tifffile
 EPS = 1e-12
 SCRIPT_VERSION = "2026-06-08-genesegnet-label-image-eval-input-layer-v1"
 
-DATA_DIR         = "/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles"
+DATA_DIR         = "yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles"
 GT_METADATA_PATH = os.path.join(DATA_DIR, "Pancreas_metadata_file.csv")
 TX_FILE          = os.path.join(DATA_DIR, "Pancreas_tx_file.csv")
 
 
 # =============================================================================
-# Configuration（与参考代码保持一致）
+# Configuration (consistent with the reference code)
 # =============================================================================
 @dataclass
 class EvaluationConfig:
     gt_path:              Optional[str] = GT_METADATA_PATH
     gt_transcripts_path:  Optional[str] = TX_FILE
     label_path:           Optional[str] = None   # UCS segmentation_mask.tif
-    genesegnet_mat:       Optional[str] = None   # 用于读取 gx_min/gy_min
+    genesegnet_mat:       Optional[str] = None   # used to read gx_min/gy_min
     ucs_bin_factor:       int           = 25     # BIN_FACTOR
     pixel_size_um:        float         = 0.1203
     swap_xy:              bool          = False
     label_chunk_rows:     int           = 512
     min_label:            int           = 1
     max_label:            Optional[int] = None
-    output_dir:           str           = "/data/qiuyijia/eval_results/ucs"
+    output_dir:           str           = "yourpath/eval_results/ucs"
     method_name:          str           = "UCS"
     cell_id_col:          str           = "cell_id"
     gt_cell_id_col:       str           = "cell_id"
@@ -86,12 +86,12 @@ class EvaluationConfig:
 
 
 # =============================================================================
-# GT 加载（CosMx 替代 cells.parquet）
+# GT loading (CosMx replaces cells.parquet)
 # =============================================================================
 def load_gt_cosmx(cfg: EvaluationConfig) -> pd.DataFrame:
     path = Path(os.path.expanduser(cfg.gt_path))
     if not path.exists():
-        raise FileNotFoundError(f"GT metadata 未找到: {path}")
+        raise FileNotFoundError(f"GT metadata not found: {path}")
     print(f"[INFO] GT metadata: {path}")
     df = pd.read_csv(path, usecols=[
         "cell_id", "CenterX_global_px", "CenterY_global_px",
@@ -109,25 +109,26 @@ def load_gt_cosmx(cfg: EvaluationConfig) -> pd.DataFrame:
 
 
 # =============================================================================
-# 获取 gx_min / gy_min
+# Get gx_min / gy_min
 # =============================================================================
 def get_offsets(cfg: EvaluationConfig) -> Tuple[int, int]:
     """
-    优先从 GeneSegNet MAT 文件读取 gx_min/gy_min（两个脚本共用相同坐标系）。
-    若无 MAT 文件，则从 tx_file 重新计算（较慢，约 2 分钟）。
+    Prefer reading gx_min/gy_min from the GeneSegNet MAT file (both scripts share
+    the same coordinate system). If no MAT file, recompute from tx_file (slower,
+    ~2 minutes).
     """
-    # 方法 A：从 GeneSegNet MAT 读取
+    # Method A: read from GeneSegNet MAT
     if cfg.genesegnet_mat:
         mat_path = Path(os.path.expanduser(cfg.genesegnet_mat))
         if mat_path.exists():
             mat = loadmat(str(mat_path))
             gx_min = int(np.squeeze(mat.get("gx_min", [[0]])))
             gy_min = int(np.squeeze(mat.get("gy_min", [[0]])))
-            print(f"[INFO] 从 GeneSegNet MAT 读取: gx_min={gx_min}  gy_min={gy_min}")
+            print(f"[INFO] read from GeneSegNet MAT: gx_min={gx_min}  gy_min={gy_min}")
             return gx_min, gy_min
 
-    # 方法 B：从 tx_file 重新计算
-    print(f"[INFO] 从 tx_file 计算 FOV 偏移（约 2 分钟）...")
+    # Method B: recompute from tx_file
+    print(f"[INFO] computing FOV offsets from tx_file (~2 min)...")
     meta     = pd.read_csv(GT_METADATA_PATH, usecols=["fov"])
     all_fovs = set(int(f) for f in meta["fov"].unique())
     found = {}
@@ -147,12 +148,12 @@ def get_offsets(cfg: EvaluationConfig) -> Tuple[int, int]:
     all_ox = [ox for ox,_ in found.values()]
     all_oy = [oy for _,oy in found.values()]
     gx_min, gy_min = min(all_ox), min(all_oy)
-    print(f"[INFO] 计算得: gx_min={gx_min}  gy_min={gy_min}")
+    print(f"[INFO] computed: gx_min={gx_min}  gy_min={gy_min}")
     return gx_min, gy_min
 
 
 # =============================================================================
-# UCS segmentation_mask → cell table（bin 坐标转换）
+# UCS segmentation_mask → cell table (bin coordinate conversion)
 # =============================================================================
 def labels_to_cell_table(
     label_path: Path,
@@ -167,9 +168,9 @@ def labels_to_cell_table(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
-    将 UCS segmentation_mask.tif 转换为细胞质心表。
+    Convert UCS segmentation_mask.tif into a cell centroid table.
 
-    坐标转换链（与 GeneSegNet 脚本对齐到同一坐标系）：
+    Coordinate chain (aligned to the same system as the GeneSegNet script):
       bin(row, col) → canvas_px(col×bin_factor, row×bin_factor)
                     → global_px(+gx_min, +gy_min)
                     → µm(×pixel_size_um)
@@ -180,11 +181,11 @@ def labels_to_cell_table(
         arr = tifffile.imread(str(label_path))
 
     if arr.ndim != 2:
-        raise ValueError(f"期望 2D label 图像，实际 shape={arr.shape}")
+        raise ValueError(f"expected a 2D label image, got shape={arr.shape}")
 
     n_rows, n_cols = int(arr.shape[0]), int(arr.shape[1])
     if max_label is None:
-        if verbose: print("[INFO] 扫描 label 图像中的最大标签...")
+        if verbose: print("[INFO] scanning for the max label in the label image...")
         max_label = int(np.nanmax(arr))
     if max_label < min_label:
         raise ValueError(f"max_label={max_label} < min_label={min_label}")
@@ -193,7 +194,7 @@ def labels_to_cell_table(
         print(f"[INFO] UCS mask: {label_path}")
         print(f"[INFO] shape={arr.shape}  dtype={arr.dtype}  max_label={max_label:,}")
         print(f"[INFO] bin_factor={bin_factor}  gx_min={gx_min}  gy_min={gy_min}")
-        print(f"[INFO] 分块计算质心（{chunk_rows} 行/块）...")
+        print(f"[INFO] computing centroids in chunks ({chunk_rows} rows/chunk)...")
 
     n_bins       = max_label + 1
     counts       = np.zeros(n_bins, dtype=np.float64)
@@ -219,15 +220,15 @@ def labels_to_cell_table(
         sum_r  += np.bincount(lab_flat, weights=rows, minlength=n_bins)
         sum_c  += np.bincount(lab_flat, weights=cols, minlength=n_bins)
         if verbose and (r0 == 0 or r1 == n_rows or (r0 // chunk_rows) % 20 == 0):
-            print(f"[INFO] 已处理行 {r0:,}-{r1:,} / {n_rows:,}")
+            print(f"[INFO] processed rows {r0:,}-{r1:,} / {n_rows:,}")
 
     valid_labels = np.flatnonzero(counts >= 1)
     valid_labels = valid_labels[valid_labels >= min_label]
     if valid_labels.size == 0:
-        raise ValueError("未找到任何有标签的细胞。")
+        raise ValueError("no labeled cells found.")
 
-    centroid_r = sum_r[valid_labels] / counts[valid_labels]   # bin 行 → y
-    centroid_c = sum_c[valid_labels] / counts[valid_labels]   # bin 列 → x
+    centroid_r = sum_r[valid_labels] / counts[valid_labels]   # bin row → y
+    centroid_c = sum_c[valid_labels] / counts[valid_labels]   # bin col → x
 
     # bin → canvas_px → global_px → µm
     bf = bin_factor
@@ -238,7 +239,7 @@ def labels_to_cell_table(
         x_um = (centroid_c * bf + bf // 2 + gx_min) * pixel_size_um
         y_um = (centroid_r * bf + bf // 2 + gy_min) * pixel_size_um
 
-    # 面积换算回像素（bin × bin_factor²）
+    # area converted back to pixels (bin × bin_factor²)
     area_px = counts[valid_labels] * (bf ** 2)
 
     out = pd.DataFrame({
@@ -249,14 +250,14 @@ def labels_to_cell_table(
         "area_um2"    : area_px.astype(np.float64) * (pixel_size_um ** 2),
     })
     if verbose:
-        print(f"[INFO] 预测细胞数: {len(out):,}")
+        print(f"[INFO] predicted cells: {len(out):,}")
         print(f"[INFO] x=[{out['x'].min():.3f},{out['x'].max():.3f}]µm  "
               f"y=[{out['y'].min():.3f},{out['y'].max():.3f}]µm")
     return out
 
 
 # =============================================================================
-# 以下函数与参考代码完全一致（与 eval_genesegnet_cosmx.py 相同）
+# The functions below are identical to the reference code (same as eval_genesegnet_cosmx.py)
 # =============================================================================
 
 def expand_path(path):
@@ -282,7 +283,7 @@ def normalize_columns(df, cfg, table_name):
     out = df.rename(columns=rename).copy()
     required = [cfg.cell_id_col, cfg.x_col, cfg.y_col]
     missing  = [c for c in required if c not in out.columns]
-    if missing: raise ValueError(f"{table_name} 缺少必需列 {missing}. 可用列: {list(out.columns)[:80]}")
+    if missing: raise ValueError(f"{table_name} missing required columns {missing}. available: {list(out.columns)[:80]}")
     return out
 
 def _mode_with_confidence(values):
@@ -303,14 +304,14 @@ def check_coordinate_scale_warning(cells, cfg, table_name):
     if xy.shape[0]<2: return
     span_x=float(np.nanmax(xy[:,0])-np.nanmin(xy[:,0])); span_y=float(np.nanmax(xy[:,1])-np.nanmin(xy[:,1]))
     if cfg.match_radius is None and max(span_x,span_y)>1e5 and cfg.coordinate_scale_x==1.0 and cfg.coordinate_scale_y==1.0:
-        warnings.warn(f"{table_name}: 坐标跨度大 ({span_x:.1f},{span_y:.1f}) 且未设置 match_radius")
+        warnings.warn(f"{table_name}: large coordinate span ({span_x:.1f},{span_y:.1f}) and match_radius not set")
 
 def collapse_to_cell_level(df, cfg, table_name):
     df=normalize_columns(df,cfg,table_name=table_name)
     for col in [cfg.x_col,cfg.y_col]: df[col]=pd.to_numeric(df[col],errors="coerce")
     bad=df[[cfg.x_col,cfg.y_col]].isna().any(axis=1)
-    if bad.any(): warnings.warn(f"{table_name}: 丢弃 {int(bad.sum())} 行（坐标缺失）"); df=df.loc[~bad].copy()
-    if df.empty: raise ValueError(f"{table_name}: 坐标清洗后无有效行")
+    if bad.any(): warnings.warn(f"{table_name}: dropping {int(bad.sum())} rows (missing coordinates)"); df=df.loc[~bad].copy()
+    if df.empty: raise ValueError(f"{table_name}: no valid rows after coordinate cleanup")
     df[cfg.x_col]*=cfg.coordinate_scale_x; df[cfg.y_col]*=cfg.coordinate_scale_y
     grouped=df.groupby(cfg.cell_id_col,sort=False,observed=True)
     base=grouped[[cfg.x_col,cfg.y_col]].mean().reset_index()
@@ -330,7 +331,7 @@ def collapse_to_cell_level(df, cfg, table_name):
             f"{table_name}_type_low_confidence_fraction":float((type_df[f"{cfg.type_col}_confidence"]<1.0).mean()),
             f"{table_name}_type_median_confidence":float(type_df[f"{cfg.type_col}_confidence"].median(skipna=True))})
         if multi_frac>cfg.warn_multitype_fraction:
-            msg=f"{table_name}: {multi_frac:.3%} 个细胞有多个 {cfg.type_col} 值"
+            msg=f"{table_name}: {multi_frac:.3%} cells have multiple {cfg.type_col} values"
             if cfg.strict_unique_type_per_cell: raise ValueError(msg)
             warnings.warn(msg)
     numeric_to_agg=[]
@@ -340,7 +341,7 @@ def collapse_to_cell_level(df, cfg, table_name):
         else: numeric_to_agg.extend([g for _,g in cfg.numeric_pairs])
     seen=set(); numeric_to_agg=[c for c in numeric_to_agg if not (c in seen or seen.add(c))]
     for col in numeric_to_agg:
-        if col not in df.columns: warnings.warn(f"{table_name}: 数值列 '{col}' 缺失"); continue
+        if col not in df.columns: warnings.warn(f"{table_name}: numeric column '{col}' missing"); continue
         numeric=pd.to_numeric(df[col],errors="coerce")
         tmp=pd.DataFrame({cfg.cell_id_col:df[cfg.cell_id_col].values,col:numeric.values})
         agg=tmp.groupby(cfg.cell_id_col,sort=False,observed=True)[col].mean().reset_index()
@@ -354,10 +355,10 @@ def collapse_to_cell_level(df, cfg, table_name):
 
 def infer_match_radius(gt_cells,cfg):
     xy=gt_cells[[cfg.x_col,cfg.y_col]].to_numpy(dtype=float)
-    if xy.shape[0]<2: raise ValueError("GT 细胞数 < 2")
+    if xy.shape[0]<2: raise ValueError("GT cell count < 2")
     nbrs=NearestNeighbors(n_neighbors=2,algorithm="auto").fit(xy); dists,_=nbrs.kneighbors(xy)
     radius=float(np.nanquantile(dists[:,1],cfg.radius_quantile)*cfg.radius_multiplier)
-    if not np.isfinite(radius) or radius<=0: raise ValueError(f"无效匹配半径: {radius}")
+    if not np.isfinite(radius) or radius<=0: raise ValueError(f"invalid match radius: {radius}")
     return radius
 
 def build_candidate_edges(pred_cells,gt_cells,cfg,radius):
@@ -531,7 +532,7 @@ def numeric_pair_metrics(matches,cfg):
         base={f"matched_pair_{label}_valid_n":0,f"matched_pair_{label}_pearson":np.nan,
               f"matched_pair_{label}_spearman":np.nan,f"matched_pair_{label}_mae":np.nan,f"matched_pair_{label}_rmse":np.nan}
         if matches.empty or pred_col not in matches.columns or gt_col not in matches.columns:
-            warnings.warn(f"numeric pair '{pred_col_raw}:{gt_col_raw}' 无法评估"); res.update(base); continue
+            warnings.warn(f"numeric pair '{pred_col_raw}:{gt_col_raw}' cannot be evaluated"); res.update(base); continue
         x=pd.to_numeric(matches[pred_col],errors="coerce"); y=pd.to_numeric(matches[gt_col],errors="coerce")
         valid=x.notna()&y.notna(); xv,yv=x[valid].to_numpy(dtype=float),y[valid].to_numpy(dtype=float)
         pear=spear=np.nan
@@ -573,7 +574,7 @@ def genesegnet_transcript_metrics(cfg,matches,pred_raw=None,total_gt_transcripts
         try:
             sample=pd.read_csv(str(tx_path),usecols=["cell_ID"],nrows=500_000)
             gt_assigned_n=int((sample["cell_ID"]>0).sum()); gt_assignment_rate=float((sample["cell_ID"]>0).mean())
-        except Exception as e: warnings.warn(f"读取 GT 转录本失败: {e}")
+        except Exception as e: warnings.warn(f"failed to read GT transcripts: {e}")
     mc_pearson=mc_spearman=mc_mae=mc_rmse=np.nan
     pred_col="pred_n_transcripts"; gt_col="gt_total_counts"
     if not matches.empty and pred_col in matches.columns and gt_col in matches.columns:
@@ -585,7 +586,7 @@ def genesegnet_transcript_metrics(cfg,matches,pred_raw=None,total_gt_transcripts
             mc_mae=float(np.mean(np.abs(xv-yv))); mc_rmse=float(np.sqrt(np.mean((xv-yv)**2)))
     return {
         "transcript_metrics_available":pred_raw is not None and "n_transcripts" in (pred_raw.columns if pred_raw is not None else []),
-        "transcript_metrics_error":"gene_vector 和 transcript_id 指标需逐转录本 ID，无法计算",
+        "transcript_metrics_error":"gene_vector and transcript_id metrics require per-transcript IDs, cannot compute",
         "pred_transcript_rows":pred_transcript_rows,"gt_transcript_rows":gt_rows,
         "pred_transcript_assigned_n":pred_transcript_assigned_n,
         "pred_transcript_assignment_rate":pred_transcript_rate,
@@ -644,20 +645,20 @@ def _json_default(obj):
 
 
 # =============================================================================
-# 转录本分配（补全 n_transcripts，与之前补全各模型输出结果的方法一致）
-# 坐标链: global_px → bin((x−gx_min)//bf, (y−gy_min)//bf) → mask[y_bin, x_bin]
+# transcript assignment (fills in n_transcripts, same method as completing prior model outputs)
+# coordinate chain: global_px → bin((x−gx_min)//bf, (y−gy_min)//bf) → mask[y_bin, x_bin]
 # =============================================================================
 def compute_all_transcript_metrics(
     label_arr, gx_min, gy_min, tx_file, matches, gt_metadata_path,
     bin_factor=1, verbose=True,
 ):
-    """(fov, cell_ID) 联合 key + pandas 向量化版本（与 GeneSegNet 脚本完全相同）"""
+    """(fov, cell_ID) joint key + pandas vectorized version (identical to the GeneSegNet script)"""
     n_rows, n_cols = label_arr.shape
-    print("[TX] 加载 GT 映射 (fov, cell_ID) → cell_id_str ...")
+    print("[TX] loading GT mapping (fov, cell_ID) → cell_id_str ...")
     meta = pd.read_csv(gt_metadata_path, usecols=["cell_id","cell_ID","fov"])
     meta["_key"] = meta["fov"].astype(str) + "_" + meta["cell_ID"].astype(str)
     fov_cell_to_str = dict(zip(meta["_key"], meta["cell_id"].astype(str)))
-    print(f"[TX] 映射条目数: {len(fov_cell_to_str):,}（预期 ≈ 48944）")
+    print(f"[TX] mapping entries: {len(fov_cell_to_str):,} (expected ~48944)")
     pred_to_gt={}; gt_to_pred={}
     if not matches.empty and "pred_cell_id" in matches.columns:
         for _,row in matches[["pred_cell_id","gt_cell_id"]].iterrows():
@@ -667,7 +668,7 @@ def compute_all_transcript_metrics(
     print(f"[TX] Matched pred={len(matched_pred_set):,}  GT={len(matched_gt_set):,}")
     pred_tx_counts={}; pred_gene_counts={}; gt_gene_counts={}
     total_read=0; total_pred=0; total_gt=0; both=0; in_matched=0; correct=0
-    print("[TX] 开始扫描 tx_file ...")
+    print("[TX] scanning tx_file ...")
     for chunk in pd.read_csv(tx_file,usecols=["fov","x_global_px","y_global_px","cell_ID","target"],chunksize=2_000_000):
         total_read+=len(chunk)
         if bin_factor==1:
@@ -702,8 +703,8 @@ def compute_all_transcript_metrics(
             for (cell,gene),cnt in gt_m.groupby(["gt","gene"]).size().items():
                 if cell not in gt_gene_counts: gt_gene_counts[cell]={}
                 gt_gene_counts[cell][gene]=gt_gene_counts[cell].get(gene,0)+int(cnt)
-        if verbose: print(f"  已读 {total_read:,}  pred={total_pred:,}  correct={correct:,}  gt_gene_cells={len(gt_gene_counts):,}")
-    print("[TX] 计算基因向量相似度 ...")
+        if verbose: print(f"  read {total_read:,}  pred={total_pred:,}  correct={correct:,}  gt_gene_cells={len(gt_gene_counts):,}")
+    print("[TX] computing gene-vector similarity ...")
     cosine_sims=[]; js_dists=[]; pearsons=[]; valid_pairs=0
     for pred_str,gt_str in pred_to_gt.items():
         if pred_str not in pred_gene_counts or gt_str not in gt_gene_counts: continue
@@ -719,7 +720,7 @@ def compute_all_transcript_metrics(
         if np.std(pv)>EPS and np.std(gv)>EPS: pearsons.append(float(pearsonr(pv,gv)[0]))
         valid_pairs+=1
     accuracy=float(correct/max(in_matched,1))
-    print(f"[TX] 完成: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  gt_cells={len(gt_gene_counts):,}")
+    print(f"[TX] Done: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  gt_cells={len(gt_gene_counts):,}")
     return {
         "_n_transcripts_df":pd.DataFrame([(str(k),v) for k,v in pred_tx_counts.items()],columns=["cell_id","n_transcripts"]),
         "pred_transcript_rows":total_pred,"pred_transcript_assigned_n":total_pred,
@@ -737,13 +738,13 @@ def compute_all_transcript_metrics(
 
 
 # =============================================================================
-# 主评估流程
+# Main evaluation flow
 # =============================================================================
 def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     if cfg.numeric_pairs is None: cfg.numeric_pairs=[("n_transcripts","total_counts")]
     outdir=expand_path(cfg.output_dir); outdir.mkdir(parents=True,exist_ok=True)
     label_path=expand_path(cfg.label_path)
-    if label_path is None or not label_path.exists(): raise FileNotFoundError(f"UCS mask 未找到: {cfg.label_path}")
+    if label_path is None or not label_path.exists(): raise FileNotFoundError(f"UCS mask not found: {cfg.label_path}")
 
     if cfg.verbose:
         print(f"[INFO] Script version: {SCRIPT_VERSION}")
@@ -760,8 +761,8 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         chunk_rows=cfg.label_chunk_rows, min_label=cfg.min_label,
         max_label=cfg.max_label, swap_xy=cfg.swap_xy, verbose=cfg.verbose)
 
-    # ── 全量转录本分析（仿照之前补全各模型输出结果的方式）──────────────────────
-    if cfg.verbose: print("\n[INFO] 全量转录本分析（约 5-10 分钟）...")
+    # ── Full transcript analysis (same method as completing prior model outputs) ──
+    if cfg.verbose: print("\n[INFO] full transcript analysis (~5-10 min)...")
     try: _mask=tifffile.memmap(str(label_path))
     except: _mask=tifffile.imread(str(label_path))
 
@@ -780,13 +781,13 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     pred_raw["n_transcripts"]=pred_raw["n_transcripts"].fillna(0).astype(np.int64)
     if cfg.verbose:
         assigned=(pred_raw["n_transcripts"]>0).sum()
-        print(f"[INFO] {assigned:,}/{len(pred_raw):,} 个预测细胞有转录本分配")
+        print(f"[INFO] {assigned:,}/{len(pred_raw):,} predicted cells have transcript assignment")
 
     pred_cells,pred_qc=collapse_to_cell_level(pred_raw,cfg,table_name="pred")
 
     radius=cfg.match_radius if cfg.match_radius is not None else infer_match_radius(gt_cells,cfg)
     if cfg.verbose:
-        print(f"[INFO] 匹配半径: {radius:.6g}")
+        print(f"[INFO] match radius: {radius:.6g}")
         print(f"[INFO] GT cells: {len(gt_cells):,}  Pred cells: {len(pred_cells):,}")
 
     matches,match_qc=match_sparse_hungarian(pred_cells,gt_cells,cfg,radius=radius)
@@ -804,7 +805,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     metrics.update(numeric_spatial_metrics(pred_cells,gt_cells,matches,cfg))
     metrics.update(numeric_pair_metrics(matches,cfg))
     metrics.update(genesegnet_transcript_metrics(cfg,matches,pred_raw=pred_raw))
-    # 覆盖全量转录本指标（tx_result 的计算更完整）
+    # override full-transcript metrics (tx_result is more complete)
     for key in ["pred_transcript_rows","pred_transcript_assigned_n",
                 "pred_transcript_assignment_rate","gt_transcript_rows",
                 "gt_transcript_assigned_n","gt_transcript_assignment_rate",
@@ -840,18 +841,18 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
 
 
 def parse_args():
-    p=argparse.ArgumentParser(description="评估 UCS 分割结果（CosMx 数据集）")
+    p=argparse.ArgumentParser(description="Evaluate UCS segmentation results (CosMx dataset)")
     p.add_argument("--gt-path",             default=GT_METADATA_PATH)
     p.add_argument("--gt-transcripts-path", default=TX_FILE)
-    p.add_argument("--label-path",          required=True, help="UCS segmentation_mask.tif 路径")
-    p.add_argument("--genesegnet-mat",      default=None,  help="GeneSegNet .mat 路径（用于读取 gx_min/gy_min）")
+    p.add_argument("--label-path",          required=True, help="path to UCS segmentation_mask.tif")
+    p.add_argument("--genesegnet-mat",      default=None,  help="path to GeneSegNet .mat (used to read gx_min/gy_min)")
     p.add_argument("--ucs-bin-factor",      type=int,   default=25)
     p.add_argument("--pixel-size-um",       type=float, default=0.1203)
     p.add_argument("--swap-xy",             action="store_true")
     p.add_argument("--label-chunk-rows",    type=int,   default=512)
     p.add_argument("--min-label",           type=int,   default=1)
     p.add_argument("--max-label",           type=int,   default=None)
-    p.add_argument("--output-dir",          default="/data/qiuyijia/eval_results/ucs")
+    p.add_argument("--output-dir",          default="yourpath/eval_results/ucs")
     p.add_argument("--method-name",         default="UCS")
     p.add_argument("--match-radius",        type=float, default=None)
     p.add_argument("--radius-quantile",     type=float, default=0.95)

@@ -54,7 +54,7 @@ import pandas as pd
 
 VERSION = "2026.08.13"
 
-DATA_ROOT = "/data/qiuyijia/dataset/merfish_Uterian"
+DATA_ROOT = "yourpath/dataset/merfish_Uterian"
 ROI_SIZE = 10000                 # mosaic px, centred -> 1080 x 1080 um
 DAPI_HINT = "dapi"
 
@@ -569,13 +569,13 @@ PRIOR_CHOICES = ['centroid', 'dapi', 'polygon', 'disk']
 # ==========================================================================
 
 
-OUT_DEFAULT = "/data/qiuyijia/ucs_merfish_uterian"
+OUT_DEFAULT = "yourpath/ucs_merfish_uterian"
 
 
 def add_args(ap):
     ap.add_argument("--bin-factor", type=int, default=10,
                     help="mosaic px per grid pixel (10 = 1.080 um)")
-    ap.add_argument("--ucs-repo", default="/data/qiuyijia/ucs/UCS")
+    ap.add_argument("--ucs-repo", default="yourpath/ucs/UCS")
     ap.add_argument("--gpu", default="auto")
     ap.add_argument("--min-free-mb", type=int, default=4000)
     ap.add_argument("--fg-batch", type=int, default=None)

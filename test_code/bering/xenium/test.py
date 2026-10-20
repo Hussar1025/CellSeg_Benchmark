@@ -1,110 +1,111 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-探查切片 B,为写 Bering 主脚本提供确切的列名 / 未分配表示 / join 关系。
-只 import pandas+numpy,不碰 Bering,不受 GLIBCXX 影响。
+Probe slice B to determine the exact column names / unassigned representation /
+join relationship for the Bering main script.
+Only pandas+numpy are imported (no Bering), so it is unaffected by GLIBCXX.
 
-请改下面两个路径,然后: python probe_B.py
-把【全部】输出贴回给我。
+Set the two paths below, then: python probe_B.py
+Paste ALL output back.
 """
 import pandas as pd
 import numpy as np
 
-# ====== 改成你的真实路径 ======
-TRANSCRIPTS_B = "/data/qiuyijia/dataset/pancreas_cancer/transcripts.parquet"
-ANNOTATION_B  = "/data/qiuyijia/dataset/pancreas_cancer/cell_groups.csv"  # 你那张 cell_id,group 表
+# ====== set your real paths ======
+TRANSCRIPTS_B = "yourpath/dataset/pancreas_cancer/transcripts.parquet"
+ANNOTATION_B  = "yourpath/dataset/pancreas_cancer/cell_groups.csv"  # your cell_id,group table
 # ==============================
 
 pd.set_option("display.max_columns", None)
 pd.set_option("display.width", 200)
 
 print("=" * 75)
-print("【1】transcripts 表")
+print("[1] transcripts table")
 print("=" * 75)
-# 先只读 schema,避免一次性全载入
+# read only the schema first, to avoid loading everything at once
 try:
     import pyarrow.parquet as pq
     schema = pq.read_schema(TRANSCRIPTS_B)
-    print("所有列名:", list(schema.names))
+    print("all columns:", list(schema.names))
 except Exception as e:
-    print("pyarrow 读 schema 失败,改用 pandas 读前几行看列:", e)
+    print("pyarrow schema read failed; falling back to pandas to inspect columns:", e)
 
-# 读全表(只为统计;若内存吃紧可改 nrows)
+# read the full table (for stats only; set nrows if memory is tight)
 df = pd.read_parquet(TRANSCRIPTS_B)
-print(f"\n行数: {len(df):,}")
-print(f"列名: {list(df.columns)}")
-print("\n前 5 行:")
+print(f"\nrows: {len(df):,}")
+print(f"columns: {list(df.columns)}")
+print("\nfirst 5 rows:")
 print(df.head())
-print("\n各列 dtype:")
+print("\ncolumn dtypes:")
 print(df.dtypes)
 
-# 找出最可能是"细胞分配"的列(名字含 cell / segment 等)
+# find the most likely "cell assignment" columns (names containing cell / segment etc.)
 cand_cols = [c for c in df.columns if any(k in c.lower() for k in ["cell", "segment", "assign"])]
-print(f"\n疑似'细胞分配'列: {cand_cols}")
+print(f"\nsuspected 'cell assignment' columns: {cand_cols}")
 
 for c in cand_cols:
     s = df[c]
-    print(f"\n----- 列 '{c}' -----")
+    print(f"\n----- column '{c}' -----")
     print(f"  dtype: {s.dtype}")
-    print(f"  唯一值个数: {s.nunique(dropna=False)}")
-    print(f"  缺失(NaN)数: {s.isna().sum():,}")
-    # 取样几个值,看长什么样
+    print(f"  unique values: {s.nunique(dropna=False)}")
+    print(f"  missing (NaN): {s.isna().sum():,}")
+    # sample a few values to see what they look like
     sample_vals = s.dropna().unique()[:8]
-    print(f"  样本值(最多8个): {list(sample_vals)}")
-    # 看是否有 0 / -1 / 'UNASSIGNED' / '' 这类未分配标记
+    print(f"  sample values (up to 8): {list(sample_vals)}")
+    # check for unassigned markers like 0 / -1 / 'UNASSIGNED' / ''
     vc = s.value_counts(dropna=False)
-    print(f"  出现次数最多的前 10 个值:")
+    print(f"  top 10 most frequent values:")
     print(vc.head(10).to_string())
-    # 专门探测常见的未分配表示
+    # explicitly probe common unassigned representations
     for marker in [0, -1, "0", "-1", "", "UNASSIGNED", "unassigned", "None", "NA"]:
         try:
             cnt = (s == marker).sum()
             if cnt > 0:
-                print(f"    含未分配候选标记 {marker!r}: {cnt:,} 条")
+                print(f"    unassigned candidate marker {marker!r}: {cnt:,} rows")
         except Exception:
             pass
 
-# feature / 基因列
+# feature / gene columns
 feat_cols = [c for c in df.columns if any(k in c.lower() for k in ["feature", "gene", "target", "name"])]
-print(f"\n疑似'基因/feature'列: {feat_cols}")
+print(f"\nsuspected 'gene/feature' columns: {feat_cols}")
 for c in feat_cols[:3]:
-    print(f"  '{c}' 样本: {list(df[c].dropna().astype(str).unique()[:6])}")
+    print(f"  '{c}' samples: {list(df[c].dropna().astype(str).unique()[:6])}")
 
-# 坐标列
+# coordinate columns
 coord_cols = [c for c in df.columns if any(k in c.lower() for k in ["x_", "y_", "z_", "_location", "global"]) or c.lower() in ["x","y","z"]]
-print(f"\n疑似坐标列: {coord_cols}")
+print(f"\nsuspected coordinate columns: {coord_cols}")
 
 print("\n" + "=" * 75)
-print("【2】注释表 (cell_id, group)")
+print("[2] annotation table (cell_id, group)")
 print("=" * 75)
 ann = pd.read_csv(ANNOTATION_B)
-print(f"行数: {len(ann):,}")
-print(f"列名: {list(ann.columns)}")
-print("前 5 行:")
+print(f"rows: {len(ann):,}")
+print(f"columns: {list(ann.columns)}")
+print("first 5 rows:")
 print(ann.head())
 ann_id_col = ann.columns[0]
-print(f"\n注释表 cell_id 列名假定为: '{ann_id_col}'")
-print(f"  样本值: {list(ann[ann_id_col].astype(str).unique()[:8])}")
-print(f"  唯一 cell 数: {ann[ann_id_col].nunique():,}")
+print(f"\nassumed annotation cell_id column: '{ann_id_col}'")
+print(f"  sample values: {list(ann[ann_id_col].astype(str).unique()[:8])}")
+print(f"  unique cells: {ann[ann_id_col].nunique():,}")
 
 print("\n" + "=" * 75)
-print("【3】两张表的 cell_id 能否对上 (join 关系) —— 最关键")
+print("[3] can the cell_id of the two tables be joined -- most critical")
 print("=" * 75)
-# 对每个疑似分配列,测它和注释表 cell_id 的交集
+# for each suspected assignment column, test its intersection with the annotation cell_id
 ann_ids = set(ann[ann_id_col].astype(str))
 for c in cand_cols:
     tx_ids = set(df[c].dropna().astype(str).unique())
     inter = tx_ids & ann_ids
-    print(f"\n  transcripts['{c}'] 唯一值 {len(tx_ids):,} 个")
-    print(f"  与注释表 cell_id 交集: {len(inter):,} 个")
+    print(f"\n  transcripts['{c}'] unique values: {len(tx_ids):,}")
+    print(f"  intersection with annotation cell_id: {len(inter):,}")
     if len(tx_ids) > 0:
-        print(f"    -> 占 transcripts 该列的 {len(inter)/len(tx_ids)*100:.1f}%")
+        print(f"    -> {len(inter)/len(tx_ids)*100:.1f}% of that transcripts column")
     if len(ann_ids) > 0:
-        print(f"    -> 占注释表 cell_id 的 {len(inter)/len(ann_ids)*100:.1f}%")
-    # 给几个对不上的例子,方便诊断格式差异
+        print(f"    -> {len(inter)/len(ann_ids)*100:.1f}% of the annotation cell_id")
+    # show a few unmatched examples to help diagnose format differences
     only_tx = list(tx_ids - ann_ids)[:5]
-    print(f"    transcripts 有、注释表没有的样本: {only_tx}")
+    print(f"    in transcripts but not in annotation: {only_tx}")
 
 print("\n" + "=" * 75)
-print("探查完成。请把以上【全部】输出贴回。")
+print("Probe complete. Paste ALL output above back.")
 print("=" * 75)

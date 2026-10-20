@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-附图 —— 计算资源随数据规模的变化（两个子图各出一张图：supp_fig_scaling_a / supp_fig_scaling_b）
-  a  标度指数热图：每个方法在双对数坐标下，运行时间 / CPU 内存峰值 对
-     分析区域细胞数、转录本数（估计）、面积 的拟合斜率 k（格内同时标出 R²）
-  b  每个方法一格：运行时间 对 分析区域转录本数（估计）的双对数散点与拟合线，点按平台着色
-转录本数 = 分析区域参考细胞数 × 全样本"每细胞转录本数"（附表 S1 的规模信息），为估计值。
-本地运行：python supp_fig_scaling.py（与 supp_common.py、robustness_bars.py 放在同一目录）
+Supplementary figure — computing resource vs data scale (two figures, one per panel: supp_fig_scaling_a / supp_fig_scaling_b)
+  a  Scaling exponent heatmap: log-log fit slope k of runtime / peak CPU memory vs
+     region cell count, transcript count (est.), and area for each method (R² shown in each cell)
+  b  One cell per method: log-log scatter of runtime vs region transcript count (est.) with fit line, colored by platform
+Transcript count = region reference cell count × whole-sample transcripts per cell (scale info in Table S1); an estimate.
+Local run: python supp_fig_scaling.py (same directory as supp_common.py, robustness_bars.py)
 """
 import numpy as np
 import pandas as pd
@@ -17,7 +17,7 @@ from matplotlib.lines import Line2D
 import supplement_6 as C
 
 OUT_NAME = "supp_fig_scaling"
-MIN_N = 5                        # 少于 5 个数据集的拟合不报告
+MIN_N = 5                        # fits with fewer than 5 datasets are not reported
 FONT = 6
 C.style_rc(mpl, FONT)
 CMAP = LinearSegmentedColormap.from_list("k", ["#F7F7F7", "#C6DBEF", "#6BAED6", "#2171B5", "#08306B"])
@@ -52,7 +52,7 @@ def compute():
 
 
 def figure_a(K):
-    """标度指数热图（单独一张图）。"""
+    """Scaling exponent heatmap (single figure)."""
     fig = plt.figure(figsize=(6.2, 4.4))
     axA = fig.add_axes([0.17, 0.08, 0.55, 0.80])
     cols = [(y, x) for _, y in YVARS for _, x in XVARS]
@@ -90,7 +90,7 @@ def figure_a(K):
 
 
 def figure_b(res, gap_x=0.08, gap_y=0.11):
-    """每个方法一格的 运行时间 vs 转录本数（单独一张图）。间距不足时自动加大，直到各小图互不重叠。"""
+    """One cell per method: runtime vs transcript count (single figure). Spacing is auto-enlarged until panels no longer overlap."""
     nc = 4
     for attempt in range(8):
         fig = plt.figure(figsize=(7.2, 7.6))
@@ -122,7 +122,7 @@ def figure_b(res, gap_x=0.08, gap_y=0.11):
         hits = C.check_no_overlap(fig, axes)
         if hits == 0:
             break
-        print(f"  [b] 第 {attempt + 1} 次布局有 {hits} 处重叠，加大间距重试")
+        print(f"  [b] layout attempt {attempt + 1} has {hits} overlaps, enlarging spacing and retrying")
         plt.close(fig)
         gap_x, gap_y = gap_x + 0.015, gap_y + 0.015
     fig.legend(handles=[Line2D([], [], ls="", marker="o", ms=4, mfc=C.PLAT_COLOR[p], mec="black", mew=0.3,
@@ -137,7 +137,7 @@ def main():
     figure_a(K)
     figure_b(res)
     K.round(3).to_csv(f"{C.OUT_DIR}/{OUT_NAME}_slopes.csv", index=False)
-    print("已保存:", f"{C.OUT_DIR}/{OUT_NAME}_slopes.csv")
+    print("Saved:", f"{C.OUT_DIR}/{OUT_NAME}_slopes.csv")
 
 
 if __name__ == "__main__":

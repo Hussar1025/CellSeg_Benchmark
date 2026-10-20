@@ -6,7 +6,7 @@
 # coding transcripts with columns x_um, y_um and gene.  platform_cell may be
 # retained only as provenance and must not be supplied as a Baysor prior.
 # Coordinates are in micrometres; force_2d is appropriate for Xenium's z stack.
-# Write the segmentation to /data/qiuyijia/baysor/xenium9_output.
+# Write the segmentation to yourpath/baysor/xenium9_output.
 
 [molecules]
 x = "x_um"

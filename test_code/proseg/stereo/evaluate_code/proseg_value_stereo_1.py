@@ -1,22 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-proseg_value_stereo_multi.py —— ProSeg × Stereo-seq 评估（19 指标，多数据集通用版）
+proseg_value_stereo_multi.py -- ProSeg × Stereo-seq evaluation (19 metrics, multi-dataset)
 =========================================================================
-基于 proseg_value_stereo_1.py（E16.5_E2S6 专用版）原样改写，仅把写死的路径
-换成按 --dataset 切换，评估逻辑（GT加权质心构建、匹配、计数/基因向量计算）
-完全不变。
+Rewritten from proseg_value_stereo_1.py (E16.5_E2S6-specific); only the hardcoded
+paths were switched to --dataset. The evaluation logic (GT weighted-centroid
+construction, matching, count / gene-vector computation) is unchanged.
 
-⚠ 沿用原脚本的两条重要警告：
-  1. assign_accuracy 循环虚高：ProSeg 先验 = CellBin cell 列，GT 也是 CellBin，
-     仅检测/定位/计数/向量指标有效，assign 指标填 NaN。
-  2. ProSeg 官方不支持 Stereo-seq（本身是 proseg_stereo_run.py 里已经用
-     "展开UMI成假单分子"的方式做了实验性适配），此评估结果仅供内部一致性
-     参考，不代表 ProSeg 在该平台上的真实官方性能。
+Two important warnings carried over from the original:
+  1. assign_accuracy is circularly inflated: ProSeg prior = CellBin cell column,
+     GT is also CellBin; only detection / localization / count / vector metrics
+     are valid, assign metrics are set to NaN.
+  2. ProSeg does not officially support Stereo-seq (proseg_stereo_run.py already
+     did an experimental adaptation by "expanding UMI into fake single molecules"),
+     so these results are for internal-consistency reference only and do not
+     represent ProSeg's true official performance on this platform.
 
-用法：
+Usage:
   conda activate proseg_eval
-  cd /data/qiuyijia/proseg
+  cd yourpath/proseg
   python proseg_value_stereo_multi.py --dataset E14.5_E1S3
   python proseg_value_stereo_multi.py --dataset E16.5_E2S7
 """
@@ -31,11 +33,11 @@ from scipy.spatial.distance import jensenshannon
 warnings.filterwarnings("ignore")
 SEP = "=" * 68
 
-DATA_DIR = "/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all"
+DATA_DIR = "yourpath/dataset/stereoseq/stereo-seq_data_all"
 BIN_UM = 0.5          # 1 bin = 0.5 µm
-MATCH_RADIUS = 15.0   # µm，与 E16.5_E2S6 评估保持一致（沿用原脚本设定）
+MATCH_RADIUS = 15.0   # um; consistent with E16.5_E2S6 evaluation (carried over from the original)
 
-# 与 proseg_stereo_run.py 里的 DATASETS 字典保持一致
+# keep consistent with the DATASETS dict in proseg_stereo_run.py
 DATASETS = {
     "E14.5_E1S3": f"{DATA_DIR}/E14.5_E1S3_Dorsal_Midbrain_GEM_CellBin.tsv.gz",
     "E16.5_E2S6": f"{DATA_DIR}/E16.5_E2S6_Dorsal_Midbrain_GEM_CellBin.tsv.gz",
@@ -49,30 +51,30 @@ def main():
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
-    proseg_dir = f"/data/qiuyijia/proseg/output/{a.dataset}"
+    proseg_dir = f"yourpath/proseg/output/{a.dataset}"
     gem_path = DATASETS[a.dataset]
-    out_path = a.out or f"/data/qiuyijia/proseg/value/{a.dataset}.csv"
+    out_path = a.out or f"yourpath/proseg/value/{a.dataset}.csv"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
-    print(SEP); print(f"ProSeg × Stereo-seq 评估 —— {a.dataset}"); print(SEP)
-    print("⚠ ProSeg 非官方支持 Stereo-seq（展开UMI适配），结果仅供内部参考")
-    print("⚠ assign 指标同源循环，填 NaN。检测/定位/计数/向量指标有效。")
+    print(SEP); print(f"ProSeg × Stereo-seq evaluation -- {a.dataset}"); print(SEP)
+    print("warning: ProSeg does not officially support Stereo-seq (expanded-UMI adaptation); results are for internal reference only")
+    print("warning: assign metrics are circular (same source) and set to NaN; detection/localization/count/vector metrics are valid.")
 
     # ========================================================================
-    # 1. 读 ProSeg cell-metadata
+    # 1. read ProSeg cell-metadata
     # ========================================================================
-    print("\n[1] 读 ProSeg cell-metadata ...")
+    print("\n[1] read ProSeg cell-metadata ...")
     pred = pd.read_csv(os.path.join(proseg_dir, "cell-metadata.csv.gz"))
-    print(f"  细胞数: {len(pred):,}")
+    print(f"  cell count: {len(pred):,}")
     print(f"  centroid_x: [{pred.centroid_x.min():.1f},{pred.centroid_x.max():.1f}] µm")
     print(f"  centroid_y: [{pred.centroid_y.min():.1f},{pred.centroid_y.max():.1f}] µm")
     pred_xy = pred[["centroid_x", "centroid_y"]].values.astype(float)
     n_pred = len(pred)
 
     # ========================================================================
-    # 2. 从 GEM 构建 GT（MIDCounts 加权质心，bin→µm）
+    # 2. build GT from GEM (MIDCounts weighted centroid, bin->um)
     # ========================================================================
-    print("\n[2] 读 GEM 构建 GT 质心 ...")
+    print("\n[2] read GEM to build GT centroids ...")
     opener = gzip.open if gem_path.endswith(".gz") else open
     skip = 0
     with opener(gem_path, "rt") as fh:
@@ -110,33 +112,33 @@ def main():
     agg = agg.rename(columns={"count_sum": "gt_count"})
     n_gt = len(agg)
     gt_xy = agg[["cx_um", "cy_um"]].values.astype(float)
-    print(f"  GT 细胞: {n_gt:,}")
+    print(f"  GT cells: {n_gt:,}")
     print(f"  GT cx_um: [{gt_xy[:,0].min():.1f},{gt_xy[:,0].max():.1f}] µm")
     print(f"  GT cy_um: [{gt_xy[:,1].min():.1f},{gt_xy[:,1].max():.1f}] µm")
 
     px_span = pred_xy[:, 0].max() - pred_xy[:, 0].min()
     gx_span = gt_xy[:, 0].max() - gt_xy[:, 0].min()
     print(f"  x span: pred={px_span:.0f}µm  GT={gx_span:.0f}µm"
-          f"  {'✓' if abs(px_span-gx_span)/max(px_span,gx_span)<0.3 else '⚠ 差异较大'}")
+          f"  {'✓' if abs(px_span-gx_span)/max(px_span,gx_span)<0.3 else '⚠ large discrepancy'}")
 
     gt_gene_agg = gem[gem.cell > 0].groupby(["cell", "gene"])["count"].sum().unstack(fill_value=0)
 
     # ========================================================================
-    # 3. 读 ProSeg transcript-metadata
+    # 3. read ProSeg transcript-metadata
     # ========================================================================
-    print("\n[3] 读 ProSeg transcript-metadata ...")
+    print("\n[3] read ProSeg transcript-metadata ...")
     tx_pred = pd.read_csv(os.path.join(proseg_dir, "transcript-metadata.csv.gz"))
-    print(f"  转录本: {len(tx_pred):,}")
+    print(f"  transcripts: {len(tx_pred):,}")
     tx_asgn = tx_pred[tx_pred["background"] == False].copy()
     tx_asgn["cell_int"] = tx_asgn["assignment"].astype(int)
     pred_cnt_ser = tx_asgn.groupby("cell_int").size()
     pred_gene_grp = tx_asgn.groupby(["cell_int", "gene"]).size().unstack(fill_value=0)
-    print(f"  非背景: {len(tx_asgn):,}  分配率: {len(tx_asgn)/len(tx_pred)*100:.1f}%")
+    print(f"  non-background: {len(tx_asgn):,}  assignment rate: {len(tx_asgn)/len(tx_pred)*100:.1f}%")
 
     # ========================================================================
-    # 4. 匹配
+    # 4. match
     # ========================================================================
-    print(f"\n[4] 匹配（radius={MATCH_RADIUS}µm）...")
+    print(f"\n[4] match (radius={MATCH_RADIUS} um)...")
     tree = cKDTree(gt_xy)
     dists, gi = tree.query(pred_xy, k=1, distance_upper_bound=MATCH_RADIUS)
     best = {}
@@ -159,7 +161,7 @@ def main():
     gi_arr = [p[1] for p in pairs]
 
     # ========================================================================
-    # 5. 计数指标
+    # 5. count metrics
     # ========================================================================
     pred_cell_ids = pred.iloc[pi_arr]["cell"].values
     p_cnt = np.array([pred_cnt_ser.get(int(cid), 0) for cid in pred_cell_ids], dtype=float)
@@ -172,12 +174,12 @@ def main():
         count_rmse = float(np.sqrt(np.mean((p_cnt - g_cnt) ** 2)))
     else:
         count_pearson = count_spearman = count_mae = count_rmse = np.nan
-    print(f"\n[5] 计数: pearson={count_pearson:.4f}  spearman={count_spearman:.4f}")
+    print(f"\n[5] counts: pearson={count_pearson:.4f}  spearman={count_spearman:.4f}")
 
     # ========================================================================
-    # 6. 基因向量（抽样 800 对）
+    # 6. gene vector (sample 800 pairs)
     # ========================================================================
-    print("\n[6] 基因向量 ...")
+    print("\n[6] gene vector ...")
     gene_names_all = np.sort(tx_asgn["gene"].dropna().unique())
     g2i = {g_n: i for i, g_n in enumerate(gene_names_all)}
     ng = len(gene_names_all)
@@ -214,7 +216,7 @@ def main():
     print(f"  cosine={vec_cosine:.4f}  JS={vec_js:.4f}  pearson={vec_pearson:.4f}")
 
     # ========================================================================
-    # 汇总
+    # summary
     # ========================================================================
     metrics = dict(
         method="ProSeg", dataset=a.dataset,
@@ -238,12 +240,12 @@ def main():
         assign_overlap=np.nan,
         assign_accuracy=np.nan,
     )
-    print(f"\n{SEP}\n结果 (ProSeg × {a.dataset}，实验性)\n{SEP}")
+    print(f"\n{SEP}\nResult (ProSeg × {a.dataset}, experimental)\n{SEP}")
     for k, v in metrics.items():
         if k not in ("method", "dataset"):
             print(f"  {k:22} {v}")
     pd.DataFrame([metrics]).to_csv(out_path, index=False)
-    print(f"\n  已写 → {out_path}")
+    print(f"\n  written -> {out_path}")
 
 
 if __name__ == "__main__":

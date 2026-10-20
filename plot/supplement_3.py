@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-补充图 C —— 下游污染（数据：附表"下游污染"那一份 Excel，含 "Table S5" 工作表）
-  b  细胞回收 vs 污染：每个方法一个点，横轴 = 可评估的蛋白定义细胞数，纵轴 = 外来/自身转录本比值中位数；
-     T 细胞、髓系细胞各一格；细黑实线阶梯 = 帕累托前沿（不存在细胞更多且污染更低的方法）
-  c  污染来源构成：T 细胞、髓系细胞两格，每个方法一条 100% 堆叠条
-本版：b 为全框线、两格放大；方法名与方法名、方法名与数据点之间无任何重叠，且全部落在框内
-      （几乎重合的点合并为一个标签，如 "Cellpose-3, Cellpose-SAM, Mesmer"）；c 只保留 T 与髓系
-FILES 中的 Excel 按内容自动识别（含 "Table S5" 且有 "Share of foreign transcripts" 列的那份），与编号无关。
-本地运行：python supp_figC_contamination.py
+Supplementary figure C - downstream contamination (data: the Excel supplementary table for "downstream contamination", with the "Table S5" sheet)
+  b  Cell recovery vs contamination: one point per method, x-axis = evaluable protein-defined cell count, y-axis = median foreign/own transcript ratio;
+     T cell and myeloid cell panels; thin black solid step line = Pareto front (no method with more cells and lower contamination)
+  c  Contamination source composition: T cell and myeloid cell panels, one 100% stacked bar per method
+Full frame, both b panels enlarged; method names never overlap each other or the data points, and all stay inside the frame
+      (near-coincident points merge into one label, e.g. "Cellpose-3, Cellpose-SAM, Mesmer"); c keeps only T and myeloid
+The Excel in FILES is auto-detected by content (the one with a "Table S5" sheet and a "Share of foreign transcripts" column), regardless of numbering.
+Local run: python supp_figC_contamination.py
 """
 import os
 
@@ -18,14 +18,14 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-# ======================== 参数 ========================
-FILES = [r"E:\Supplementary_Table_S5.xlsx", r"E:\Supplementary_Table_S6.xlsx", r"E:\Supplementary_Table_S7.xlsx"]
-OUT_DIR = r"E:\supp_figures"
+# ======================== Parameters ========================
+FILES = ["yourpath/Supplementary_Table_S5.xlsx", "yourpath/Supplementary_Table_S6.xlsx", "yourpath/Supplementary_Table_S7.xlsx"]
+OUT_DIR = "yourpath/supp_figures"
 OUT_NAME = "supp_fig_contamination"
 FIG_W, FONT = 7.2, 6.5
-SMALL_N = 30                   # 可评估细胞少于此数：b 中画空心点
-GROUP_PX = 7                   # b 中屏幕距离小于此值（pt）的点合并为一个标签
-PANEL_B = (3.15, 3.0)          # b 每一格的宽、高（inch）
+SMALL_N = 30                   # evaluable cells below this: drawn as hollow markers in b
+GROUP_PX = 7                   # in b, points within this screen distance (pt) merge into one label
+PANEL_B = (3.15, 3.0)          # width and height of each b panel (inch)
 CAT_OF = {
     "ProSeg": "Statistical point-cloud", "Baysor": "Statistical point-cloud", "BOMS": "Statistical point-cloud",
     "Bering": "Graph-based", "ComSeg": "Graph-based",
@@ -42,7 +42,7 @@ LINEAGES = ["T", "B", "Plasma", "Myeloid", "Epi/Tumor", "NormalEpi", "Endo", "St
 LIN_COLOR = {"T": "#ED7D31", "B": "#F4B183", "Plasma": "#FFD966", "Myeloid": "#5B9BD5",
              "Epi/Tumor": "#C55A5A", "NormalEpi": "#A9D18E", "Endo": "#8E7CC3", "Stromal": "#A5A5A5"}
 CASES = [("T", "T cells"), ("Myeloid", "Myeloid cells")]
-LABEL_NUDGE = {"T": {}, "Myeloid": {}}   # 个别标签手动位置（点为单位），如 {"T": {"BOMS": (6, -4)}}
+LABEL_NUDGE = {"T": {}, "Myeloid": {}}   # manual positions of specific labels (in points), e.g. {"T": {"BOMS": (6, -4)}}
 
 mpl.rcParams.update({
     "font.family": "sans-serif", "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"], "font.size": FONT,
@@ -57,11 +57,11 @@ def find_book():
             d = pd.read_excel(f, sheet_name="Table S5", header=3)
             if any(str(c).startswith("Share of foreign transcripts") for c in d.columns):
                 return f, d
-    raise FileNotFoundError(f"FILES 中没有含 'Table S5'（污染附表）的 Excel：{FILES}")
+    raise FileNotFoundError(f"No Excel in FILES contains 'Table S5' (contamination supplementary table): {FILES}")
 
 
 BOOK, S5 = find_book()
-print(f"污染附表：{BOOK}")
+print(f"Contamination supplementary table: {BOOK}")
 S5 = S5.dropna(subset=["Method"])
 S5["case"] = S5["Protein-defined cell type"].astype(str).str.split(" ").str[0]
 RATIO = "Median foreign/own transcript ratio"
@@ -79,7 +79,7 @@ def open_frame(ax):
 
 
 def group_points(ax, xs, ys, names):
-    """几乎重合的点合并为一个标签（位置取重心）。"""
+    """Merge near-coincident points into one label (position at the centroid)."""
     P = ax.transData.transform(np.column_stack([xs, ys])) / (ax.figure.dpi / 72.0)
     left = list(range(len(xs)))
     gx, gy, gn = [], [], []
@@ -93,12 +93,12 @@ def group_points(ax, xs, ys, names):
     return np.array(gx), np.array(gy), gn
 
 
-# ======================== 标签放置（无重叠、全部在框内） ========================
+# ======================== Label placement (non-overlapping, all inside frame) ========================
 def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from=9):
-    """为每个点放一个标签：标签之间、标签与任何数据点之间都不重叠，且标签完全落在坐标框内。
-    候选位置为以点为中心、半径 5–60 pt、16 个方向；从近到远选第一个满足全部约束的位置；
-    离点较远（>= lead_from pt）时画一条细引线。nudge 可为个别标签指定 (dx, dy)（点为单位）。
-    若某个标签找不到无冲突位置，会打印提示，此时可把坐标轴范围放宽或用 nudge 指定。"""
+    """Place a label for each point: labels must not overlap each other or any data point, and must lie fully inside the axes.
+    Candidate positions circle the point at radius 5-60 pt in 16 directions; pick the first that satisfies all constraints from near to far;
+    draw a thin leader line when the label is farther (>= lead_from pt). nudge may set (dx, dy) for specific labels (in points).
+    If no conflict-free position is found, a hint is printed; then widen the axis range or use nudge."""
     from matplotlib.transforms import Bbox
     nudge = nudge or {}
     fs = fs or FONT - 0.8
@@ -112,10 +112,10 @@ def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from
     pboxes = [Bbox.from_extents(x - point_px * px_per_pt / 1.4, y - point_px * px_per_pt / 1.4,
                                 x + point_px * px_per_pt / 1.4, y + point_px * px_per_pt / 1.4) for x, y in P]
     dens = [sum(np.hypot(*(P[j] - P[i])) < 40 * px_per_pt for j in range(len(P))) for i in range(len(P))]
-    order = sorted(range(len(P)), key=lambda i: (names[i] not in nudge, -dens[i]))   # 手动指定的先放
+    order = sorted(range(len(P)), key=lambda i: (names[i] not in nudge, -dens[i]))   # place manually specified ones first
     angles = np.deg2rad(np.r_[45, 135, 315, 225, 0, 180, 90, 270, 22.5, 157.5, 337.5, 202.5, 67.5, 112.5, 292.5, 247.5])
     radii = [5, 8, 12, 17, 23, 30, 38, 47, 58]
-    # 坐标框内已有的文字（如角落注释）也作为障碍，标签不得与之重叠
+    # existing text inside the axes (e.g. corner annotations) also counts as obstacles; labels must not overlap them
     placed = [t.get_window_extent(rend).padded(2.0 * px_per_pt) for t in ax.texts if t.get_visible() and t.get_text()]
 
     def make(i, dx, dy):
@@ -126,7 +126,7 @@ def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from
         return t, t.get_window_extent(rend).padded(2.0 * px_per_pt)
 
     def leader(i, bb):
-        """从数据点画一条细线到文字框最近的边（文字框为显示坐标）。"""
+        """Draw a thin line from the data point to the nearest edge of the text box (display coordinates)."""
         px, py = P[i]
         qx, qy = min(max(px, bb.x0), bb.x1), min(max(py, bb.y0), bb.y1)
         v = np.array([qx - px, qy - py]); L = np.hypot(*v)
@@ -146,8 +146,8 @@ def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from
         if not (bb.x0 >= inner.x0 and bb.x1 <= inner.x1 and bb.y0 >= inner.y0 and bb.y1 <= inner.y1):
             return False, 1000
         hits = sum(bb.overlaps(b) for b in placed) + sum(bb.overlaps(pb) for pb in pboxes)
-        # 归属清楚：标签离自己的点必须比离任何其他点都近（否则读者会把它认成别的点的标签）
-        # 有引线时归属已由引线标明，不再要求最近
+        # clear ownership: the label must be closer to its own point than to any other (otherwise readers may assign it to the wrong point)
+        # with a leader line ownership is already shown, so nearest is not required
         d_own = bdist(bb, P[i])
         if not has_leader and any(bdist(bb, P[j]) <= d_own + 1.5 * px_per_pt for j in range(len(P)) if j != i):
             hits += 1
@@ -185,16 +185,16 @@ def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from
         if not done:
             placed.append(best[1])
             leader(i, best[1])
-            print(f"    [提示] 标签 '{names[i]}' 未找到完全无重叠的位置，请放宽坐标范围或在 LABEL_NUDGE 中指定")
+            print(f"    [Hint] label '{names[i]}' found no fully non-overlapping position; widen the axis range or set it in LABEL_NUDGE")
 
 
-# ======================== b：细胞回收 vs 污染 ========================
+# ======================== b: cell recovery vs contamination ========================
 def panel_b(axes):
     for ax, (case, title) in zip(axes, CASES):
         d = S5[(S5.case == case) & S5[RATIO].notna()]
         x, y = d[NCELL].to_numpy(float), d[RATIO].to_numpy(float)
         m = list(d["Method"])
-        # 坐标范围：四周各留出足够空间放标签
+        # axis ranges: leave enough room on all sides for labels
         xr, yr = x.max() - x.min(), y.max() - y.min()
         ax.set_xlim(x.min() - 0.16 * xr, x.max() + 0.30 * xr)
         ax.set_ylim(y.min() - 0.14 * yr, y.max() + 0.14 * yr)
@@ -219,7 +219,7 @@ def panel_b(axes):
         place_labels(ax, gx, gy, gn, nudge=LABEL_NUDGE.get(case), fs=FONT - 0.6)
 
 
-# ======================== c：污染来源构成 ========================
+# ======================== c: contamination source composition ========================
 def panel_c(axes):
     n = len(ORDER)
     ypos = np.arange(n)[::-1]
@@ -250,11 +250,11 @@ def panel_c(axes):
                     fontsize=FONT - 0.5)
 
 
-# ======================== 版式 ========================
+# ======================== Layout ========================
 ROW_H = 0.16
 c_h = len(ORDER) * ROW_H
 bw, bh = PANEL_B
-LEG_H = 0.35                                   # b 下方类别图例的高度
+LEG_H = 0.35                                   # height of the category legend below b
 FIG_H = 0.35 + bh + 0.55 + LEG_H + 0.40 + c_h + 0.6
 fig = plt.figure(figsize=(FIG_W, FIG_H))
 top = FIG_H - 0.35
@@ -284,5 +284,5 @@ os.makedirs(OUT_DIR, exist_ok=True)
 for ext, kw in [(".pdf", {}), (".svg", {}), (".png", {"dpi": 600})]:
     p = os.path.join(OUT_DIR, OUT_NAME + ext)
     fig.savefig(p, bbox_inches="tight", facecolor="white", **kw)
-    print("已保存:", p)
+    print("Saved:", p)
 plt.close(fig)

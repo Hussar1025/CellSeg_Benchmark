@@ -6,7 +6,7 @@ from pathlib import Path
 _PROCESS_STARTED = time.perf_counter()
 
 import sys
-sys.path.insert(0, "/data/qiuyijia")
+sys.path.insert(0, "yourpath")
 from he_performance import finalize_performance
 
 import numpy as np
@@ -18,15 +18,15 @@ from skimage.segmentation import expand_labels
 
 
 # ======================
-# 直接在这里修改参数
+# edit the parameters directly here
 # ======================
 INPUT_TIF = os.environ.get(
     "HE_INPUT_TIF",
-    r"/data/qiuyijia/dataset/stereo_mouse_embryo/D05103C4D4_HE_regist.tif",
+    r"yourpath/dataset/stereo_mouse_embryo/D05103C4D4_HE_regist.tif",
 )
 OUTPUT_TIF = os.environ.get(
     "HE_CELLPOSE_OUTPUT_TIF",
-    r"/data/qiuyijia/dataset/stereo_mouse_embryo/segmentation_outputs/cellpose/labels.tif",
+    r"yourpath/dataset/stereo_mouse_embryo/segmentation_outputs/cellpose/labels.tif",
 )
 
 USE_GPU = True
@@ -34,17 +34,17 @@ USE_GPU = True
 TILE_SIZE = 2048
 OVERLAP = 192
 
-# stereo 配套 adjusted CellBin 的平均面积约 313 px²，对应等效直径约
-# 20 px；其他数据集可由启动脚本通过环境变量覆盖。
+# The adjusted CellBin shipped with stereo averages ~313 px^2, an equivalent diameter of
+# ~20 px; other datasets can override this from the launch script via an environment variable.
 DIAMETER = int(os.environ.get("HE_CELLPOSE_DIAMETER", "20"))
 
-# 将 Cellpose-SAM 检出的核样实例向外扩张，近似整细胞区域。
-# expand_labels 会在相邻实例相遇时停止，不会让不同标签互相覆盖。
+# Expand the nucleus-like instances detected by Cellpose-SAM outwards to approximate whole cells.
+# expand_labels stops where neighbouring instances meet, so labels never overwrite each other.
 EXPAND_PX = int(os.environ.get("HE_CELLPOSE_EXPAND_PX", "15"))
 
-# RGB 图像使用模式：
-# "rgb"  : 直接把 RGB 三通道送入 cellpose
-# "gray" : 先转灰度再分割，通常更省显存
+# RGB image mode:
+# "rgb"  : feed the three RGB channels to cellpose directly
+# "gray" : convert to grayscale first, usually saves GPU memory
 RGB_MODE = "gray"
 
 BATCH_SIZE = 4
@@ -73,8 +73,8 @@ class LargeTiffReader:
             self.store = self.series.aszarr()
             z = zarr.open(self.store, mode="r")
 
-            # 有些 tifffile.aszarr() 返回 array
-            # 有些返回 group，真正图像在 "0"
+            # sometimes tifffile.aszarr() returns an array,
+            # sometimes a group with the real image under "0"
             if hasattr(z, "shape"):
                 self.arr = z
             else:
@@ -86,21 +86,21 @@ class LargeTiffReader:
                 elif len(keys) > 0:
                     self.arr = z[keys[0]]
                 else:
-                    raise ValueError("zarr group 中没有可用 array")
+                    raise ValueError("no usable array in the zarr group")
 
             self.shape = self.arr.shape
             self.dtype = self.arr.dtype
             self.use_zarr = True
 
-            print("读取方式: zarr lazy tiled reader")
+            print("read mode: zarr lazy tiled reader")
             print("zarr array shape:", self.shape)
             print("zarr array dtype :", self.dtype)
 
         except Exception as e:
             self.arr = None
             self.use_zarr = False
-            print("读取方式: tifffile fallback reader")
-            print("zarr lazy reader 不可用，原因:", repr(e))
+            print("read mode: tifffile fallback reader")
+            print("zarr lazy reader unavailable, reason:", repr(e))
 
     def read(self, key):
         if self.use_zarr:
@@ -160,7 +160,7 @@ def main():
     print(f"Input : {input_path}")
     print(f"Output: {output_path}")
 
-    print("\n[1/5] 读取 TIFF 元信息...")
+    print("\n[1/5] reading TIFF metadata...")
     reader = LargeTiffReader(input_path)
     img_shape = reader.shape
     img_dtype = reader.dtype
@@ -188,7 +188,7 @@ def main():
             elif RGB_MODE == "rgb":
                 return rgb
             else:
-                raise ValueError("RGB_MODE 只能是 'gray' 或 'rgb'")
+                raise ValueError("RGB_MODE must be 'gray' or 'rgb'")
 
     elif ndim == 3 and img_shape[0] in (3, 4):
         H, W = img_shape[1], img_shape[2]
@@ -202,16 +202,16 @@ def main():
             elif RGB_MODE == "rgb":
                 return rgb
             else:
-                raise ValueError("RGB_MODE 只能是 'gray' 或 'rgb'")
+                raise ValueError("RGB_MODE must be 'gray' or 'rgb'")
 
     else:
-        raise ValueError(f"暂不支持该图像维度: shape={img_shape}")
+        raise ValueError(f"unsupported image dimensionality: shape={img_shape}")
 
     print(f"image mode: {image_mode}")
     print(f"processed size: H={H}, W={W}")
     print(f"RGB_MODE: {RGB_MODE}")
 
-    print("\n[2/5] 加载 Cellpose-SAM 模型...")
+    print("\n[2/5] loading the Cellpose-SAM model...")
     model_start = time.perf_counter()
 
     model = models.CellposeModel(
@@ -220,12 +220,12 @@ def main():
     )
 
     model_time = time.perf_counter() - model_start
-    print(f"模型加载耗时: {format_time(model_time)}")
+    print(f"model load time: {format_time(model_time)}")
 
     tiles = list(iter_tiles(H, W, TILE_SIZE, OVERLAP))
     total_tiles = len(tiles)
 
-    print("\n[3/5] 开始分块分割...")
+    print("\n[3/5] starting tiled segmentation...")
     print(f"tile size: {TILE_SIZE}")
     print(f"overlap  : {OVERLAP}")
     print(f"tiles    : {total_tiles}")
@@ -270,8 +270,8 @@ def main():
             core = fastremap.renumber(core, in_place=False)[0].astype(np.uint32, copy=False)
 
             positive = core > 0
-            # renumber 后当前 tile 的标签从 1 开始；平移 next_label - 1
-            # 可使全图标签连续，避免每个 tile 都空出一个 ID。
+            # after renumber the current tile's labels start at 1; shifting by next_label - 1
+            # keeps global labels contiguous and avoids wasting one ID per tile.
             core[positive] = core[positive] + np.uint32(next_label - 1)
 
             next_label = int(core.max()) + 1
@@ -285,15 +285,15 @@ def main():
             avg_time = sum(tile_times) / len(tile_times)
             remaining = avg_time * (total_tiles - idx)
             print(
-                f"已完成 {idx}/{total_tiles} | "
-                f"平均每块 {avg_time:.2f}s | "
-                f"预计剩余 {format_time(remaining)}"
+                f"done {idx}/{total_tiles} | "
+                f"mean per tile {avg_time:.2f}s | "
+                f"estimated remaining {format_time(remaining)}"
             )
 
         del tile_img, masks, flows, styles, core
         gc.collect()
 
-    print(f"\n[4/5] 细胞核标签向外扩张 {EXPAND_PX}px ...")
+    print(f"\n[4/5] expanding nucleus labels outwards by {EXPAND_PX}px ...")
     expand_start = time.perf_counter()
     if EXPAND_PX > 0:
         mask_full = expand_labels(mask_full, distance=EXPAND_PX).astype(
@@ -301,7 +301,7 @@ def main():
         )
     expand_time = time.perf_counter() - expand_start
 
-    print("\n[5/5] 写出 mask 文件...")
+    print("\n[5/5] writing the mask file...")
     write_start = time.perf_counter()
 
     with tiff.TiffWriter(output_path, bigtiff=True) as writer:
@@ -321,19 +321,19 @@ def main():
 
     reader.close()
 
-    print("\n========== 完成 ==========")
-    print(f"输出文件: {output_path}")
-    print(f"最大 label id: {next_label - 1}")
-    print(f"标签扩张距离: {EXPAND_PX}px")
-    print(f"标签扩张耗时: {format_time(expand_time)}")
-    print(f"模型加载耗时: {format_time(model_time)}")
-    print(f"写出文件耗时: {format_time(write_time)}")
-    print(f"总耗时      : {format_time(total_time)}")
+    print("\n========== Done ==========")
+    print(f"output file: {output_path}")
+    print(f"max label id: {next_label - 1}")
+    print(f"label expansion distance: {EXPAND_PX}px")
+    print(f"label expansion time: {format_time(expand_time)}")
+    print(f"model load time: {format_time(model_time)}")
+    print(f"write time: {format_time(write_time)}")
+    print(f"total time      : {format_time(total_time)}")
 
     if tile_times:
-        print(f"平均每 tile 耗时: {sum(tile_times) / len(tile_times):.2f}s")
-        print(f"最快 tile 耗时  : {min(tile_times):.2f}s")
-        print(f"最慢 tile 耗时  : {max(tile_times):.2f}s")
+        print(f"mean per-tile time: {sum(tile_times) / len(tile_times):.2f}s")
+        print(f"fastest tile time  : {min(tile_times):.2f}s")
+        print(f"slowest tile time  : {max(tile_times):.2f}s")
 
 
 if __name__ == "__main__":

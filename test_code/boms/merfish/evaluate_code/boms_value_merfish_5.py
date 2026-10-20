@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""BOMS 评估 —— 全绝对路径，运行只需 --dataset。npz 点云栅格化后复用参考评估脚本指标逻辑。
-用法:  python eval_boms.py --dataset prostate1     (或 prostate2)
-可选覆盖: --root --npz --gt-mask --out-dir --ref --roi-size
+"""BOMS evaluation - all absolute paths; run with just --dataset. Rasterizes the npz point cloud and reuses the reference eval script's metric logic.
+Usage:  python eval_boms.py --dataset prostate1     (or prostate2)
+Optional overrides: --root --npz --gt-mask --out-dir --ref --roi-size
 """
 import argparse, importlib.util, sys
 from pathlib import Path
 import numpy as np
 
-REF_DEFAULT  = "/data/qiuyijia/ucs/UCS/ucs_value_merfish_4.py"
-DATA_BASE    = "/data/qiuyijia/dataset"
-RESULT_BASE  = "/data/qiuyijia"
+REF_DEFAULT  = "yourpath/ucs/UCS/ucs_value_merfish_4.py"
+DATA_BASE    = "yourpath/dataset"
+RESULT_BASE  = "yourpath"
 METHOD       = "BOMS"
 NPZ_NAME     = "boms_merfish.npz"
 ROI_SIZE_DEF = 10000
@@ -18,7 +18,7 @@ ROI_SIZE_DEF = 10000
 def _load_ref(ref):
     ref = Path(ref).resolve()
     if not ref.exists():
-        raise SystemExit(f"参考评估脚本不存在: {ref}\n改顶部 REF_DEFAULT 或用 --ref 指定")
+        raise SystemExit(f"reference eval script missing: {ref}\nset REF_DEFAULT at top or pass --ref")
     spec = importlib.util.spec_from_file_location("refval", ref)
     V = importlib.util.module_from_spec(spec); sys.modules["refval"] = V
     spec.loader.exec_module(V)
@@ -48,7 +48,7 @@ def main():
         args.npz     = args.npz  or f"{RESULT_BASE}/boms_merfish_{args.dataset}/{NPZ_NAME}"
         args.out_dir = args.out_dir or f"{RESULT_BASE}/eval_merfish_{args.dataset}"
     if not (args.root and args.npz):
-        raise SystemExit("需要 --dataset，或同时给 --root 和 --npz")
+        raise SystemExit("need --dataset, or both --root and --npz")
     args.out_dir = args.out_dir or f"{RESULT_BASE}/eval_merfish_out"
     if not args.gt_mask:
         args.gt_mask = _pick_gt_mask(args.root, args.dataset)

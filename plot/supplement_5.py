@@ -1,20 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-补充图 —— 运行状态矩阵（31 个数据集 × 16 个方法 = 496 项任务）
-颜色 = 平台（五色：Xenium 浅绿，其余四个平台用约定的四色系），同一平台的数据集格子同色；
-形状 = 任务状态（由三份本地表格判定）：
-判定顺序（先满足者为准）：
-  – 浅灰短横线  不适用：7 个图像方法 × 4 个 Stereo-seq 数据集、9 个转录本方法 × STARmap 数据集中，
-                结果表没有记录的格子（此条优先于一切，不看资源表）
-  ◩ 半填充方块  在子区域上完成：仅 SUBREGION_TASKS 中列出的任务
-  ■ 实心方块    完成并纳入评估：结果表中有记录；FORCE_SUCCESS 中的方法（GeneSegNet）的其余格子也记为成功
-  □ 空心方块    完成但未纳入评估：资源表中有该次运行，结果表中没有
-  × 深灰色叉    失败：以上都不是
-行 = 数据集（按平台分组，左侧平台色条）；列 = 方法（方法名黑色）。
-顶部条形 = 每个方法完成的任务数（按平台堆叠，同色）；右侧条形 = 每个数据集完成的方法数（平台色），
-条旁数字 = 完成数 / 适用数。
-读取与名字统一沿用 robustness_bars.py（与 Fig. 2d 一致），请把本脚本与 robustness_bars.py 放在同一目录。
-本地运行：python supp_fig_run_status.py
+Supplementary figure: running-status matrix (31 datasets × 16 methods = 496 tasks).
+Colour = platform (five colours: Xenium light green; the other four platforms use the four agreed
+colours); cells of the same platform share one colour.
+Shape = task status (determined from three local tables).
+Decision order (first match wins):
+  – light-grey short dash  Not applicable: 7 image methods × 4 Stereo-seq datasets and 9 transcript/RNA
+                methods × STARmap datasets with no result-table record (this rule overrides everything
+                and ignores the resource table)
+  ◩ half-filled square  Completed on a subregion: only the tasks listed in SUBREGION_TASKS
+  ■ solid square        Completed and evaluated: record in the result table; other cells of methods in
+                FORCE_SUCCESS (GeneSegNet) also count as success
+  □ hollow square       Completed but not evaluated: run in the resource table, no result-table record
+  × dark-grey cross     Failed: none of the above
+Row = dataset (grouped by platform, left platform color bar); column = method (method name in black).
+Top bars = completed-task count per method (stacked by platform, same colour); right bars = completed-method
+count per dataset (platform colour); the number beside each bar = completed / applicable.
+Loading and name normalization follow robustness_bars.py (same as Fig. 2d); keep this script in the same
+directory as robustness_bars.py.
+Local run: python supp_fig_run_status.py
 """
 import os
 import re
@@ -30,36 +34,36 @@ from matplotlib.lines import Line2D
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import supplement_4 as RB          # noqa: E402
 
-# ======================== 参数 ========================
+# ======================== Parameters ========================
 PATH_OMICS = RB.PATH_OMICS
 PATH_IMAGE = RB.PATH_IMAGE
-PATH_RES = r"C:\Users\阿飞\Desktop\segmentation_resources_all_methods_summary.csv"
-OUT_DIR = r"E:\supp_figures"
+PATH_RES = "yourpath/segmentation_resources_all_methods_summary.csv"
+OUT_DIR = "yourpath/supp_figures"
 OUT_NAME = "supp_fig_run_status"
 FIG_W, FONT = 7.2, 6
-CELL = 0.21                           # 每格边长（inch）
-GLYPH = 0.34                          # 方块半边长（格子为 1）：越小格子间距越大
-EDGE_LW = 0.15                        # 方块黑色描边线宽（pt）
-FRAME_LW = 0.4                        # 外框与平台分隔线线宽（pt）
-SHOW_LEGEND = False                   # 只要矩阵本身：图例默认不画（状态与颜色的含义写在图注里）
-# 只有这几项是在子区域上运行的（其余参考细胞数对不上的属于 GT 口径差异，按完整运行处理）：
-# ComSeg 在 xenium_1（中心 6000 px ROI）、cosmx_1、cosmx_2 上，以及 Cellist 在 xenium_6 上
+CELL = 0.21                           # cell side length (inch)
+GLYPH = 0.34                          # square half-side (cell = 1); smaller = larger gap between cells
+EDGE_LW = 0.15                        # black square stroke width (pt)
+FRAME_LW = 0.4                        # frame and platform divider line width (pt)
+SHOW_LEGEND = False                   # matrix only: legend off by default (status/colour meanings go in the caption)
+# Only these run on a subregion (other reference-cell mismatches are GT-definition differences, treated as full runs):
+# ComSeg on xenium_1 (central 6000 px ROI), cosmx_1, cosmx_2; and Cellist on xenium_6
 SUBREGION_TASKS = {("ComSeg", "xenium_1"), ("ComSeg", "cosmx_1"), ("ComSeg", "cosmx_2"), ("Cellist", "xenium_6")}
-# 这些方法除"不适用"的格子外一律记为运行成功（无论资源表 / 结果表是否有记录）
+# Mark every cell of these methods as success except "not applicable" ones (regardless of resource/result-table records)
 FORCE_SUCCESS = {"GeneSegNet"}
 
 IMAGE_METHODS = ["Cellpose-SAM", "Cellpose-3", "CellSAM", "CelloType", "Mesmer", "StarDist", "UNSEG"]
 OMICS_METHODS = ["ProSeg", "Baysor", "BOMS", "Bering", "ComSeg", "UCS", "Cellist", "GeneSegNet", "DISSECT"]
 ORDER = OMICS_METHODS + IMAGE_METHODS
-NA_RULES = [(IMAGE_METHODS, "stereo"), (OMICS_METHODS, "starmap")]     # (方法集合, 平台前缀) -> 不适用
+NA_RULES = [(IMAGE_METHODS, "stereo"), (OMICS_METHODS, "starmap")]     # (method set, platform prefix) -> not applicable
 
-STATUS = [   # (键, 图例文字)
+STATUS = [   # (key, legend text)
     ("eval", "Completed"),
     ("sub", "Completed on a sub-region"),
     ("noeval", "Completed, not evaluated"),
     ("fail", "Failed"),
 ]
-PLAT_COLOR = {               # 与资源矩阵图（fig_resources_matrix.py）相同的五个平台色
+PLAT_COLOR = {               # the five platform colours shared with the resource matrix (fig_resources_matrix.py)
     "xenium": "#8FCFC4",
     "starmap": "#F3DF7A",
     "stereo": "#E8837A",
@@ -71,7 +75,7 @@ NA_C = "#BDBDBD"
 PLAT_ORDER = ["xenium", "starmap", "stereo", "merfish", "cosmx"]
 PLAT_NAME = {"xenium": "Xenium", "starmap": "STARmap", "stereo": "Stereo-seq", "merfish": "MERFISH", "cosmx": "CosMx"}
 
-# 资源表里的名字 -> 统一名（与结果表一致，小写）
+# resource-table name -> normalized name (matching the result table, lowercased)
 RES_METHOD = {"proseg": "ProSeg", "cellposesam": "Cellpose-SAM", "cellpose-sam": "Cellpose-SAM",
               "cellpose3-cyto3": "Cellpose-3", "cellpose3": "Cellpose-3", "cellpose-3": "Cellpose-3",
               "baysor": "Baysor", "bering": "Bering", "boms": "BOMS", "comseg": "ComSeg", "dissect": "DISSECT",
@@ -109,7 +113,7 @@ def norm_res_ds(s):
 def load_status():
     agg, gt = RB.load_both(PATH_OMICS, PATH_IMAGE)
     ev = agg.groupby(["method", "ds", "_type"], as_index=False)["_gt"].mean().rename(columns={"_gt": "gtc"})
-    # 该数据集的标准参考细胞数（众数），仅用于在终端打印子区域任务的对照
+    # standard reference cell count per dataset (mode), only for printing the subregion-task comparison
     ref = ev.groupby(["ds", "_type"])["gtc"].agg(lambda v: v.round().mode().iloc[0])
     ev["ref"] = [ref[(d, t)] for d, t in zip(ev["ds"], ev["_type"])]
     res = pd.read_csv(PATH_RES, encoding="utf-8-sig").iloc[:, :2]
@@ -121,7 +125,7 @@ def load_status():
                                      nat_key(d)))
     unknown_m = sorted((set(ev["method"]) | set(res["method"])) - set(ORDER))
     if unknown_m:
-        print("[警告] 不在 ORDER 中的方法名（未作图）：", unknown_m)
+        print("[Warning] method names not in ORDER (not plotted):", unknown_m)
     ran = set(zip(res["method"], res["ds"]))
     evaluated = set(zip(ev["method"], ev["ds"]))
     S = pd.DataFrame(index=datasets, columns=ORDER, dtype=object)
@@ -130,7 +134,7 @@ def load_status():
         for m in ORDER:
             na_cell = any(m in ms and plat == p for ms, p in NA_RULES)
             if na_cell and (m, d) not in evaluated:
-                S.at[d, m] = "na"                      # 规则优先于一切
+                S.at[d, m] = "na"                      # rule takes priority over everything
             elif (m, d) in SUBREGION_TASKS:
                 S.at[d, m] = "sub"
             elif (m, d) in evaluated or m in FORCE_SUCCESS:
@@ -141,25 +145,25 @@ def load_status():
                 S.at[d, m] = "fail"
     miss_sub = [t for t in SUBREGION_TASKS if t[1] in S.index and t[0] in S.columns and S.at[t[1], t[0]] != "sub"]
     if miss_sub:
-        print("[警告] SUBREGION_TASKS 中这些任务未标为子区域：", miss_sub)
+        print("[Warning] these SUBREGION_TASKS were not marked as subregion:", miss_sub)
     sub_info = ev[[(m, d) in SUBREGION_TASKS for m, d in zip(ev["method"], ev["ds"])]]
     return S, sub_info
 
 
 def draw_glyph(ax, x, y, st, pc, h=None):
-    """在 (x, y) 处画一个任务的符号；pc = 平台色。"""
+    """Draw the glyph for one task at (x, y); pc = platform colour."""
     from matplotlib.patches import Polygon
     h = GLYPH if h is None else h
     if st == "na":
         ax.plot([x - 0.22, x + 0.22], [y, y], color=NA_C, lw=0.9, solid_capstyle="round")
     elif st == "eval":
         ax.add_patch(Rectangle((x - h, y - h), 2 * h, 2 * h, facecolor=pc, edgecolor="black", lw=EDGE_LW))
-    elif st == "sub":                                   # 左下半填充
+    elif st == "sub":                                   # lower-left half filled
         ax.add_patch(Rectangle((x - h, y - h), 2 * h, 2 * h, facecolor="white", edgecolor="black", lw=EDGE_LW))
         ax.add_patch(Polygon([(x - h, y - h), (x - h, y + h), (x + h, y + h)], closed=True, facecolor=pc,
                              edgecolor="none"))
         ax.add_patch(Rectangle((x - h, y - h), 2 * h, 2 * h, facecolor="none", edgecolor="black", lw=EDGE_LW))
-    elif st == "noeval":                                # 空心：平台色粗描边
+    elif st == "noeval":                                # hollow: thick platform-colour stroke
         ax.add_patch(Rectangle((x - h * 0.86, y - h * 0.86), 2 * h * 0.86, 2 * h * 0.86, facecolor="white",
                                edgecolor=pc, lw=0.8))
     elif st == "fail":
@@ -175,16 +179,16 @@ def main():
     cnt = {k: int((S == k).sum().sum()) for k in keys + ["na"]}
     applicable = nD * nM - cnt["na"]
     done = cnt["eval"] + cnt["sub"] + cnt["noeval"]
-    print(f"矩阵 {nD} 个数据集 × {nM} 个方法 = {nD * nM} 项；不适用 {cnt['na']}，适用 {applicable}")
+    print(f"matrix {nD} datasets × {nM} methods = {nD * nM} tasks; not applicable {cnt['na']}, applicable {applicable}")
     for k, lab in STATUS:
         print(f"  {lab:<62} {cnt[k]:>4}")
-    print(f"  完成（①+②+③）{done} / {applicable} 项适用任务")
+    print(f"  completed (eval+sub+noeval) {done} / {applicable} applicable tasks")
     if len(subs):
-        print("  在子区域上运行的任务：")
+        print("  tasks run on a subregion:")
         for r in subs.itertuples():
-            print(f"      {r.method:<12} {r.ds:<16} 参考细胞 {r.gtc:,.0f}（该数据集标准 {r.ref:,.0f}）")
+            print(f"      {r.method:<12} {r.ds:<16} reference cells {r.gtc:,.0f} (dataset standard {r.ref:,.0f})")
 
-    # ---------- 版式（inch）：只画矩阵 ----------
+    # ---------- Layout (inch): matrix only ----------
     L, T_, R_, B_ = 1.05, 0.75, 0.1, 0.1
     grid_w, grid_h = nM * CELL, nD * CELL
     fig_w, fig_h = L + grid_w + R_, T_ + grid_h + B_
@@ -202,10 +206,10 @@ def main():
     for sp in ax.spines.values():
         sp.set_visible(True); sp.set_linewidth(FRAME_LW)
     plats = [d.split("_")[0] for d in S.index]
-    for k in range(1, nD):                                  # 平台之间的分隔线
+    for k in range(1, nD):                                  # divider line between platforms
         if plats[k] != plats[k - 1]:
             ax.axhline(k - 0.5, color="black", lw=FRAME_LW)
-    ax.axvline(len(OMICS_METHODS) - 0.5, color="black", lw=FRAME_LW)   # 转录本 / 图像方法之间
+    ax.axvline(len(OMICS_METHODS) - 0.5, color="black", lw=FRAME_LW)   # between transcript/RNA and image methods
 
     if SHOW_LEGEND:
         from matplotlib.patches import Patch as _P
@@ -217,11 +221,11 @@ def main():
     for ext, kw in [(".pdf", {}), (".svg", {}), (".png", {"dpi": 600})]:
         p = os.path.join(OUT_DIR, OUT_NAME + ext)
         fig.savefig(p, bbox_inches="tight", facecolor="white", **kw)
-        print("已保存:", p)
+        print("Saved:", p)
     plt.close(fig)
     lab = {k: l for k, l in STATUS}; lab["na"] = "Not applicable"
     S.replace(lab).to_excel(os.path.join(OUT_DIR, OUT_NAME + "_status.xlsx"))
-    print("已保存:", os.path.join(OUT_DIR, OUT_NAME + "_status.xlsx"))
+    print("Saved:", os.path.join(OUT_DIR, OUT_NAME + "_status.xlsx"))
 
 
 if __name__ == "__main__":

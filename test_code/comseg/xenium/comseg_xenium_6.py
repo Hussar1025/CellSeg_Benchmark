@@ -12,7 +12,7 @@ Fixed benchmark:
   GT        = 11790 cells
 
 Actual ComSeg Xenium engine:
-  /data/qiuyijia/comseg/comseg_xenium_4.py
+  yourpath/comseg/comseg_xenium_4.py
 
 This wrapper deliberately contains no segmentation implementation.
 It only fixes the Xenium6 benchmark parameters and delegates to the
@@ -24,13 +24,13 @@ import argparse
 import subprocess
 import sys
 
-ENGINE = Path("/data/qiuyijia/comseg/comseg_xenium_4.py")
+ENGINE = Path("yourpath/comseg/comseg_xenium_4.py")
 
-DATA_ROOT = Path("/data/qiuyijia/dataset/xenium_colon")
+DATA_ROOT = Path("yourpath/dataset/xenium_colon")
 
 # Fresh rerun. Do not overwrite the old 6/9 run.
 OUT_DIR = Path(
-    "/data/qiuyijia/comseg_xenium_colon_roi6000_rerun"
+    "yourpath/comseg_xenium_colon_roi6000_rerun"
 )
 
 ROI_Y0 = 14052

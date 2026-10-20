@@ -300,7 +300,7 @@ MODEL:
     - 3
     SIZE: B-22k
     USE_CHECKPOINT: false
-  WEIGHTS: /home/heyf/DISSECT/models/swin_base_patch4_window7_224_22k.pkl
+  WEIGHTS: yourpath/DISSECT/models/swin_base_patch4_window7_224_22k.pkl
 MODEL_EMA:
   DECAY: 0.999
   DEVICE: ''

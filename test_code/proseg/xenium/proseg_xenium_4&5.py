@@ -28,7 +28,7 @@ Usage
   python proseg_xenium.py --dataset liver --nthreads 16
   python proseg_xenium.py --dataset mouse_brain --nthreads 16
   python proseg_xenium.py --dataset liver --report-only \\
-      --compare-to /data/qiuyijia/ucs_xenium_liver_roi10000_prior
+      --compare-to yourpath/ucs_xenium_liver_roi10000_prior
 
 Notes
 -----
@@ -54,11 +54,11 @@ from pathlib import Path
 import numpy as np
 
 DATASETS = {
-    "liver": {"root": "/data/qiuyijia/dataset/xenium_liver", "tag": "liver"},
-    "mouse_brain": {"root": "/data/qiuyijia/dataset/xenium_mouse_brain",
+    "liver": {"root": "yourpath/dataset/xenium_liver", "tag": "liver"},
+    "mouse_brain": {"root": "yourpath/dataset/xenium_mouse_brain",
                     "tag": "mouse_brain"},
 }
-OUT_TEMPLATE = "/data/qiuyijia/proseg_xenium_{tag}_roi{roi}"
+OUT_TEMPLATE = "yourpath/proseg_xenium_{tag}_roi{roi}"
 
 MORPH_CANDIDATES = [
     "outs/morphology_focus/morphology_focus_0000.ome.tif",

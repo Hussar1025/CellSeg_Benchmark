@@ -19,15 +19,15 @@ ROI = 10000
 
 CFG = {
     "xenium9": dict(
-        root=Path("/data/qiuyijia/dataset/xenium9"),
-        run=Path("/data/qiuyijia/genesegnet_xenium9"),
+        root=Path("yourpath/dataset/xenium9"),
+        run=Path("yourpath/genesegnet_xenium9"),
         x0=16374, y0=5147,
         expected_gt=17689,
         label="xenium_9",
     ),
     "xenium10": dict(
-        root=Path("/data/qiuyijia/dataset/xenium10"),
-        run=Path("/data/qiuyijia/genesegnet_xenium10"),
+        root=Path("yourpath/dataset/xenium10"),
+        run=Path("yourpath/genesegnet_xenium10"),
         x0=20564, y0=13750,
         expected_gt=36604,
         label="xenium_10",
@@ -358,7 +358,7 @@ def main():
     ap.add_argument("--dataset",choices=list(CFG),required=True)
     ap.add_argument("--qv-min",type=float,default=20)
     ap.add_argument("--out-dir",
-                    default="/data/qiuyijia/GeneSegNet/eval_final")
+                    default="yourpath/GeneSegNet/eval_final")
     a=ap.parse_args()
     evaluate(a.dataset,a.qv_min,a.out_dir)
 

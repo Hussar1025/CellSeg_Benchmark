@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Cellist xenium_4 liver downstream sweep — direct-engine version.
+Cellist xenium_4 liver downstream sweep - direct-engine version.
 
 NO source-code patching.
 We invoke the verified cellist_xenium_5.py engine directly using:
@@ -20,8 +20,8 @@ from __future__ import annotations
 import json, os, re, shutil, subprocess, sys
 from pathlib import Path
 
-ENGINE = Path("/data/qiuyijia/cellist/code/cellist_xenium_5.py")
-ROOT = Path("/data/qiuyijia/dataset/xenium_liver")
+ENGINE = Path("yourpath")
+ROOT = Path("yourpath")
 MORPH_CANDIDATES = [
     ROOT / "morphology_focus/morphology_focus_0000.ome.tif",
     ROOT / "morphology.ome.tif",
@@ -33,8 +33,8 @@ MORPH_CANDIDATES = [
     ROOT / "outs/morphology_mip.ome.tif",
 ]
 MORPH = next((p for p in MORPH_CANDIDATES if p.exists()), None)
-BASE = Path("/data/qiuyijia/cellist_xenium_liver_roi6000")
-OUTROOT = Path("/data/qiuyijia/cellist_xenium_liver_downstream")
+BASE = Path("yourpath")
+OUTROOT = Path("yourpath")
 
 TRIALS = [
     dict(tag="r3_imp0p5_fill0_freq", radius=3, imp=0.5, fill=0, gene="Frequent", two=False),

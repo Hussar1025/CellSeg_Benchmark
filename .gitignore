@@ -1,1 +1,12 @@
-code/SOURCE_MANIFEST.tsv
+__pycache__/
+*.py[cod]
+*.pyo
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

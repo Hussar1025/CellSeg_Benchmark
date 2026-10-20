@@ -68,12 +68,12 @@ import tifffile
 from scipy.spatial import cKDTree
 
 
-ROOT_DEFAULT = Path("/data/qiuyijia/dataset/merfish_liver1")
-DAPI_DEFAULT = Path("/data/qiuyijia/dataset/merfish_liver1/images/HumanLiverCancerPatient1_images_mosaic_DAPI_z3.tif")
-TRANSFORM_DEFAULT = Path("/data/qiuyijia/dataset/merfish_liver1/images/HumanLiverCancerPatient1_images_micron_to_mosaic_pixel_transform.csv")
-TX_DEFAULT = Path("/data/qiuyijia/dataset/merfish_liver1/detected_transcripts.csv")
+ROOT_DEFAULT = Path("yourpath/dataset/merfish_liver1")
+DAPI_DEFAULT = Path("yourpath/dataset/merfish_liver1/images/HumanLiverCancerPatient1_images_mosaic_DAPI_z3.tif")
+TRANSFORM_DEFAULT = Path("yourpath/dataset/merfish_liver1/images/HumanLiverCancerPatient1_images_micron_to_mosaic_pixel_transform.csv")
+TX_DEFAULT = Path("yourpath/dataset/merfish_liver1/detected_transcripts.csv")
 
-OUT_DEFAULT = Path("/data/qiuyijia/comseg_merfish_liver1")
+OUT_DEFAULT = Path("yourpath/comseg_merfish_liver1")
 
 H = 82793
 W = 108545

@@ -2,11 +2,11 @@
 # One-click Cellpose MERFISH segmentation for the seven benchmark datasets.
 #
 # Usage:
-#   /data/qiuyijia/cellpose/run_merfish_all.sh
+#   yourpath/cellpose/run_merfish_all.sh
 #
 # Optional environment variables:
 #   PYTHON_BIN             Python executable (default: cellpose conda env)
-#   MERFISH_DATA_ROOT     Dataset root (default: /data/qiuyijia/dataset)
+#   MERFISH_DATA_ROOT     Dataset root (default: yourpath/dataset)
 #   MERFISH_OUTPUT_ROOT   Output root (default: this directory)
 #   MERFISH_TEST_PY_PATH  Evaluation module path
 #   MERFISH_LOG_ROOT      Per-dataset log directory
@@ -16,13 +16,13 @@ set -u -o pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 METHOD_SCRIPT="${SCRIPT_DIR}/merfish_seg_bench.py"
-DATA_ROOT="${MERFISH_DATA_ROOT:-/data/qiuyijia/dataset}"
+DATA_ROOT="${MERFISH_DATA_ROOT:-yourpath/dataset}"
 OUTPUT_ROOT="${MERFISH_OUTPUT_ROOT:-${SCRIPT_DIR}}"
-TEST_PY_PATH="${MERFISH_TEST_PY_PATH:-/data/qiuyijia/eval/test.py}"
+TEST_PY_PATH="${MERFISH_TEST_PY_PATH:-yourpath/eval/test.py}"
 LOG_ROOT="${MERFISH_LOG_ROOT:-${OUTPUT_ROOT}/merfish_batch_logs}"
 if [[ -z "${PYTHON_BIN+x}" ]]; then
-  if [[ -x /data/qiuyijia/anaconda3/envs/cellpose/bin/python ]]; then
-    PYTHON_BIN="/data/qiuyijia/anaconda3/envs/cellpose/bin/python"
+  if [[ -x yourpath/anaconda3/envs/cellpose/bin/python ]]; then
+    PYTHON_BIN="yourpath/anaconda3/envs/cellpose/bin/python"
   elif command -v python >/dev/null 2>&1; then PYTHON_BIN="python"
   else PYTHON_BIN="python3"; fi
 fi

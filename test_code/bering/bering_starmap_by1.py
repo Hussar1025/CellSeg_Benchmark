@@ -52,14 +52,14 @@ import pandas as pd
 
 LOG = logging.getLogger("bering_starmap_by1")
 
-DEFAULT_DATA_DIR = Path("/data/qiuyijia/dataset/starmap_BY1")
-DEFAULT_OUT_DIR = Path("/data/qiuyijia/bering/starmap_BY1_output")
+DEFAULT_DATA_DIR = Path("yourpath/dataset/starmap_BY1")
+DEFAULT_OUT_DIR = Path("yourpath/bering/starmap_BY1_output")
 PRIOR_NAME = "dataset_clustermap_plus_unsupervised_leiden_labels"
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Bering segmentation for /data/qiuyijia/dataset/starmap_BY1"
+        description="Bering segmentation for yourpath/dataset/starmap_BY1"
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
@@ -153,7 +153,7 @@ def validate_inputs(args, full_stats=False):
 
     if importlib.util.find_spec("Bering") is None:
         raise RuntimeError(
-            "Bering is not importable. Use /data/qiuyijia/anaconda3/envs/bering/bin/python"
+            "Bering is not importable. Use yourpath/anaconda3/envs/bering/bin/python"
         )
 
     if full_stats:

@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-三张新附图（计算规模、数据特征、分层表现）共用的读取模块。
-  · 准确性结果：沿用 robustness_bars.py 的读取与名字统一（与 Fig. 2d 口径一致）
-  · 资源：segmentation_resources_all_methods_summary.csv（运行时间 s、CPU / GPU 内存峰值 GiB）
-  · 数据集元信息：与资源矩阵图 fig_resources_matrix.py 的 DATA 表一致，另加分析区域面积与染色类型
-请与 robustness_bars.py 放在同一目录。
+Shared loading module for the three new supplementary figures (compute scale, data characteristics,
+stratified performance).
+  · Accuracy results: reuse robustness_bars.py loading and name normalization (same definition as Fig. 2d)
+  · Resources: segmentation_resources_all_methods_summary.csv (runtime s, CPU/GPU peak memory GiB)
+  · Dataset metadata: matches the DATA table in fig_resources_matrix.py, plus analysis-region area and
+    staining type
+Keep in the same directory as robustness_bars.py.
 """
 import os
 import re
@@ -17,13 +19,13 @@ from matplotlib.patches import Rectangle
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import supplement_4 as RB          # noqa: E402
 
-# ======================== 路径 ========================
+# ======================== Paths ========================
 PATH_OMICS = RB.PATH_OMICS
 PATH_IMAGE = RB.PATH_IMAGE
-PATH_RES = r"C:\Users\阿飞\Desktop\segmentation_resources_all_methods_summary.csv"
-OUT_DIR = r"E:\supp_figures"
+PATH_RES = "yourpath/segmentation_resources_all_methods_summary.csv"
+OUT_DIR = "yourpath/supp_figures"
 
-# ======================== 方法与配色 ========================
+# ======================== Methods and colours ========================
 ORDER = ["ProSeg", "Baysor", "BOMS", "Bering", "ComSeg", "UCS", "Cellist", "GeneSegNet", "DISSECT",
          "Cellpose-SAM", "Cellpose-3", "CellSAM", "CelloType", "Mesmer", "StarDist", "UNSEG"]
 CAT_OF = {"ProSeg": "Statistical point-cloud", "Baysor": "Statistical point-cloud", "BOMS": "Statistical point-cloud",
@@ -37,15 +39,15 @@ PLAT_ORDER = ["xenium", "starmap", "stereo", "merfish", "cosmx"]
 PLAT_NAME = {"xenium": "Xenium", "starmap": "STARmap", "stereo": "Stereo-seq", "merfish": "MERFISH", "cosmx": "CosMx"}
 PLAT_COLOR = {"xenium": "#8FCFC4", "starmap": "#F3DF7A", "stereo": "#E8837A", "merfish": "#8DB3D6", "cosmx": "#F2B26B"}
 
-# ======================== 数据集元信息 ========================
-# (物种, 组织, 全样本细胞数, 基因数, 全样本转录本数)，与 fig_resources_matrix.py 的 DATA 表一致
+# ======================== Dataset metadata ========================
+# (species, tissue, whole-sample cell count, gene count, whole-sample transcript count); matches the DATA table in fig_resources_matrix.py
 META = {
     "xenium_1": ("Human", "Pancreatic cancer", 190965, 538, 28_455_659),
     "xenium_2": ("Human", "Breast cancer", 209467, 541, 64_581_006),
     "xenium_3": ("Human", "Lymph node", 2442, 4509, 838_883),
     "xenium_4": ("Human", "Liver", 239271, 541, 25_424_111),
     "xenium_5": ("Mouse", "Brain", 63173, 13780, 188_540_362),
-    "xenium_6": ("Mouse", "Colon", 219797, 541, 82_549_008),          # 附表 S1：Mouse colon
+    "xenium_6": ("Mouse", "Colon", 219797, 541, 82_549_008),          # Suppl. S1: Mouse colon
     "xenium_7": ("Human", "Prostate cancer", 193000, 10017, 59_727_355),
     "xenium_8": ("Human", "Kidney cancer", 465534, 543, 77_056_936),
     "xenium_9": ("Human", "Skin melanoma", 112551, 10017, 74_011_892),
@@ -72,7 +74,7 @@ META = {
     "stereo_4": ("Mouse", "Embryo", 1191859, 29082, 1_092_062_636),
     "starmap_by1": ("Mouse", "Brain", 1424, 1019, 471_295),
 }
-# 分析区域面积（mm²，与附表 S1 的密度一致；空缺的数据集不参与"面积"相关分析）
+# analysis-region area (mm²; consistent with Suppl. S1 densities; datasets with no entry are excluded from area analyses)
 AREA_MM2 = {
     "cosmx_1": 4.718533, "cosmx_2": 0.524281, "cosmx_3": 7.602081,
     "merfish_1": 4.720191, **{k: 1.1664 for k in ["merfish_2", "merfish_3", "merfish_4", "merfish_breast",
@@ -82,20 +84,22 @@ AREA_MM2 = {
     "stereo_4": 2.25, "xenium_2": 1.128906,
     **{k: 4.515625 for k in ["xenium_4", "xenium_5", "xenium_6", "xenium_7", "xenium_8", "xenium_9", "xenium_10"]},
 }
-# 图像方法实际使用的染色（用于分层；转录本方法同样按数据集归类）。按附表 S1 校正：
-# CosMx 三个数据集均使用核加膜通道；stereo_4 为配准的 H&E；其余 Stereo-seq 为 ssDNA
+# Staining actually used by image methods (for stratification; transcript/RNA methods are grouped by
+# dataset the same way). Corrected per Suppl. S1:
+# all three CosMx datasets use nuclear+membrane channels; stereo_4 is the registered H&E; other
+# Stereo-seq are ssDNA
 STAIN = {**{f"xenium_{i}": "DAPI" for i in range(2, 11)}, "xenium_1": "H&E",
          **{k: "DAPI" for k in META if k.startswith("merfish")},
          "cosmx_1": "Nuclear + membrane", "cosmx_2": "Nuclear + membrane", "cosmx_3": "Nuclear + membrane",
          "stereo_1": "ssDNA", "stereo_2": "ssDNA", "stereo_3": "ssDNA",
-         "stereo_4": "H&E",                                   # 附表 S1：Tissue GEF and registered H&E image
+         "stereo_4": "H&E",                                   # Suppl. S1: Tissue GEF and registered H&E image
          "starmap_by1": "DAPI"}
 
 
-# Xenium Prime 5K 数据集：DATA 表中的"基因数"含对照与未注释编码（4,509–13,780），按面板标称值 5,001 计
+# Xenium Prime 5K datasets: the DATA-table gene count includes controls and unannotated coding (4,509-13,780); use the panel's nominal 5,001
 PRIME_5K = {"xenium_3", "xenium_5", "xenium_7", "xenium_9", "xenium_10"}
 PANEL_GENES_NOMINAL = {k: 5001 for k in PRIME_5K}
-# 面板类别：靶向（≤600 基因）/ 高通量（约 1,000–6,600 基因）/ 全转录组
+# panel category: targeted (≤600 genes) / high-throughput (~1,000-6,600 genes) / whole-transcriptome
 PANEL_CLASS = {**{k: "Targeted (≤600)" for k in ["xenium_1", "xenium_2", "xenium_4", "xenium_6", "xenium_8"]},
                **{k: "High-plex (1,000–6,600)" for k in PRIME_5K | {"cosmx_2", "cosmx_3", "starmap_by1"}},
                "cosmx_1": "Whole transcriptome",
@@ -120,16 +124,16 @@ def ds_sorted(ds_list):
     return sorted(ds_list, key=lambda d: (PLAT_ORDER.index(plat_of(d)) if plat_of(d) in PLAT_ORDER else 99, nat_key(d)))
 
 
-# ======================== 准确性 ========================
+# ======================== Accuracy ========================
 def load_accuracy():
-    """返回 DataFrame[method, ds, type(rna/image), f1, gt]，每个 方法-数据集 一行。"""
+    """Return DataFrame[method, ds, type(rna/image), f1, gt], one row per method-dataset pair."""
     agg, gt = RB.load_both(PATH_OMICS, PATH_IMAGE)
     d = agg.groupby(["method", "ds", "_type"], as_index=False).agg(f1=("f1", "mean"), gt=("_gt", "mean"))
     return d.rename(columns={"_type": "type"})
 
 
 def roi_cells(acc):
-    """每个数据集分析区域的参考细胞数（优先转录本表的口径，缺失时用图像表）。"""
+    """Reference cell count for each dataset's analysis region (prefer the transcript table; fall back to the image table)."""
     g = acc.sort_values("type", ascending=False).groupby("ds")["gt"].agg(lambda v: v.round().mode().iloc[0])
     return g
 
@@ -149,7 +153,7 @@ def dataset_table(acc):
     return pd.DataFrame(rows).set_index("ds")
 
 
-# ======================== 资源 ========================
+# ======================== Resources ========================
 RES_METHOD = {"proseg": "ProSeg", "cellposesam": "Cellpose-SAM", "cellpose-sam": "Cellpose-SAM",
               "cellpose3-cyto3": "Cellpose-3", "cellpose3": "Cellpose-3", "cellpose-3": "Cellpose-3",
               "baysor": "Baysor", "bering": "Bering", "boms": "BOMS", "comseg": "ComSeg", "dissect": "DISSECT",
@@ -175,7 +179,7 @@ def _norm_res_ds(s):
 
 
 def load_resources():
-    """返回 DataFrame[method, ds, runtime_min, cpu_gib, gpu_gib]（同一 方法-数据集 多条记录取中位数）。"""
+    """Return DataFrame[method, ds, runtime_min, cpu_gib, gpu_gib] (median over duplicate method-dataset records)."""
     r = pd.read_csv(PATH_RES, encoding="utf-8-sig")
     r = r.iloc[:, :5]
     r.columns = ["method", "dataset", "runtime_s", "cpu_gib", "gpu_gib"]
@@ -187,12 +191,12 @@ def load_resources():
     r["runtime_min"] = r.runtime_s / 60
     unknown = sorted(set(r.ds) - set(META))
     if unknown:
-        print("[提示] 资源表中未识别的数据集名（未作图）：", unknown)
+        print("[Hint] dataset names in the resource table not recognized (not plotted):", unknown)
     return r[r.ds.isin(META)]
 
 
 def style_rc(mpl, font=6.5):
-    """全部文字统一为 Arial Regular（包括数学符号 ρ、R²、k），不使用粗体和斜体。"""
+    """Use Arial Regular for all text (including math symbols ρ, R², k); no bold or italic."""
     mpl.rcParams.update({
         "font.family": "sans-serif", "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"], "font.size": font,
         "font.weight": "normal", "font.style": "normal", "axes.titleweight": "normal", "axes.labelweight": "normal",
@@ -205,7 +209,7 @@ def style_rc(mpl, font=6.5):
 
 
 def category_strip(fig, ax, methods, width_in=0.07, gap_in=0.03):
-    """在热图左侧画一条与行对齐的类别色条（固定物理宽度），并把行名推到色条左侧。"""
+    """Draw a category color bar left of the heatmap, aligned to rows (fixed physical width), pushing row labels to its left."""
     W, H = fig.get_size_inches()
     pos = ax.get_position()
     sx = fig.add_axes([pos.x0 - (width_in + gap_in) / W, pos.y0, width_in / W, pos.height])
@@ -217,12 +221,12 @@ def category_strip(fig, ax, methods, width_in=0.07, gap_in=0.03):
 
 
 def blank_dash(ax, i, j, half=0.32):
-    """空白格（没有数据）中间画一条细黑虚线。"""
+    """Draw a thin black dashed line in the middle of an empty (no-data) cell."""
     ax.plot([j - half, j + half], [i, i], color="black", lw=0.4, ls=(0, (2, 1.5)), zorder=4)
 
 
 def check_no_overlap(fig, axes):
-    """检查各小图（含标题、坐标轴文字）的外框是否两两重叠；返回重叠的对数。"""
+    """Check whether any two subplot bounding boxes (including titles and tick labels) overlap; return the number of overlapping pairs."""
     fig.canvas.draw()
     rend = fig.canvas.get_renderer()
     boxes = [ax.get_tightbbox(rend) for ax in axes]
@@ -245,4 +249,4 @@ def save(fig, name, out_dir=None):
     for ext, kw in [(".pdf", {}), (".svg", {}), (".png", {"dpi": 600})]:
         p = os.path.join(out_dir, name + ext)
         fig.savefig(p, bbox_inches="tight", facecolor="white", **kw)
-        print("已保存:", p)
+        print("Saved:", p)

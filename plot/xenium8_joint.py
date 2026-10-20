@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-xenium_8: 联合分布图 (邻域污染源密度 vs 细胞污染富集)
-  - 每个方法一个 panel, 圆点按局部密度着色
-  - 线性拟合(含截距), 浅灰虚线
-  - 拟合解析式与相关系数统一放在整图右侧, 不压在散点上
-斜率 = 对邻居的敏感性: 邻域源密度每升高一单位, 细胞污染富集升高多少
+xenium_8: joint distribution plot (neighbourhood contamination-source density vs
+cell contamination enrichment)
+  - one panel per method, dots colored by local density
+  - linear fit (with intercept), light gray dashed line
+  - fit formula and correlation coefficient placed together on the right, off the dots
+Slope = sensitivity to neighbours: how much cell enrichment rises per unit increase
+in neighbourhood source density
 """
 import os
 import numpy as np
@@ -25,7 +27,7 @@ plt.rcParams["ps.fonttype"] = 42
 plt.rcParams["axes.unicode_minus"] = False
 plt.rcParams["figure.dpi"] = 300
 
-X8 = "/data/qiuyijia/dataset/xenium_8"
+X8 = "yourpath/dataset/xenium_8"
 MORPH = os.path.join(X8, "morphology_focus")
 TXF = os.path.join(X8, "_roi_cache", "tx_roi_8664_22001_10000_qv20.parquet")
 OUTDIR = os.path.join(X8, "_roi_cache", "case_knn")
@@ -45,10 +47,10 @@ MARK = {
                 "TREM2", "VSIG4", "MRC1", "LILRB2", "FCGR1A"],
 }
 METHOD_MASK = {
-    "proseg":     "/data/qiuyijia/proseg_xenium_8/proseg_segmentation.tif",
-    "ucs":        "/data/qiuyijia/ucs_xenium_8/ucs_segmentation.tif",
-    "genesegnet": "/data/qiuyijia/genesegnet_xenium_8/genesegnet_xenium_8_mask.tif",
-    "cellpose":   "/data/qiuyijia/cellpose/xenium_8_output/xenium_8_cellpose_pred.tif",
+    "proseg":     "yourpath/proseg_xenium_8/proseg_segmentation.tif",
+    "ucs":        "yourpath/ucs_xenium_8/ucs_segmentation.tif",
+    "genesegnet": "yourpath/genesegnet_xenium_8/genesegnet_xenium_8_mask.tif",
+    "cellpose":   "yourpath/cellpose/xenium_8_output/xenium_8_cellpose_pred.tif",
 }
 POINT_METHODS = ["boms", "baysor", "bering"]
 DISPLAY = {"proseg": "ProSeg", "ucs": "UCS", "genesegnet": "GeneSegNet",
@@ -80,7 +82,7 @@ def protein_pos(chname):
     lbl, n = ndi.label(pos)
     sizes = ndi.sum(pos, lbl, range(1, n + 1))
     keep = np.isin(lbl, np.nonzero(sizes >= 50)[0] + 1)
-    log(f"  {chname}: otsu={thr:.0f} 阳性区={100*keep.mean():.2f}%")
+    log(f"  {chname}: otsu={thr:.0f} positive region={100*keep.mean():.2f}%")
     return keep
 
 
@@ -102,7 +104,7 @@ def _points_to_mask(xu, yu, cellid, size):
 
 
 def boms_mask(size=2500):
-    z = np.load("/data/qiuyijia/boms_xenium_8/boms_xenium_8.npz", allow_pickle=True)
+    z = np.load("yourpath/boms_xenium_8/boms_xenium_8.npz", allow_pickle=True)
     seg, xu, yu = z["seg"], z["x"], z["y"]
     k = seg > 0
     return _points_to_mask(xu[k], yu[k], seg[k], size)
@@ -110,7 +112,7 @@ def boms_mask(size=2500):
 
 def baysor_mask(size=2500):
     import json
-    gj = "/data/qiuyijia/baysor/xenium_8_output/segmentation_polygons_2d.json"
+    gj = "yourpath/baysor/xenium_8_output/segmentation_polygons_2d.json"
     try:
         from matplotlib.path import Path as MplPath
         feats = json.load(open(gj))["features"]
@@ -134,12 +136,12 @@ def baysor_mask(size=2500):
                 blk = lab[y0i:y1i, x0i:x1i]
                 blk.flat[inside] = k
                 n_ok += 1
-        log(f"    baysor 多边形栅格化: {n_ok} 个细胞")
+        log(f"    baysor polygon rasterized: {n_ok} cells")
         if n_ok > 100:
             return lab
     except Exception as e:
-        log(f"    baysor 多边形失败 ({e}), 退回点栅格化")
-    b = pd.read_csv("/data/qiuyijia/baysor/xenium_8_output/segmentation.csv",
+        log(f"    baysor polygon failed ({e}), falling back to point rasterization")
+    b = pd.read_csv("yourpath/baysor/xenium_8_output/segmentation.csv",
                     usecols=["cell", "x", "y"])
     b = b[b["cell"] > 0]
     return _points_to_mask(b["x"].values, b["y"].values, b["cell"].values, size)
@@ -147,15 +149,15 @@ def baysor_mask(size=2500):
 
 def bering_mask(size=2500):
     t = pd.read_parquet(
-        "/data/qiuyijia/bering/xenium_8_center10000_output/transcript_assignments.parquet",
+        "yourpath/bering/xenium_8_center10000_output/transcript_assignments.parquet",
         columns=["cell_id", "x", "y"])
     sid = t["cell_id"].astype(str)
     num = pd.to_numeric(sid.str.extract(r"(\d+)", expand=False), errors="coerce")
     ok = num.notna().values & ~sid.isin(["", "nan", "None", "background",
                                          "UNASSIGNED", "-1"]).values
     cid = num.fillna(-1).values + 1.0
-    log(f"    bering: {int(ok.sum())} 条转录本有归属, "
-        f"{int(np.unique(cid[ok]).size)} 个细胞")
+    log(f"    bering: {int(ok.sum())} transcripts assigned, "
+        f"{int(np.unique(cid[ok]).size)} cells")
     return _points_to_mask(t["x"].values[ok], t["y"].values[ok], cid[ok], size)
 
 
@@ -170,10 +172,10 @@ def get_mask(name):
 
 
 def main():
-    log("== 蛋白阳性区 ==")
+    log("== protein-positive region ==")
     posmap = {c: protein_pos(ch) for c, (ch, _) in CASES.items()}
 
-    log("\n== 转录本 ==")
+    log("\n== transcripts ==")
     tx = pd.read_parquet(TXF)
     g = tx["gene"].astype(str).values
     tix = tx["x_um"].values / PX - X0
@@ -238,10 +240,10 @@ def main():
                                  trees[a].query_ball_point(pts, rpx)], dtype=float)
             dens = tot / (np.pi * MAIN_R * MAIN_R)
             log(f"  {cname}: eval={int(ev.sum())} "
-                f"中位富集={np.nanmedian(enrich[ev]):.2f}x")
+                f"median enrichment={np.nanmedian(enrich[ev]):.2f}x")
             store[(name, cname)] = dict(dens=dens, enrich=enrich[ev])
 
-    # ---------- 统一坐标范围 (两张图、所有 panel 共用) ----------
+    # ---------- shared axis range (common to all panels of both plots) ----------
     all_x, all_y = [], []
     for key, d in store.items():
         x, y = d["dens"], d["enrich"]
@@ -250,7 +252,7 @@ def main():
     all_x = np.concatenate(all_x); all_y = np.concatenate(all_y)
     XMAX = float(np.percentile(all_x, 99.0))
     YMAX = float(max(np.percentile(all_y, 99.0), 1.2))
-    # 刻度取整到好看的间隔
+    # round tick marks to a nice interval
     def nice_ticks(vmax, n=5):
         raw = vmax / n
         mag = 10 ** np.floor(np.log10(max(raw, 1e-9)))
@@ -262,11 +264,11 @@ def main():
     XTICKS = nice_ticks(XMAX)
     YTICKS = nice_ticks(YMAX)
     XMAX = float(XTICKS[-1]); YMAX = float(YTICKS[-1])
-    ASPECT = XMAX / YMAX      # 让数据单位在 x/y 上等价, 斜率倾角可直接比较
-    log(f"\n统一坐标: x[0,{XMAX:.3f}] y[0,{YMAX:.2f}]  "
-        f"斜率 1.0 对应的视觉倾角固定")
+    ASPECT = XMAX / YMAX      # make data units equivalent on x/y so slope angles are comparable
+    log(f"\nshared axis: x[0,{XMAX:.3f}] y[0,{YMAX:.2f}]  "
+        f"visual slope angle for slope 1.0 is fixed")
 
-    # ---------- 绘图 ----------
+    # ---------- plotting ----------
     for cname in CASES:
         n = len(methods)
         nrow = int(np.ceil(n / NCOL))
@@ -287,7 +289,7 @@ def main():
             ax.grid(alpha=0.15)
             ax.set_xlim(0, XMAX); ax.set_ylim(0, YMAX)
             ax.set_xticks(XTICKS); ax.set_yticks(YTICKS)
-            ax.set_box_aspect(1.0)          # 所有 panel 同样的绘图框形状
+            ax.set_box_aspect(1.0)          # identical plot box shape for all panels
             if len(x) < 20:
                 lines.append(f"{DISPLAY.get(name, name):<12s}  n/a")
                 continue

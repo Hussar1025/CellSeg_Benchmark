@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Proseg 评估 —— 全绝对路径，运行只需 --dataset。复用参考评估脚本的指标/匹配/GT 逻辑。
-用法:  python eval_proseg.py --dataset prostate1     (或 prostate2)
-可选覆盖: --root --run-dir --gt-mask --out-dir --ref --roi-size --mask --seg-name
+"""Proseg evaluation -- fully absolute paths; only --dataset is needed to run.
+Reuses the metric / matching / GT logic from the reference evaluation script.
+Usage:  python eval_proseg.py --dataset prostate1     (or prostate2)
+Optional overrides: --root --run-dir --gt-mask --out-dir --ref --roi-size --mask --seg-name
 """
 import argparse, importlib.util, sys
 from pathlib import Path
 import numpy as np
 
-# ============ 绝对路径配置（换机器只改这几行）============
-REF_DEFAULT   = "/data/qiuyijia/ucs/UCS/ucs_value_merfish_4.py"
-DATA_BASE     = "/data/qiuyijia/dataset"        # 数据集: {DATA_BASE}/merfish_<ds>
-RESULT_BASE   = "/data/qiuyijia"      # 结果:   {RESULT_BASE}/<prefix>_merfish_<ds>
+# ============ absolute path config (edit these lines on a new machine) ============
+REF_DEFAULT   = "yourpath/ucs/UCS/ucs_value_merfish_4.py"
+DATA_BASE     = "yourpath/dataset"        # dataset: {DATA_BASE}/merfish_<ds>
+RESULT_BASE   = "yourpath"      # results: {RESULT_BASE}/<prefix>_merfish_<ds>
 METHOD        = "Proseg"
 RESULT_PREFIX = "proseg"
 SEG_PATTERNS  = ["proseg_segmentation.tif","*proseg*seg*.tif","*segmentation*.tif"]
@@ -22,7 +23,7 @@ ROI_SIZE_DEF  = 10000
 def _load_ref(ref):
     ref = Path(ref).resolve()
     if not ref.exists():
-        raise SystemExit(f"参考评估脚本不存在: {ref}\n改顶部 REF_DEFAULT 或用 --ref 指定")
+        raise SystemExit(f"reference evaluation script not found: {ref}\nchange REF_DEFAULT at the top or pass --ref")
     spec = importlib.util.spec_from_file_location("refval", ref)
     V = importlib.util.module_from_spec(spec); sys.modules["refval"] = V
     spec.loader.exec_module(V)
@@ -36,7 +37,7 @@ def _find_seg(run_dir, seg_name):
         cand = sorted(d.glob(pat))
         if cand:
             return cand[0]
-    raise SystemExit(f"在 {d} 找不到分割结果 (尝试 {SEG_PATTERNS})")
+    raise SystemExit(f"no segmentation result in {d} (tried {SEG_PATTERNS})")
 
 def _pick_gt_mask(run_dir, root, dataset):
     cands = [Path(run_dir) / "platform_labels.tif",
@@ -45,7 +46,7 @@ def _pick_gt_mask(run_dir, root, dataset):
     for c in cands:
         if c and c.exists():
             return str(c)
-    return None  # 交给参考脚本自行在 root 下查找
+    return None  # let the reference script search under root
 
 def main():
     ap = argparse.ArgumentParser()
@@ -65,7 +66,7 @@ def main():
         args.run_dir = args.run_dir or f"{RESULT_BASE}/{RESULT_PREFIX}_merfish_{args.dataset}"
         args.out_dir = args.out_dir or f"{RESULT_BASE}/eval_merfish_{args.dataset}"
     if not (args.root and args.run_dir):
-        raise SystemExit("需要 --dataset，或同时给 --root 和 --run-dir")
+        raise SystemExit("need --dataset, or both --root and --run-dir")
     args.out_dir = args.out_dir or f"{RESULT_BASE}/eval_merfish_out"
     if not args.gt_mask:
         args.gt_mask = _pick_gt_mask(args.run_dir, args.root, args.dataset)

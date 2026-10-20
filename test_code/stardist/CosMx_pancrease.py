@@ -3,50 +3,60 @@
 """
 stardist_benchmark_cosmx_multi.py
 =================================
-在多个 FOV（默认 51~68）上用 StarDist 做分割，并对 CosMx CellLabels(GT) 做 benchmark，
-汇总方式与 cellpose 版完全一致：micro（池化）为主口径，macro(mean±std) 为稳健性口径。
-指标实现复用 \eval\\test.py；聚合/组件函数直接复用 cellpose_benchmark_cosmx_multi
-（那套 micro 聚合已用“拼大图金标准”验证过，差 ~1e-7）。
+Runs StarDist segmentation over multiple FOVs (default 51-68) and benchmarks
+against CosMx CellLabels (GT), aggregating exactly like the cellpose version:
+micro (pooled) as the primary metric, macro (mean+/-std) as the robustness metric.
+Metric code reuses \eval\test.py; aggregation/component functions directly reuse
+cellpose_benchmark_cosmx_multi (its micro aggregation was validated against the
+stitched full-image ground truth, differing by ~1e-7).
 
-关键口径问题
+Key target issue
 --------------------------------
-StarDist 的预训练模型（'2D_versatile_fluo' 等）是【细胞核】分割模型，
-而 CellLabels 是【整细胞】分割。核比整细胞小，直接拿核比整细胞会让
-IoU/Dice/AJI 系统性偏低——那是“分割对象不同”，不是 StarDist 差。
-因此本脚本提供两种正确、可选的评估口径（--target）：
+StarDist's pretrained models ('2D_versatile_fluo', etc.) are nucleus segmentation
+models, while CellLabels is whole-cell segmentation. Nuclei are smaller than whole
+cells, so directly comparing nuclei to whole cells makes IoU/Dice/AJI systematically
+lower - that is "different segmentation objects", not StarDist being worse.
+So this script provides two correct, selectable evaluation targets (--target):
 
-  --target cell   （默认，和 Cellpose 那次的 GT 一致，方便多方法横向比较）
-      StarDist 出核 → 用 skimage.expand_labels 把核膨胀 --expand-px 像素近似整细胞
-      → 对 CellLabels(整细胞) 评分。
-      代价：膨胀距离是一个人为超参（默认 15px≈1.8µm）。这是“StarDist+膨胀”的联合表现，
-      与很多真实 CosMx 管线(核分割+扩边)一致，但要在论文里如实写明膨胀这一步。
+  --target cell   (default, same GT as the Cellpose run, for cross-method comparison)
+      StarDist outputs nuclei -> expand with skimage.expand_labels by --expand-px
+      pixels to approximate whole cells -> score against CellLabels (whole cells).
+      Cost: the expansion distance is a manual hyperparameter (default 15px ~= 1.8um).
+      This is the joint "StarDist+expansion" behavior, consistent with many real
+      CosMx pipelines (nuclear segmentation + border expansion), but the expansion
+      step must be reported honestly in the paper.
 
-  --target nuclei （对 StarDist 最公平、无膨胀超参）
-      StarDist 出核 → 对“核 GT”评分；核 GT = CellLabels ∩ (CompartmentLabels==核编码)，
-      即每个细胞的核区域、继承该细胞 ID。
-      注意：CompartmentLabels 是“区室类型”标签(核/膜/胞质/胞外)，不是实例；
-      其整数编码 README 没写死，请用 --nuclear-code 指定并核对（脚本会打印实际出现的值）。
+  --target nuclei (fairest to StarDist, no expansion hyperparameter)
+      StarDist outputs nuclei -> score against "nucleus GT"; nucleus GT =
+      CellLabels restricted to (CompartmentLabels == nucleus code), i.e. each cell's
+      nuclear region inheriting that cell's ID.
+      Note: CompartmentLabels is a "compartment type" label
+      (nucleus/membrane/cytoplasm/extracellular), not instances; its integer codes
+      are not fixed in the README, so specify and verify with --nuclear-code
+      (the script prints the values actually present).
 
-建议：论文里两种都报——cell 口径用于和 Cellpose/其它方法在同一 GT 上横向比较；
-nuclei 口径用于公平体现 StarDist 本身的核分割能力。
+Recommendation: report both in the paper - the cell target for cross-method
+comparison against Cellpose/others on the same GT; the nuclei target to fairly
+reflect StarDist's own nuclear segmentation ability.
 
-依赖
+Dependencies
 ----
     pip install stardist tensorflow csbdeep
-首次运行会联网下载预训练权重（AutoDL 上正常）。4256² 大图建议给 --n-tiles（如 8 8）。
+First run downloads pretrained weights online (works on AutoDL). For the 4256x4256
+large images, pass --n-tiles (e.g. 8 8).
 
-用法
+Usage
 ----
-    # 与 Cellpose 同 GT（整细胞），可直接和之前的结果横向比
+    # Same GT (whole cell) as Cellpose, directly comparable to previous results
     python stardist_benchmark_cosmx_multi.py --data-root /path/to/CosMx_Pancreas \
         --fov-start 51 --fov-end 68 --target cell --expand-px 15 \
         --out-dir ./stardist_bench_multi
 
-    # 对 StarDist 最公平的核口径
+    # Fairest nucleus target for StarDist
     python stardist_benchmark_cosmx_multi.py --data-root ... \
         --fov-start 51 --fov-end 68 --target nuclei --nuclear-code 1
 
-    # 复用已存的 StarDist 预测 tif，跳过推理
+    # Reuse saved StarDist prediction tif, skip inference
     python stardist_benchmark_cosmx_multi.py --data-root ... \
         --fov-start 51 --fov-end 68 --reuse-pred --pred-dir ./stardist_bench_multi
 """
@@ -63,10 +73,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def _resolve_dep_dir():
     """
-    找到 cellpose_benchmark_cosmx[_multi].py 所在目录。优先级：
-      1) 环境变量 COSMX_BENCH_DIR
-      2) 命令行 --dep-dir（在 argparse 之前手动扫一遍，因为 import 发生在最前）
-      3) 兜底：本脚本目录、当前工作目录
+    Locate the directory of cellpose_benchmark_cosmx[_multi].py. Priority:
+      1) env var COSMX_BENCH_DIR
+      2) command-line --dep-dir (scanned manually before argparse, because the
+         import happens first)
+      3) fallback: this script's directory, current working directory
     """
     env = os.environ.get("COSMX_BENCH_DIR")
     if env and os.path.isdir(env):
@@ -80,45 +91,45 @@ def _resolve_dep_dir():
     return None
 
 
-# 把依赖目录（及兜底目录）加入 sys.path，再导入
+# Add the dependency dir (and fallback dirs) to sys.path, then import
 _dep_dir = _resolve_dep_dir()
 for _d in (_dep_dir, HERE, os.getcwd()):
     if _d and _d not in sys.path:
         sys.path.insert(0, _d)
 
 try:
-    import CosMx_single_fov as single      # 文件解析 / composite 加载 / 指标模块
-    import CosMx_benchplus as agg    # 已验证的 micro 聚合 + 组件函数
+    import CosMx_single_fov as single      # file parsing / composite loading / metrics module
+    import CosMx_benchplus as agg    # validated micro aggregation + component functions
 except ImportError as _e:
     sys.stderr.write(
-        "\n[导入失败] 找不到 cellpose_benchmark_cosmx.py / cellpose_benchmark_cosmx_multi.py。\n"
-        "请用以下任一方式告诉脚本它们在哪里（三选一）：\n"
-        "  1) 命令行加参数：   --dep-dir /path/to/cellpose_files\n"
-        "  2) 设环境变量：     export COSMX_BENCH_DIR=/path/to/cellpose_files\n"
-        "  3) 把两个 cellpose 脚本和本脚本放到同一目录\n"
-        f"当前已尝试的目录：{[d for d in (_dep_dir, HERE, os.getcwd()) if d]}\n"
-        f"原始错误：{_e}\n\n")
+        "\n[import failed] cellpose_benchmark_cosmx.py / cellpose_benchmark_cosmx_multi.py not found.\n"
+        "Tell the script where they are using any of these (pick one):\n"
+        "  1) CLI argument:   --dep-dir /path/to/cellpose_files\n"
+        "  2) env variable:   export COSMX_BENCH_DIR=/path/to/cellpose_files\n"
+        "  3) put the two cellpose scripts in the same directory as this script\n"
+        f"Directories tried: {[d for d in (_dep_dir, HERE, os.getcwd()) if d]}\n"
+        f"Original error: {_e}\n\n")
     raise
 
 
 # --------------------------------------------------------------------------- #
-# StarDist 输入 & 推理
+# StarDist input & inference
 # --------------------------------------------------------------------------- #
 def build_stardist_input(composite_rgb):
-    """StarDist(fluo) 是核模型，输入用 DAPI(Blue) 单通道即可。"""
+    """StarDist(fluo) is a nucleus model; use the DAPI (blue) single channel as input."""
     dapi = composite_rgb[..., 2].astype(np.float32)   # R,G,B -> B=DAPI
     return dapi
 
 
 def run_stardist(dapi2d, model_name="2D_versatile_fluo",
                  prob_thresh=None, nms_thresh=None, n_tiles=None):
-    """返回核实例 label mask（int32）。"""
+    """Return the nucleus instance label mask (int32)."""
     from stardist.models import StarDist2D
     from csbdeep.utils import normalize
     print(f"[stardist] model={model_name} | prob={prob_thresh} nms={nms_thresh} "
           f"n_tiles={n_tiles}")
     model = StarDist2D.from_pretrained(model_name)
-    x = normalize(dapi2d, 1, 99.8, axis=(0, 1))       # StarDist 官方推荐归一化
+    x = normalize(dapi2d, 1, 99.8, axis=(0, 1))       # StarDist-recommended normalization
     if n_tiles is None:
         try:
             n_tiles = model._guess_n_tiles(x)
@@ -133,7 +144,7 @@ def run_stardist(dapi2d, model_name="2D_versatile_fluo",
 
 
 def nuclei_to_cells(nuclei_labels, expand_px):
-    """核 → 近似整细胞：expand_labels 各向外膨胀 expand_px，遇到相邻 label 即停。"""
+    """Nuclei -> approximate whole cells: expand_labels dilates each outward by expand_px, stopping at neighboring labels."""
     if not expand_px or expand_px <= 0:
         return nuclei_labels
     from skimage.segmentation import expand_labels
@@ -141,7 +152,7 @@ def nuclei_to_cells(nuclei_labels, expand_px):
 
 
 # --------------------------------------------------------------------------- #
-# GT 构造：整细胞 或 核
+# GT construction: whole-cell or nuclei
 # --------------------------------------------------------------------------- #
 def load_gt_cell(bench, labels_path):
     return bench.read_tif_mask(labels_path)
@@ -154,7 +165,7 @@ def resolve_compartment(data_root, fov, comp_dir=None):
 
 
 def load_gt_nuclei(bench, cell_labels_path, comp_labels_path, nuclear_code):
-    """核 GT = CellLabels 在“核区室”内的部分（继承细胞 ID）。"""
+    """Nucleus GT = the part of CellLabels within the nuclear compartment (inherits cell ID)."""
     cl = bench.read_tif_mask(cell_labels_path)
     cp = bench.read_tif_mask(comp_labels_path)
     if cl.shape != cp.shape:
@@ -162,14 +173,14 @@ def load_gt_nuclei(bench, cell_labels_path, comp_labels_path, nuclear_code):
         cp = resize(cp, cl.shape, order=0, preserve_range=True,
                     anti_aliasing=False).astype(cl.dtype)
     uniq = np.unique(cp)
-    print(f"  [compartment] 出现的区室编码 = {uniq.tolist()}  "
-          f"(当前 --nuclear-code={nuclear_code}；请核对哪个是‘核’)")
+    print(f"  [compartment] compartment codes present = {uniq.tolist()}  "
+          f"(current --nuclear-code={nuclear_code}; verify which one is 'nucleus')")
     nuc_gt = np.where(cp == nuclear_code, cl, 0).astype(cl.dtype)
     return nuc_gt
 
 
 # --------------------------------------------------------------------------- #
-# 单 FOV
+# single FOV
 # --------------------------------------------------------------------------- #
 def process_one_fov(bench, args, fov):
     comp_path, lab_path = single.resolve_paths(
@@ -181,12 +192,12 @@ def process_one_fov(bench, args, fov):
         cpath = resolve_compartment(args.data_root, fov, args.compartment_dir)
         if cpath is None:
             raise FileNotFoundError(
-                f"target=nuclei 需要 CompartmentLabels，但 FOV {fov} 未找到。")
+                f"target=nuclei needs CompartmentLabels, but FOV {fov} not found.")
         gt = load_gt_nuclei(bench, lab_path, cpath, args.nuclear_code)
     else:  # cell
         gt = load_gt_cell(bench, lab_path)
 
-    # ---- 预测 ----
+    # ---- prediction ----
     pred = None
     if args.reuse_pred:
         pat = os.path.join(args.pred_dir or args.out_dir, f"*stardist*F{fov:03d}*.tif")
@@ -209,16 +220,16 @@ def process_one_fov(bench, args, fov):
             outp = os.path.join(args.out_dir, f"stardist_{tag}_F{fov:03d}_masks.tif")
             tifffile.imwrite(outp, pred.astype(np.int32))
         except Exception as e:
-            print(f"  [warn] 保存预测tif失败: {e}")
+            print(f"  [warn] failed to save prediction tif: {e}")
 
-    # ---- 对齐 ----
+    # ---- alignment ----
     if gt.shape != pred.shape:
         from skimage.transform import resize
-        print(f"  [warn] shape 不一致 gt={gt.shape} pred={pred.shape}，最近邻缩放 pred")
+        print(f"  [warn] shape mismatch gt={gt.shape} pred={pred.shape}, nearest-neighbor rescale pred")
         pred = resize(pred, gt.shape, order=0, preserve_range=True,
                       anti_aliasing=False).astype(pred.dtype)
 
-    # ---- 一次 overlaps，派生所有可累加量（复用已验证的组件函数）----
+    # ---- one overlaps pass, derive all accumulable quantities (reuse validated component functions) ----
     overlaps = bench.compute_sparse_overlaps(gt, pred)
     comp = agg.pixel_components(bench, gt, pred, boundary_mode=args.boundary_mode)
     inst = agg.instance_components(bench, overlaps, iou_threshold=args.iou_threshold)
@@ -237,11 +248,11 @@ def process_one_fov(bench, args, fov):
 # main
 # --------------------------------------------------------------------------- #
 def main():
-    ap = argparse.ArgumentParser(description="多FOV StarDist vs CellLabels benchmark 汇总")
+    ap = argparse.ArgumentParser(description="Multi-FOV StarDist vs CellLabels benchmark summary")
     ap.add_argument("--data-root", required=True)
     ap.add_argument("--dep-dir", default=None,
-                    help="cellpose_benchmark_cosmx[_multi].py 所在目录（若与本脚本不同目录）。"
-                         "等价于设 env COSMX_BENCH_DIR。")
+                    help="Directory of cellpose_benchmark_cosmx[_multi].py (if different "
+                         "from this script's). Equivalent to setting env COSMX_BENCH_DIR.")
     ap.add_argument("--fov-start", type=int, default=51)
     ap.add_argument("--fov-end", type=int, default=68)
     ap.add_argument("--fovs", type=int, nargs="*", default=None)
@@ -249,23 +260,24 @@ def main():
     ap.add_argument("--labels-dir", default=None)
     ap.add_argument("--compartment-dir", default=None)
     ap.add_argument("--test-py", default=None,
-                    help="test.py 路径；默认在 --dep-dir / 本脚本目录 里找")
+                    help="path to test.py; searched in --dep-dir / this script's dir by default")
     # StarDist
     ap.add_argument("--model", default="2D_versatile_fluo",
-                    help="2D_versatile_fluo(荧光核,默认) / 2D_paper_dsb2018 / 2D_versatile_he")
-    ap.add_argument("--prob-thresh", type=float, default=None, help="None=用模型默认(~0.479)")
+                    help="2D_versatile_fluo(fluorescence nucleus, default) / 2D_paper_dsb2018 / 2D_versatile_he")
+    ap.add_argument("--prob-thresh", type=float, default=None, help="None=use model default (~0.479)")
     ap.add_argument("--nms-thresh", type=float, default=None)
     ap.add_argument("--n-tiles", type=int, nargs=2, default=None,
-                    help="大图分块，如 --n-tiles 8 8；不给则自动猜")
-    # 评估口径
+                    help="tiling for large images, e.g. --n-tiles 8 8; auto-guessed if omitted")
+    # evaluation target
     ap.add_argument("--target", choices=["cell", "nuclei"], default="cell",
-                    help="cell=膨胀成整细胞对CellLabels比(默认,可与Cellpose横向比); "
-                         "nuclei=对核GT比(对StarDist最公平)")
+                    help="cell=expand to whole cells and compare to CellLabels (default, "
+                         "cross-comparable with Cellpose); nuclei=compare to nucleus GT (fairest to StarDist)")
     ap.add_argument("--expand-px", type=int, default=15,
-                    help="target=cell 时核→细胞的膨胀像素(≈1.8µm@0.12028)。是人为超参，请报告")
+                    help="nucleus->cell expansion pixels for target=cell (~1.8um@0.12028). "
+                         "A manual hyperparameter; report it")
     ap.add_argument("--nuclear-code", type=int, default=1,
-                    help="target=nuclei 时 CompartmentLabels 中‘核’的整数编码(请务必核对)")
-    # 通用
+                    help="integer code for 'nucleus' in CompartmentLabels for target=nuclei (verify it)")
+    # common
     ap.add_argument("--iou-threshold", type=float, default=0.5)
     ap.add_argument("--boundary-mode", default="thick")
     ap.add_argument("--out-dir", default="./stardist_bench_multi")
@@ -275,7 +287,7 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    # 解析 test.py：显式给的优先，否则在 dep-dir / 本脚本目录 里找
+    # resolve test.py: explicit wins, else search in dep-dir / this script's dir
     test_py = args.test_py
     if not test_py:
         for _d in (args.dep_dir, _dep_dir, HERE, os.getcwd()):
@@ -289,7 +301,7 @@ def main():
     print(f"[plan] StarDist({args.model}) | target={args.target}"
           + (f" expand={args.expand_px}px" if args.target == "cell" else
              f" nuclear_code={args.nuclear_code}")
-          + f" | 共 {len(fov_list)} 个 FOV: {fov_list}")
+          + f" | {len(fov_list)} FOVs total: {fov_list}")
 
     per_fov, raws, failed = [], [], []
     for fov in fov_list:
@@ -297,7 +309,7 @@ def main():
         try:
             final, raw = process_one_fov(bench, args, fov)
         except Exception as e:
-            print(f"  [skip] FOV {fov} 失败: {e}")
+            print(f"  [skip] FOV {fov} failed: {e}")
             failed.append((fov, str(e)))
             continue
         per_fov.append(final)
@@ -306,7 +318,7 @@ def main():
               f"F1={final['instance_f1']:.3f} AJI={final['AJI']:.3f} PQ={final['PQ']:.3f}")
 
     if not per_fov:
-        raise SystemExit("没有任何 FOV 成功。请检查路径/文件命名/依赖安装。")
+        raise SystemExit("No FOV succeeded. Check paths/file naming/dependency installation.")
 
     import pandas as pd
     df = pd.DataFrame(per_fov)
@@ -319,12 +331,12 @@ def main():
     per_fov_csv = os.path.join(args.out_dir, f"per_fov_metrics_stardist_{tag}.csv")
     df.to_csv(per_fov_csv, index=False)
 
-    # micro（池化，主口径）
+    # micro (pooled, primary metric)
     micro = agg.aggregate_micro(raws)
     total_gt = int(sum(f["gt_cell_count"] for f in per_fov))
     total_pred = int(sum(f["pred_cell_count"] for f in per_fov))
 
-    # macro（逐 FOV mean±std）
+    # macro (per-FOV mean+/-std)
     macro_mean = {c: float(df[c].mean()) for c in metric_cols if c in df}
     macro_std = {c: float(df[c].std(ddof=1)) if len(df) > 1 else 0.0
                  for c in metric_cols if c in df}
@@ -345,8 +357,9 @@ def main():
                 fov_list=fov_list, iou_threshold=args.iou_threshold,
                 total_gt_cells=total_gt, total_pred_cells=total_pred,
                 micro_TP=micro["TP"], micro_FP=micro["FP"], micro_FN=micro["FN"],
-                note="micro=池化(主口径,AJI/PQ必须用它); macro=逐FOV mean±std; "
-                     "StarDist预训练是核模型,cell口径含膨胀超参; pixel_accuracy为弱指标。")
+                note="micro=pooled (primary metric; AJI/PQ must use it); macro=per-FOV mean+/-std; "
+                     "StarDist pretrained is a nucleus model, cell target includes the expansion "
+                     "hyperparameter; pixel_accuracy is a weak metric.")
     with open(os.path.join(args.out_dir, f"run_meta_stardist_{tag}.json"),
               "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
@@ -355,18 +368,19 @@ def main():
     print(f"StarDist | target={args.target}"
           + (f" expand={args.expand_px}px" if args.target == "cell" else
              f" nuclear_code={args.nuclear_code}"))
-    print(f"成功 {len(per_fov)}/{len(fov_list)} 个 FOV | GT={total_gt} 预测={total_pred}")
+    print(f"Success {len(per_fov)}/{len(fov_list)} FOVs | GT={total_gt} predicted={total_pred}")
     if failed:
-        print(f"失败 FOV: {[f for f, _ in failed]}")
-    print(f"micro 计数: TP={micro['TP']} FP={micro['FP']} FN={micro['FN']}")
+        print(f"Failed FOVs: {[f for f, _ in failed]}")
+    print(f"micro counts: TP={micro['TP']} FP={micro['FP']} FN={micro['FN']}")
     print("-" * 78)
     show = sdf.copy()
-    show["macro(mean±std)"] = [f"{m:.4f}±{s:.4f}"
-                               for m, s in zip(show["macro_mean"], show["macro_std"])]
-    print(show[["metric", "micro", "macro(mean±std)"]].to_string(index=False))
+    show["macro(mean+/-std)"] = [f"{m:.4f}+/-{s:.4f}"
+                                 for m, s in zip(show["macro_mean"], show["macro_std"])]
+    print(show[["metric", "micro", "macro(mean+/-std)"]].to_string(index=False))
     print("-" * 78)
-    print("主体报 micro; 稳健性附 macro(mean±std)。AJI/PQ 只看 micro。")
-    print("StarDist 是核模型：cell 口径含 --expand-px 超参(需报告)；建议同时报 nuclei 口径。")
+    print("Report micro as primary; macro(mean+/-std) for robustness. AJI/PQ use micro only.")
+    print("StarDist is a nucleus model: the cell target includes the --expand-px hyperparameter "
+          "(report it); also report the nuclei target.")
     print(f"\n[saved]\n  {per_fov_csv}\n  {summary_csv}\n  "
           f"{os.path.join(args.out_dir, f'run_meta_stardist_{tag}.json')}")
 
@@ -378,10 +392,10 @@ if __name__ == "__main__":
 '''
 nohup bash -c '
     python CosMx_stardist.py \
-    --dep-dir /data/qiuyijia/cellpose \
-    --data-root /data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles --fov-start 51 --fov-end 68 \
+    --dep-dir yourpath/cellpose \
+    --data-root yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles --fov-start 51 --fov-end 68 \
     --target cell --expand-px 15 \
-    --test-py /data/qiuyijia/eval/test.py \
-    --out-dir /data/qiuyijia/stardist/CosMx_output
+    --test-py yourpath/eval/test.py \
+    --out-dir yourpath/stardist/CosMx_output
 ' > output.log 2>&1 &
 '''

@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-comseg_value_xenium_3.py —— 重跑 ComSeg @ xenium_3 (lymph) 评估
+comseg_value_xenium_3.py - rerun the ComSeg @ xenium_3 (lymph) evaluation
 
-与 xenium_2 同一批异常: loc_* 全为 0、precision 恰好 1.0、roi_um 字符串
-与 breast 那行完全相同。lymph 的 GT 是 xenium_roi_crop/cells.parquet
-(2442 行，人工标注全细胞 GT) —— breast 那行的 2442 很可能就是误用了它。
+Same batch of anomalies as xenium_2: loc_* all zero, precision exactly 1.0, roi_um string
+identical to the breast row. Lymph GT is xenium_roi_crop/cells.parquet
+(2,442 rows, manually annotated whole-cell GT) - the 2,442 in the breast row was
+very likely taken from it by mistake.
 
-强制 KD-tree 空间匹配 + 一对一去重，无 ID 直连。
+Force KD-tree spatial matching + one-to-one dedup; no direct ID connection.
 """
 import argparse, hashlib, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
-PRED = ("/data/qiuyijia/comseg_xenium/xenium_lymph/output_noprior/"
+PRED = ("yourpath/comseg_xenium/xenium_lymph/output_noprior/"
         "xenium_lymph_top300_noprior_mmc0p99.h5ad")
-GT_CELLS = "/data/qiuyijia/dataset/xenium_roi_crop/cells.parquet"
-OUT = "/data/qiuyijia/eval_results_qv20/lymph"
+GT_CELLS = "yourpath/dataset/xenium_roi_crop/cells.parquet"
+OUT = "yourpath/eval_results_qv20/lymph"
 DATASET = "xenium_3"
 TAG = "lymph"
 
@@ -45,28 +46,28 @@ def main():
     from scipy.spatial import cKDTree
 
     log("=" * 74)
-    log(f"ComSeg @ {DATASET} ({TAG}) 评估重跑")
+    log(f"ComSeg @ {DATASET} ({TAG}) evaluation rerun")
     log("=" * 74)
 
     for name, p in (("pred", a.pred), ("gt_cells", a.gt_cells)):
         if not Path(p).exists():
-            sys.exit(f"✗ {name} 不存在: {p}")
+            sys.exit(f"missing {name}: {p}")
         log(f"  {name:9s} {p}")
         log(f"            md5(head1M) = {md5head(p)}")
 
     A = ad.read_h5ad(a.pred)
-    log(f"\n预测: {A.n_obs:,} cells x {A.n_vars:,} genes")
-    log(f"      obs 列: {list(A.obs.columns)}")
+    log(f"\nprediction: {A.n_obs:,} cells x {A.n_vars:,} genes")
+    log(f"      obs columns: {list(A.obs.columns)}")
     cx = next((c for c in ("centroid_x", "x", "x_um") if c in A.obs), None)
     cy = next((c for c in ("centroid_y", "y", "y_um") if c in A.obs), None)
     if cx is None or cy is None:
-        sys.exit(f"✗ obs 里找不到质心列，实际列: {list(A.obs.columns)}")
+        sys.exit(f"no centroid column in obs; actual columns: {list(A.obs.columns)}")
     px = A.obs[cx].to_numpy(float)
     py = A.obs[cy].to_numpy(float)
     log(f"      x[{px.min():.1f},{px.max():.1f}] y[{py.min():.1f},{py.max():.1f}]")
 
     gt = pd.read_parquet(a.gt_cells)
-    log(f"\nGT 全量: {len(gt):,} cells  "
+    log(f"\nGT full: {len(gt):,} cells  "
         f"x[{gt.x_centroid.min():.1f},{gt.x_centroid.max():.1f}] "
         f"y[{gt.y_centroid.min():.1f},{gt.y_centroid.max():.1f}]")
 
@@ -79,7 +80,7 @@ def main():
     log(f"ROI x[{x0:.1f},{x1:.1f}] y[{y0:.1f},{y1:.1f}]  ->  GT {len(g):,} cells")
 
     r = a.match_radius or float(np.sqrt((x1 - x0) * (y1 - y0) / max(len(g), 1)))
-    log(f"\n匹配半径 {r:.2f} um")
+    log(f"\nmatch radius {r:.2f} um")
 
     gxy = g[["x_centroid", "y_centroid"]].to_numpy(float)
     pxy = np.c_[px, py]
@@ -110,11 +111,11 @@ def main():
     log("=" * 74)
 
     if np.median(dd) < 1e-6:
-        log("★ 质心距离仍全为 0 -> 预测质心继承自平台分割，非独立分割结果。")
+        log("centroid distances are still all 0 -> predicted centroids inherit the platform segmentation, not an independent result.")
     elif abs(prec - 1.0) < 1e-9:
-        log("★ precision 仍恰好 1.000000，可疑。")
+        log("precision is still exactly 1.000000, suspicious.")
     else:
-        log("✓ 指标形态正常，可用此结果替换汇总表中该行。")
+        log("metrics look normal; this result can replace that row in the summary table.")
 
     Path(a.out).mkdir(parents=True, exist_ok=True)
     pd.DataFrame([dict(
@@ -127,7 +128,7 @@ def main():
         loc_p95_um=float(np.percentile(dd, 95)),
         match_radius_um=r,
         roi_um=f"x[{x0:.1f},{x1:.1f}] y[{y0:.1f},{y1:.1f}]",
-        note="强制 KD-tree 空间匹配+一对一去重，无 ID 直连；ROI 由预测坐标反推"
+        note="forced KD-tree spatial matching + one-to-one dedup, no direct ID link; ROI inferred from predicted coordinates"
     )]).to_csv(f"{a.out}/comseg_{DATASET}_rematch.csv", index=False)
     pd.DataFrame(pairs, columns=["pred_idx", "gt_idx", "dist_um"]).to_csv(
         f"{a.out}/comseg_{DATASET}_rematch_pairs.csv", index=False)

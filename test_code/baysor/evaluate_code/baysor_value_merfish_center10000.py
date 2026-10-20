@@ -44,9 +44,9 @@ from scipy.spatial.distance import jensenshannon
 from scipy.stats import pearsonr, spearmanr
 
 
-DATA_ROOT = Path("/data/qiuyijia/dataset")
-BAYSOR_ROOT = Path("/data/qiuyijia/baysor")
-DEFAULT_OUT = Path("/data/qiuyijia/eval/baysor/baysor_merfish_evaluation.csv")
+DATA_ROOT = Path("yourpath/dataset")
+BAYSOR_ROOT = Path("yourpath/baysor")
+DEFAULT_OUT = Path("yourpath/eval/baysor/baysor_merfish_evaluation.csv")
 MATCH_RADIUS_UM = 10.0
 GT_ASSIGN_RADIUS_UM = 15.0
 SEP = "=" * 78
@@ -133,7 +133,7 @@ DATASETS: Mapping[str, Mapping[str, object]] = {
         "pred": BAYSOR_ROOT / "merfish_1_output",
         # This is the cleaned raw transcript table for the same 20000-px ROI;
         # no Bering cell assignment or prediction is read from it.
-        "cache": Path("/data/qiuyijia/bering/merfish_new_output/merfish_mouse_brain_center20000_output/bering_input_transcripts_roi20000px_cellpose.parquet"),
+        "cache": Path("yourpath/bering/merfish_new_output/merfish_mouse_brain_center20000_output/bering_input_transcripts_roi20000px_cellpose.parquet"),
         "roi_y0": 20655, "roi_x0": 34542, "roi_size": 20000, "label": "mouse_brain",
     },
     "prostate1": {

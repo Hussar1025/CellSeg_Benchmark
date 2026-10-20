@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-eval_boms_xenium_breast.py  —— BOMS × Xenium 乳腺评估（19 指标）
+eval_boms_xenium_breast.py -- BOMS × Xenium breast evaluation (19 metrics)
 =========================================================================
-GT：cells.parquet，ROI 过滤后实际 8,809 细胞
-ROI 与 ucs_xenium_breast.py 完全一致（从图像中心计算，非硬编码）
-pred：boms_xenium_breast.npz，280 基因，全量（无 HVG 截断）
-坐标：pred(µm) 和 GT(µm) 直接对齐，无需转换
+GT: cells.parquet; 8,809 cells after ROI filtering
+ROI identical to ucs_xenium_breast.py (computed from image center, not hard-coded)
+pred: boms_xenium_breast.npz, 280 genes, full set (no HVG truncation)
+coordinates: pred(µm) and GT(µm) align directly, no conversion needed
 
 conda activate ucs
 python eval_boms_xenium_breast.py
@@ -22,12 +22,12 @@ from scipy.spatial.distance import jensenshannon
 warnings.filterwarnings("ignore")
 SEP = "=" * 68
 
-# ── 路径 ─────────────────────────────────────────────────────────────────────
-NPZ_PATH  = "/data/qiuyijia/boms_xenium_breast/boms_xenium_breast.npz"
-DATA_DIR  = "/data/qiuyijia/dataset/xenium_breast"
-OUT_PATH  = "/data/qiuyijia/eval_results/boms/xenium_breast.csv"
+# ── paths ────────────────────────────────────────────────────────────────────
+NPZ_PATH  = "yourpath/boms_xenium_breast/boms_xenium_breast.npz"
+DATA_DIR  = "yourpath/dataset/xenium_breast"
+OUT_PATH  = "yourpath/eval_results/boms/xenium_breast.csv"
 
-# ── ROI（与 ucs_xenium_breast.py 完全一致，从图像尺寸计算）──────────────────
+# ── ROI (identical to ucs_xenium_breast.py, computed from image size) ────────
 PIXEL_SIZE = 0.2125
 CX_UM = 53994 / 2 * PIXEL_SIZE   # 5736.86 µm
 CY_UM = 27420 / 2 * PIXEL_SIZE   # 2913.38 µm
@@ -35,51 +35,51 @@ HALF  = 5000  * PIXEL_SIZE / 2   # 531.25 µm
 ROI_X0, ROI_X1 = CX_UM - HALF, CX_UM + HALF
 ROI_Y0, ROI_Y1 = CY_UM - HALF, CY_UM + HALF
 
-MATCH_RADIUS = 20.0  # µm；乳腺细胞直径约 10-30µm
+MATCH_RADIUS = 20.0  # µm; breast cell diameter ~10-30 µm
 QV_MIN = 20.0
 
 os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
 
-print(SEP); print("BOMS × Xenium 乳腺 评估"); print(SEP)
+print(SEP); print("BOMS × Xenium breast evaluation"); print(SEP)
 print(f"ROI: x[{ROI_X0:.1f},{ROI_X1:.1f}]  y[{ROI_Y0:.1f},{ROI_Y1:.1f}] µm")
 
 # ════════════════════════════════════════════════════════════════════════
-# 1. 读 BOMS npz
+# 1. read BOMS npz
 # ════════════════════════════════════════════════════════════════════════
-print("\n[1] 读 BOMS npz ...")
+print("\n[1] read BOMS npz ...")
 d          = np.load(NPZ_PATH, allow_pickle=True)
-seg        = d["seg"].astype(np.int64)      # per-tx cell 分配（1-based，0=背景）
-tx_x       = d["x"].astype(np.float64)     # 转录本 x µm
-tx_y       = d["y"].astype(np.float64)     # 转录本 y µm
+seg        = d["seg"].astype(np.int64)      # per-tx cell assignment (1-based, 0=background)
+tx_x       = d["x"].astype(np.float64)     # transcript x µm
+tx_y       = d["y"].astype(np.float64)     # transcript y µm
 gene_idx   = d["gene_idx"].astype(np.int64)
 gene_names = d["gene_names"]               # shape=(n_gene,)
-cell_loc   = d["cell_loc"]                 # shape=(n_pred,2)，µm，[x,y]
+cell_loc   = d["cell_loc"]                 # shape=(n_pred,2), µm, [x,y]
 n_pred = cell_loc.shape[0]
 n_gene = len(gene_names)
-print(f"  pred 细胞: {n_pred:,}  转录本: {len(seg):,}  基因: {n_gene}")
+print(f"  pred cells: {n_pred:,}  transcripts: {len(seg):,}  genes: {n_gene}")
 print(f"  cell_loc x: [{cell_loc[:,0].min():.1f},{cell_loc[:,0].max():.1f}]  "
       f"y: [{cell_loc[:,1].min():.1f},{cell_loc[:,1].max():.1f}] µm")
-pred_xy = cell_loc  # (n_pred,2)，第 0 列=x，第 1 列=y
+pred_xy = cell_loc  # (n_pred,2), col 0 = x, col 1 = y
 
-# pred 每细胞转录本计数（1-based cell_id）
-pred_counts = np.bincount(seg[seg > 0])  # pred_counts[i] = cell_id=i 的计数
+# per-cell transcript count (1-based cell_id)
+pred_counts = np.bincount(seg[seg > 0])  # pred_counts[i] = count of cell_id=i
 
 # ════════════════════════════════════════════════════════════════════════
-# 2. 读 GT（cells.parquet + ROI 过滤）
+# 2. read GT (cells.parquet + ROI filter)
 # ════════════════════════════════════════════════════════════════════════
-print("\n[2] 读 GT ...")
+print("\n[2] read GT ...")
 gt = pd.read_parquet(os.path.join(DATA_DIR, "cells.parquet"),
                      columns=["cell_id","x_centroid","y_centroid"])
 gt_all = len(gt)
 gt = gt[(gt.x_centroid >= ROI_X0) & (gt.x_centroid < ROI_X1) &
         (gt.y_centroid >= ROI_Y0) & (gt.y_centroid < ROI_Y1)].reset_index(drop=True)
-print(f"  全图 {gt_all:,}  ROI 内 {len(gt):,} 细胞")
+print(f"  full image {gt_all:,}  in ROI {len(gt):,} cells")
 gt_xy = gt[["x_centroid","y_centroid"]].values.astype(float)
 
 # ════════════════════════════════════════════════════════════════════════
-# 3. 读 GT 转录本（计数 + 基因向量）
+# 3. read GT transcripts (counts + gene vectors)
 # ════════════════════════════════════════════════════════════════════════
-print("\n[3] 读 GT 转录本 ...")
+print("\n[3] read GT transcripts ...")
 tx_gt = pd.read_parquet(
     os.path.join(DATA_DIR, "transcripts.parquet"),
     columns=["cell_id","feature_name","qv","is_gene","x_location","y_location"])
@@ -87,7 +87,7 @@ tx_gt = tx_gt[
     (tx_gt.is_gene == True) & (tx_gt.qv >= QV_MIN) &
     (tx_gt.x_location >= ROI_X0) & (tx_gt.x_location < ROI_X1) &
     (tx_gt.y_location >= ROI_Y0) & (tx_gt.y_location < ROI_Y1)]
-print(f"  ROI 内 GT 转录本: {len(tx_gt):,}")
+print(f"  GT transcripts in ROI: {len(tx_gt):,}")
 gt_cnt_ser = tx_gt.groupby("cell_id").size()
 gt = gt.copy()
 gt["gt_count"] = gt["cell_id"].map(gt_cnt_ser).fillna(0).astype(int)
@@ -95,9 +95,9 @@ gt_gene_grp = (tx_gt[tx_gt.cell_id.isin(gt.cell_id)]
                .groupby(["cell_id","feature_name"]).size().unstack(fill_value=0))
 
 # ════════════════════════════════════════════════════════════════════════
-# 4. 匹配
+# 4. matching
 # ════════════════════════════════════════════════════════════════════════
-print(f"\n[4] 匹配（radius={MATCH_RADIUS}µm）...")
+print(f"\n[4] matching (radius={MATCH_RADIUS} µm) ...")
 tree = cKDTree(gt_xy)
 dists, gi = tree.query(pred_xy, k=1, distance_upper_bound=MATCH_RADIUS)
 best = {}
@@ -120,7 +120,7 @@ pi_arr = [p[0] for p in pairs]
 gi_arr = [p[1] for p in pairs]
 
 # ════════════════════════════════════════════════════════════════════════
-# 5. 计数指标
+# 5. count metrics
 # ════════════════════════════════════════════════════════════════════════
 # pred cell_id = pi+1 (1-based)
 p_cnt = np.array([pred_counts[pi+1] if pi+1 < len(pred_counts) else 0
@@ -134,23 +134,23 @@ if len(p_cnt) >= 3 and p_cnt.std() > 0 and g_cnt.std() > 0:
     count_rmse  = float(np.sqrt(np.mean((p_cnt - g_cnt)**2)))
 else:
     count_pearson = count_spearman = count_mae = count_rmse = np.nan
-print(f"\n[5] 计数: pearson={count_pearson:.4f}  spearman={count_spearman:.4f}")
+print(f"\n[5] counts: pearson={count_pearson:.4f}  spearman={count_spearman:.4f}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 6. 基因向量（pred vs GT，280 基因全集）
+# 6. gene vectors (pred vs GT, full 280-gene set)
 # ════════════════════════════════════════════════════════════════════════
-print("\n[6] 基因向量（抽样 800 对）...")
+print("\n[6] gene vectors (sample 800 pairs) ...")
 gene2i = {g: i for i, g in enumerate(gene_names)}
 np.random.seed(42)
 samp = np.random.choice(len(pairs), min(800, len(pairs)), replace=False)
 cosines, jsd, prs = [], [], []
 for idx in samp:
     pi, gi_val, _ = pairs[idx]
-    # pred 向量
+    # pred vector
     mask = (seg == pi + 1)
     pv = np.zeros(n_gene)
     np.add.at(pv, gene_idx[mask], 1)
-    # GT 向量
+    # GT vector
     gc = gt.iloc[gi_val]["cell_id"]
     gv = np.zeros(n_gene)
     if gc in gt_gene_grp.index:
@@ -173,9 +173,9 @@ vec_pearson = float(np.mean(prs))     if prs     else np.nan
 print(f"  cosine={vec_cosine:.4f}  JS={vec_js:.4f}  pearson={vec_pearson:.4f}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 7. 分配指标
+# 7. assignment metrics
 # ════════════════════════════════════════════════════════════════════════
-print("\n[7] 分配指标 ...")
+print("\n[7] assignment metrics ...")
 tree_gt = cKDTree(gt_xy)
 d_tx, gi_tx = tree_gt.query(
     np.stack([tx_x, tx_y], 1), k=1, distance_upper_bound=MATCH_RADIUS)
@@ -199,7 +199,7 @@ assign_accuracy = float(np.mean(ac_list))  if ac_list  else np.nan
 print(f"  overlap={assign_overlap:.4f}  accuracy={assign_accuracy:.4f}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 汇总
+# summary
 # ════════════════════════════════════════════════════════════════════════
 metrics = dict(
     gt_cells        = n_gt,
@@ -222,8 +222,8 @@ metrics = dict(
     assign_overlap  = round(assign_overlap,  4),
     assign_accuracy = round(assign_accuracy, 4),
 )
-print(f"\n{SEP}\n结果 (BOMS × Xenium 乳腺)\n{SEP}")
+print(f"\n{SEP}\nResults (BOMS × Xenium breast)\n{SEP}")
 for k, v in metrics.items():
     print(f"  {k:22} {v}")
 pd.DataFrame([metrics]).to_csv(OUT_PATH, index=False)
-print(f"\n  已写 → {OUT_PATH}")
+print(f"\n  Saved → {OUT_PATH}")

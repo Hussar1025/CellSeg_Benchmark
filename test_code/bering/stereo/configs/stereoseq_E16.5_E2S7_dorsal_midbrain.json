@@ -1,6 +1,6 @@
 {
   "dataset": "stereoseq_E16.5_E2S7_dorsal_midbrain",
-  "transcripts": "/data/qiuyijia/bering/prepared_stereoseq/E16.5_E2S7_Dorsal_Midbrain_GEM_CellBin.bering.parquet",
+  "transcripts": "yourpath/bering/prepared_stereoseq/E16.5_E2S7_Dorsal_Midbrain_GEM_CellBin.bering.parquet",
   "seed_source": "cellbin_transcript_cell_id",
   "seed_description": "CellBin GEM/TSV cell column; foreground-only because the supplied CellBin table contains no unassigned molecules",
   "coarse_cell_boundaries_used": true,
@@ -39,5 +39,5 @@
   },
   "unassigned_values": ["UNASSIGNED", "0", "-1", "nan", "None", ""],
   "seed": 0,
-  "output_dir": "/data/qiuyijia/bering/stereo_outputs/E16.5_E2S7_Dorsal_Midbrain"
+  "output_dir": "yourpath/bering/stereo_outputs/E16.5_E2S7_Dorsal_Midbrain"
 }

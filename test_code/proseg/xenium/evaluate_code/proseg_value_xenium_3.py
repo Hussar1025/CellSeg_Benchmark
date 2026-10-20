@@ -1,16 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-eval_proseg_xenium3.py  —— ProSeg × Xenium 淋巴结 ROI 评估（19 指标）
+eval_proseg_xenium3.py  --  ProSeg × Xenium lymph-node ROI evaluation (19 metrics)
 =========================================================================
-ProSeg v3 输出列名（已确认）：
-  cell-metadata:       cell(ID), centroid_x, centroid_y (µm)
-  transcript-metadata: gene, assignment(float→int=cell_id), background(bool)
+ProSeg v3 output columns (confirmed):
+  cell-metadata:       cell(ID), centroid_x, centroid_y (um)
+  transcript-metadata: gene, assignment(float->int=cell_id), background(bool)
 
-坐标：pred centroid µm = GT x_centroid/y_centroid µm，范围完全一致，无需转换
-      已验证：ProSeg x[3983.4,4319.0] vs GT x[3982.7,4317.5] ✓
+Coordinates: pred centroid um = GT x_centroid/y_centroid um, ranges identical, no conversion needed
+      verified: ProSeg x[3983.4,4319.0] vs GT x[3982.7,4317.5] ok
 
-match_radius = 6.9 µm（= 细胞直径，与 UCS/BOMS 淋巴结评估一致）
+match_radius = 6.9 um (= cell diameter, consistent with UCS/BOMS lymph-node evaluation)
 
 conda activate proseg_eval
 python eval_proseg_xenium3.py
@@ -26,41 +26,41 @@ from scipy.spatial.distance import jensenshannon
 warnings.filterwarnings("ignore")
 SEP = "=" * 68
 
-PROSEG_DIR   = "/data/qiuyijia/proseg/output/xenium_3"
-DATA_DIR     = "/data/qiuyijia/dataset/xenium_roi_crop"
-OUT_PATH     = "/data/qiuyijia/proseg/value/xenium_3.csv"
+PROSEG_DIR   = "yourpath/proseg/output/xenium_3"
+DATA_DIR     = "yourpath/dataset/xenium_roi_crop"
+OUT_PATH     = "yourpath/proseg/value/xenium_3.csv"
 MATCH_RADIUS = 6.9   # µm
 QV_MIN       = 20.0
 
 os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
 
-print(SEP); print("ProSeg × Xenium 淋巴结 ROI 评估"); print(SEP)
+print(SEP); print("ProSeg × Xenium lymph-node ROI evaluation"); print(SEP)
 
 # ════════════════════════════════════════════════════════════════════════
-# 1. 读 ProSeg cell-metadata
+# 1. read ProSeg cell-metadata
 # ════════════════════════════════════════════════════════════════════════
-print("\n[1] 读 ProSeg cell-metadata ...")
+print("\n[1] read ProSeg cell-metadata ...")
 pred = pd.read_csv(os.path.join(PROSEG_DIR, "cell-metadata.csv.gz"))
-print(f"  细胞数: {len(pred):,}")
+print(f"  cell count: {len(pred):,}")
 print(f"  centroid_x: [{pred.centroid_x.min():.1f},{pred.centroid_x.max():.1f}] µm")
 print(f"  centroid_y: [{pred.centroid_y.min():.1f},{pred.centroid_y.max():.1f}] µm")
 pred_xy = pred[["centroid_x","centroid_y"]].values.astype(float)
 n_pred  = len(pred)
 
 # ════════════════════════════════════════════════════════════════════════
-# 2. 读 GT
+# 2. read GT
 # ════════════════════════════════════════════════════════════════════════
-print("\n[2] 读 GT (cells.parquet) ...")
+print("\n[2] read GT (cells.parquet) ...")
 gt = pd.read_parquet(os.path.join(DATA_DIR, "cells.parquet"),
                      columns=["cell_id","x_centroid","y_centroid"])
-print(f"  GT 细胞: {len(gt):,}")
+print(f"  GT cells: {len(gt):,}")
 print(f"  GT x: [{gt.x_centroid.min():.1f},{gt.x_centroid.max():.1f}] µm")
 gt_xy = gt[["x_centroid","y_centroid"]].values.astype(float)
 
 # ════════════════════════════════════════════════════════════════════════
-# 3. 读 GT 转录本（计数 + 基因向量）
+# 3. read GT transcripts (counts + gene vector)
 # ════════════════════════════════════════════════════════════════════════
-print("\n[3] 读 GT 转录本 ...")
+print("\n[3] read GT transcripts ...")
 tx_gt = pd.read_parquet(os.path.join(DATA_DIR, "transcripts.parquet"),
                         columns=["cell_id","feature_name","qv","is_gene"])
 tx_gt = tx_gt[(tx_gt.is_gene == True) & (tx_gt.qv >= QV_MIN)]
@@ -69,25 +69,25 @@ gt = gt.copy()
 gt["gt_count"] = gt["cell_id"].map(gt_cnt_ser).fillna(0).astype(int)
 gt_gene_grp = tx_gt[tx_gt.cell_id.isin(gt.cell_id)].groupby(
     ["cell_id","feature_name"]).size().unstack(fill_value=0)
-print(f"  GT 转录本: {len(tx_gt):,}  有计数 GT 细胞: {(gt.gt_count>0).sum():,}")
+print(f"  GT transcripts: {len(tx_gt):,}  GT cells with counts: {(gt.gt_count>0).sum():,}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 4. 读 ProSeg transcript-metadata（pred 计数 + 基因向量）
+# 4. read ProSeg transcript-metadata (pred counts + gene vector)
 # ════════════════════════════════════════════════════════════════════════
-print("\n[4] 读 ProSeg transcript-metadata ...")
+print("\n[4] read ProSeg transcript-metadata ...")
 tx_pred = pd.read_csv(os.path.join(PROSEG_DIR, "transcript-metadata.csv.gz"))
-print(f"  转录本: {len(tx_pred):,}  列: {list(tx_pred.columns)}")
-# assignment 是 float，转 int 与 pred["cell"] 对齐
+print(f"  transcripts: {len(tx_pred):,}  cols: {list(tx_pred.columns)}")
+# assignment is float; cast to int to align with pred["cell"]
 tx_asgn = tx_pred[tx_pred["background"] == False].copy()
 tx_asgn["cell_int"] = tx_asgn["assignment"].astype(int)
 pred_cnt_ser  = tx_asgn.groupby("cell_int").size()
 pred_gene_grp = tx_asgn.groupby(["cell_int","gene"]).size().unstack(fill_value=0)
-print(f"  非背景转录本: {len(tx_asgn):,}  分配率: {len(tx_asgn)/len(tx_pred)*100:.1f}%")
+print(f"  non-background transcripts: {len(tx_asgn):,}  assignment rate: {len(tx_asgn)/len(tx_pred)*100:.1f}%")
 
 # ════════════════════════════════════════════════════════════════════════
-# 5. 匹配
+# 5. match
 # ════════════════════════════════════════════════════════════════════════
-print(f"\n[5] 匹配（radius={MATCH_RADIUS}µm）...")
+print(f"\n[5] match (radius={MATCH_RADIUS} um)...")
 tree = cKDTree(gt_xy)
 dists, gi = tree.query(pred_xy, k=1, distance_upper_bound=MATCH_RADIUS)
 best = {}
@@ -110,7 +110,7 @@ pi_arr = [p[0] for p in pairs]
 gi_arr = [p[1] for p in pairs]
 
 # ════════════════════════════════════════════════════════════════════════
-# 6. 计数指标
+# 6. count metrics
 # ════════════════════════════════════════════════════════════════════════
 pred_cell_ids = pred.iloc[pi_arr]["cell"].values  # int
 p_cnt = np.array([pred_cnt_ser.get(int(cid), 0) for cid in pred_cell_ids], dtype=float)
@@ -123,12 +123,12 @@ if len(p_cnt) >= 3 and p_cnt.std() > 0 and g_cnt.std() > 0:
     count_rmse  = float(np.sqrt(np.mean((p_cnt - g_cnt)**2)))
 else:
     count_pearson = count_spearman = count_mae = count_rmse = np.nan
-print(f"\n[6] 计数: pearson={count_pearson:.4f}  spearman={count_spearman:.4f}")
+print(f"\n[6] counts: pearson={count_pearson:.4f}  spearman={count_spearman:.4f}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 7. 基因向量（抽样 800 对）
+# 7. gene vector (sample 800 pairs)
 # ════════════════════════════════════════════════════════════════════════
-print("\n[7] 基因向量 ...")
+print("\n[7] gene vector ...")
 gene_names_all = np.sort(tx_asgn["gene"].dropna().unique())
 g2i = {g: i for i, g in enumerate(gene_names_all)}
 ng  = len(gene_names_all)
@@ -163,10 +163,10 @@ vec_pearson = float(np.mean(prs))     if prs     else np.nan
 print(f"  cosine={vec_cosine:.4f}  JS={vec_js:.4f}  pearson={vec_pearson:.4f}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 8. 分配指标
+# 8. assignment metrics
 # ════════════════════════════════════════════════════════════════════════
-print("\n[8] 分配指标 ...")
-# ProSeg 转录本坐标（revised position：x,y 列）
+print("\n[8] assignment metrics ...")
+# ProSeg transcript coordinates (revised position: x,y columns)
 tx_xy = tx_pred[["x","y"]].values.astype(float)
 tree_gt = cKDTree(gt_xy)
 d_tx, gi_tx = tree_gt.query(tx_xy, k=1, distance_upper_bound=MATCH_RADIUS)
@@ -193,7 +193,7 @@ assign_accuracy = float(np.mean(ac_list))  if ac_list  else np.nan
 print(f"  overlap={assign_overlap:.4f}  accuracy={assign_accuracy:.4f}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 汇总
+# summary
 # ════════════════════════════════════════════════════════════════════════
 metrics = dict(
     gt_cells        = n_gt,
@@ -216,8 +216,8 @@ metrics = dict(
     assign_overlap  = round(assign_overlap,  4),
     assign_accuracy = round(assign_accuracy, 4),
 )
-print(f"\n{SEP}\n结果 (ProSeg × Xenium 淋巴结)\n{SEP}")
+print(f"\n{SEP}\nResult (ProSeg × Xenium lymph node)\n{SEP}")
 for k, v in metrics.items():
     print(f"  {k:22} {v}")
 pd.DataFrame([metrics]).to_csv(OUT_PATH, index=False)
-print(f"\n  已写 → {OUT_PATH}")
+print(f"\n  written -> {OUT_PATH}")

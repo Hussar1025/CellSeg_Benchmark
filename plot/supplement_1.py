@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-补充图 A —— 稳健性（数据：附表"稳健性"那一份 Excel，含 Platform vs tissue 等 4 个工作表）
-  a  平台效应 vs 组织效应：每个方法一个点，y = x 对角线；颜色 = 算法类别，点大小 = 跨平台样本对数
-  b  同组织跨平台：乳腺 / 肝 / 小鼠脑 / 胰腺 四列，每个方法一行，两种平台的 F1 用不同形状并连线
-  c  平台内范围：MERFISH（13 个数据集）与 Xenium（10 个数据集），每个方法一行，min–max 横线 + 中位数点
-本版：所有子图为全框线，内容（方法名、注释）全部在框内；a 中方法名之间、方法名与点之间无重叠，
-      灰色区域与坐标框严格对齐；c 去掉了 n；平台形状图例与类别图例统一放在图底部。
-本地运行：python supp_figA_robustness.py
-FILES 中列出的 Excel 会按内容自动识别（含 "Platform vs tissue" 工作表的那份即为稳健性附表），
-不必关心它被编号为 S6 还是 S7。
+Supplementary figure A - robustness (data: the Excel robustness supplementary table, with 4 sheets including "Platform vs tissue")
+  a  Platform effect vs tissue effect: one point per method, y = x diagonal; color = algorithm category, point size = number of cross-platform sample pairs
+  b  Same tissue across platforms: breast / liver / mouse brain / pancreas columns, one row per method, F1 of the two platforms with different markers, connected
+  c  Within-platform range: MERFISH (13 datasets) and Xenium (10 datasets), one row per method, min-max line + median point
+Full frame for all subplots; content (method names, annotations) inside the frame; in a, method names never overlap each other or the points,
+      gray region aligned exactly with the frame; c drops n; platform marker legend and category legend unified at the bottom.
+Local run: python supp_figA_robustness.py
+The Excel listed in FILES is auto-detected by content (the one with the "Platform vs tissue" sheet is the robustness table),
+regardless of its S6 or S7 numbering.
 """
 import os
 import re
@@ -19,30 +19,30 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-# ======================== 参数 ========================
-FILES = [r"E:\Supplementary_Table_S5.xlsx", r"E:\Supplementary_Table_S6.xlsx", r"E:\Supplementary_Table_S7.xlsx"]
-OUT_DIR = r"E:\supp_figures"
+# ======================== Parameters ========================
+FILES = ["yourpath/Supplementary_Table_S5.xlsx", "yourpath/Supplementary_Table_S6.xlsx", "yourpath/Supplementary_Table_S7.xlsx"]
+OUT_DIR = "yourpath/supp_figures"
 OUT_NAME = "supp_fig_robustness"
 
-FIG_W = 7.2                    # inch，双栏宽
+FIG_W = 7.2                    # inch, double-column width
 FONT = 6.5
-ROW_H = 0.155                  # b、c 中每个方法一行的高度（inch）
-CAT_COLOR = {                  # 算法类别的显示名与配色（与补充图 C 一致）
+ROW_H = 0.155                  # height per method row in b, c (inch)
+CAT_COLOR = {                  # display names and colors of algorithm categories (consistent with supplementary figure C)
     "Statistical point-cloud": "#4490A9",
     "Graph-based": "#5B9BD5",
     "Multimodal": "#FFC000",
     "Image-based": "#ED7D31",
 }
-CAT_RENAME = {"Image-guided multimodal": "Multimodal"}   # 附表中的类别名 -> 图中显示名
-TISSUES = [                    # b：（显示名, Xenium 列, 另一平台的列, 另一平台名）
+CAT_RENAME = {"Image-guided multimodal": "Multimodal"}   # category name in the table -> display name in the figure
+TISSUES = [                    # b: (display name, Xenium columns, other-platform columns, other-platform name)
     ("Breast", ["xenium_2"], ["merfish_breast"], "MERFISH"),
     ("Liver", ["xenium_4"], ["merfish_2", "merfish_3"], "MERFISH"),
     ("Mouse brain", ["xenium_5"], ["merfish_1"], "MERFISH"),
     ("Pancreas", ["xenium_1"], ["cosmx_1"], "CosMx"),
 ]
-HE_DATASET = "xenium_1"        # 图像方法在该数据集上用 H&E 分割：b 中画空心点
+HE_DATASET = "xenium_1"        # image-based methods are H&E-segmented on this dataset: hollow markers in b
 PLAT_MARK = {"Xenium": "o", "MERFISH": "s", "CosMx": "D"}
-# a 中个别标签的手动位置（点为单位，相对数据点；合并标签用逗号连接的全名）。其余标签自动放置
+# manual positions of a few labels in a (in points, relative to the data point; merged labels use the comma-joined full name). Other labels are placed automatically
 LABEL_NUDGE = {"ComSeg": (5, 5), "Baysor, Bering": (7, -8), "UCS, ProSeg": (7, 5)}
 
 mpl.rcParams.update({
@@ -53,23 +53,23 @@ mpl.rcParams.update({
 })
 
 
-# ======================== 读取 ========================
+# ======================== Load ========================
 def find_book(sheet):
     for f in FILES:
         if os.path.exists(f) and sheet in pd.ExcelFile(f).sheet_names:
             return f
-    raise FileNotFoundError(f"FILES 中没有含工作表 '{sheet}' 的 Excel：{FILES}")
+    raise FileNotFoundError(f"No Excel in FILES contains the '{sheet}' sheet: {FILES}")
 
 
 BOOK = find_book("Platform vs tissue")
-print(f"稳健性附表：{BOOK}")
+print(f"Robustness supplementary table: {BOOK}")
 read = lambda s: pd.read_excel(BOOK, sheet_name=s, header=3).dropna(subset=["Method"])
 PVT = read("Platform vs tissue")
 SAME = read("Same tissue across platforms")
 RNG = read("Within-platform range")
 SAME.columns = [re.sub(r"\s+", " ", str(c)).strip() for c in SAME.columns]
-ds_col = {c.split()[-1]: c for c in SAME.columns if "_" in c.split()[-1]}   # 列名形如 "Breast xenium_2"
-ORDER = list(RNG["Method"])                                                 # 方法顺序 = 附表顺序（按类别）
+ds_col = {c.split()[-1]: c for c in SAME.columns if "_" in c.split()[-1]}   # column names like "Breast xenium_2"
+ORDER = list(RNG["Method"])                                                 # method order = table order (by category)
 CAT = {m: CAT_RENAME.get(c, c) for m, c in zip(RNG["Method"], RNG["Category"])}
 
 
@@ -78,17 +78,17 @@ def color(m):
 
 
 def style(ax):
-    """全框线。"""
+    """Full frame."""
     for s in ax.spines.values():
         s.set_visible(True); s.set_linewidth(0.6); s.set_color("black")
 
 
-# ======================== 标签放置（无重叠、全部在框内） ========================
+# ======================== Label placement (non-overlapping, all inside frame) ========================
 def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from=9):
-    """为每个点放一个标签：标签之间、标签与任何数据点之间都不重叠，且标签完全落在坐标框内。
-    候选位置为以点为中心、半径 5–60 pt、16 个方向；从近到远选第一个满足全部约束的位置；
-    离点较远（>= lead_from pt）时画一条细引线。nudge 可为个别标签指定 (dx, dy)（点为单位）。
-    若某个标签找不到无冲突位置，会打印提示，此时可把坐标轴范围放宽或用 nudge 指定。"""
+    """Place a label for each point: labels must not overlap each other or any data point, and must lie fully inside the axes.
+    Candidate positions circle the point at radius 5-60 pt in 16 directions; pick the first that satisfies all constraints from near to far;
+    draw a thin leader line when the label is farther (>= lead_from pt). nudge may set (dx, dy) for specific labels (in points).
+    If no conflict-free position is found, a hint is printed; then widen the axis range or use nudge."""
     from matplotlib.transforms import Bbox
     nudge = nudge or {}
     fs = fs or FONT - 0.8
@@ -102,10 +102,10 @@ def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from
     pboxes = [Bbox.from_extents(x - point_px * px_per_pt / 1.4, y - point_px * px_per_pt / 1.4,
                                 x + point_px * px_per_pt / 1.4, y + point_px * px_per_pt / 1.4) for x, y in P]
     dens = [sum(np.hypot(*(P[j] - P[i])) < 40 * px_per_pt for j in range(len(P))) for i in range(len(P))]
-    order = sorted(range(len(P)), key=lambda i: (names[i] not in nudge, -dens[i]))   # 手动指定的先放
+    order = sorted(range(len(P)), key=lambda i: (names[i] not in nudge, -dens[i]))   # place manually specified ones first
     angles = np.deg2rad(np.r_[45, 135, 315, 225, 0, 180, 90, 270, 22.5, 157.5, 337.5, 202.5, 67.5, 112.5, 292.5, 247.5])
     radii = [5, 8, 12, 17, 23, 30, 38, 47, 58]
-    # 坐标框内已有的文字（如角落注释）也作为障碍，标签不得与之重叠
+    # existing text inside the axes (e.g. corner annotations) also counts as obstacles; labels must not overlap them
     placed = [t.get_window_extent(rend).padded(2.0 * px_per_pt) for t in ax.texts if t.get_visible() and t.get_text()]
 
     def make(i, dx, dy):
@@ -116,7 +116,7 @@ def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from
         return t, t.get_window_extent(rend).padded(2.0 * px_per_pt)
 
     def leader(i, bb):
-        """从数据点画一条细线到文字框最近的边（文字框为显示坐标）。"""
+        """Draw a thin line from the data point to the nearest edge of the text box (display coordinates)."""
         px, py = P[i]
         qx, qy = min(max(px, bb.x0), bb.x1), min(max(py, bb.y0), bb.y1)
         v = np.array([qx - px, qy - py]); L = np.hypot(*v)
@@ -136,8 +136,8 @@ def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from
         if not (bb.x0 >= inner.x0 and bb.x1 <= inner.x1 and bb.y0 >= inner.y0 and bb.y1 <= inner.y1):
             return False, 1000
         hits = sum(bb.overlaps(b) for b in placed) + sum(bb.overlaps(pb) for pb in pboxes)
-        # 归属清楚：标签离自己的点必须比离任何其他点都近（否则读者会把它认成别的点的标签）
-        # 有引线时归属已由引线标明，不再要求最近
+        # clear ownership: the label must be closer to its own point than to any other (otherwise readers may assign it to the wrong point)
+        # with a leader line ownership is already shown, so nearest is not required
         d_own = bdist(bb, P[i])
         if not has_leader and any(bdist(bb, P[j]) <= d_own + 1.5 * px_per_pt for j in range(len(P)) if j != i):
             hits += 1
@@ -175,10 +175,10 @@ def place_labels(ax, xs, ys, names, nudge=None, fs=None, point_px=4.5, lead_from
         if not done:
             placed.append(best[1])
             leader(i, best[1])
-            print(f"    [提示] 标签 '{names[i]}' 未找到完全无重叠的位置，请放宽坐标范围或在 LABEL_NUDGE 中指定")
+            print(f"    [Hint] label '{names[i]}' found no fully non-overlapping position; widen the axis range or set it in LABEL_NUDGE")
 
 
-GROUP_PX = 7                   # a 中屏幕距离小于此值（pt）的点合并为一个标签（如 ProSeg 与 UCS 几乎重合）
+GROUP_PX = 7                   # in a, points within this screen distance (pt) merge into one label (e.g. ProSeg and UCS almost coincide)
 
 
 def group_points(ax, xs, ys, names):
@@ -195,13 +195,13 @@ def group_points(ax, xs, ys, names):
     return np.array(gx), np.array(gy), gn
 
 
-# ======================== a：平台效应 vs 组织效应 ========================
+# ======================== a: platform effect vs tissue effect ========================
 def panel_a(ax):
     d = PVT.dropna(subset=["Platform effect", "Tissue effect"])
     hi = float(max(d["Platform effect"].max(), d["Tissue effect"].max())) * 1.15
-    lo = -0.08 * hi                                   # 原点处留出一点空间，使 (0, 0) 附近的点不压在框线上
+    lo = -0.08 * hi                                   # leave a little space at the origin so points near (0, 0) do not sit on the frame
     ax.set_xlim(lo, hi); ax.set_ylim(lo, hi); ax.set_aspect("equal")
-    # 灰色区域 = 对角线以下（平台效应 > 组织效应），从坐标框的左下角起算，与框严格对齐
+    # gray region = below the diagonal (platform effect > tissue effect), from the lower-left of the frame, aligned exactly with it
     ax.fill_between([lo, hi], [lo, lo], [lo, hi], color="#F0F0F0", zorder=0, lw=0)
     ax.plot([lo, hi], [lo, hi], ls="--", lw=0.7, color="#7F7F7F", zorder=1)
     ax.text(hi - 0.03 * (hi - lo), lo + 0.03 * (hi - lo), "platform effect\ndominates", ha="right", va="bottom",
@@ -221,10 +221,10 @@ def panel_a(ax):
     place_labels(ax, gx, gy, gn, nudge=LABEL_NUDGE, fs=FONT - 0.8)
     miss = [m for m in PVT["Method"] if m not in set(d["Method"])]
     if miss:
-        print("  [图注] a 中未显示（没有跨平台样本对）：" + ", ".join(miss))
+        print("  [caption] not shown in a (no cross-platform sample pairs): " + ", ".join(miss))
 
 
-# ======================== b：同组织跨平台 ========================
+# ======================== b: same tissue across platforms ========================
 def panel_b(axes):
     n = len(ORDER)
     y = np.arange(n)[::-1]
@@ -264,7 +264,7 @@ def panel_b(axes):
         style(ax)
 
 
-# ======================== c：平台内范围 ========================
+# ======================== c: within-platform range ========================
 def panel_c(axes):
     n = len(ORDER)
     y = np.arange(n)[::-1]
@@ -290,10 +290,10 @@ def panel_c(axes):
         style(ax)
 
 
-# ======================== 版式 ========================
+# ======================== Layout ========================
 n = len(ORDER)
-H_ROW = n * ROW_H + 0.75                    # b、c 一行（含标题与 x 轴）高度
-FIG_H = max(2.9, H_ROW) + H_ROW + 0.35 + 0.45      # 末尾 0.45 inch 留给底部的类别图例
+H_ROW = n * ROW_H + 0.75                    # height of one b/c row (with title and x-axis)
+FIG_H = max(2.9, H_ROW) + H_ROW + 0.35 + 0.45      # trailing 0.45 inch for the category legend at the bottom
 fig = plt.figure(figsize=(FIG_W, FIG_H))
 top = FIG_H - 0.15
 
@@ -302,20 +302,20 @@ def axes_at(x, y, w, h):
     return fig.add_axes([x / FIG_W, y / FIG_H, w / FIG_W, h / FIG_H])
 
 
-# 第一行：a（左，方形）+ c（右，两列）
+# first row: a (left, square) + c (right, two columns)
 a_w = 2.55
 ax_a = axes_at(0.62, top - 0.35 - a_w, a_w, a_w)
 c_x0, c_w, c_gap = 4.05, 1.25, 0.32
 c_h = n * ROW_H
 ax_c = [axes_at(c_x0, top - 0.35 - c_h, c_w, c_h), axes_at(c_x0 + c_w + c_gap, top - 0.35 - c_h, c_w, c_h)]
-# 第二行：b（四列）
+# second row: b (four columns)
 b_top = top - max(a_w, c_h) - 0.35 - 0.62
 b_x0, b_w, b_gap = 0.95, 1.05, 0.12
 ax_b = [axes_at(b_x0 + i * (b_w + b_gap), b_top - 0.35 - c_h, b_w, c_h) for i in range(4)]
 
 panel_a(ax_a); panel_c(ax_c); panel_b(ax_b)
 
-# 类别图例（全图共用）
+# category legend (shared across the figure)
 cats = [c for c in CAT_COLOR if c in set(CAT.values())]
 b_bottom = b_top - 0.35 - c_h
 shape_h = [Line2D([], [], ls="", marker=PLAT_MARK["Xenium"], mfc="#BFBFBF", mec="#7F7F7F", ms=4, label="Xenium"),
@@ -333,5 +333,5 @@ os.makedirs(OUT_DIR, exist_ok=True)
 for ext, kw in [(".pdf", {}), (".svg", {}), (".png", {"dpi": 600})]:
     p = os.path.join(OUT_DIR, OUT_NAME + ext)
     fig.savefig(p, bbox_inches="tight", facecolor="white", **kw)
-    print("已保存:", p)
+    print("Saved:", p)
 plt.close(fig)

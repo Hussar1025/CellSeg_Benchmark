@@ -14,7 +14,7 @@ import tifffile
 # Do NOT duplicate/reimplement benchmark metrics here.
 # ============================================================
 
-REF = Path("/data/qiuyijia/ucs/UCS/ucs_value_merfish_4.py")
+REF = Path("yourpath/ucs/UCS/ucs_value_merfish_4.py")
 
 spec = importlib.util.spec_from_file_location("merfish_eval_core", REF)
 core = importlib.util.module_from_spec(spec)

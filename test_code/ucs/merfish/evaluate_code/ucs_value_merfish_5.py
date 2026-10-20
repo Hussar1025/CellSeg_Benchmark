@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MERFISH 分割评估 —— 19 指标，五方法通用。
+MERFISH segmentation evaluation — 19 metrics, shared by five methods.
 
-口径完全对齐 ucs_value_merfish_4.py：
-  * GT      = cell_metadata.csv 质心落在中心 ROI 内的 platform 核
-  * 匹配    = kd-tree 候选边(半径=GT最近邻p95×1.25) + 连通分量内匈牙利/大分量贪心
-  * 指标    = 数量/检测P,R,F1/质心偏移/转录本计数相关/基因向量相似度 等
+Definitions fully aligned with ucs_value_merfish_4.py:
+  * GT      = platform nuclei in cell_metadata.csv whose centroid falls in the center ROI
+  * matching = kd-tree candidate edges (radius = GT nearest-neighbor p95×1.25) + Hungarian within connected components / greedy for large components
+  * metrics = counts / detection P,R,F1 / centroid shift / transcript-count correlation / gene-vector similarity etc.
 
-支持两种预测格式：
-  --seg  某个 *_segmentation.tif / mask.tif（proseg/ucs/comseg/genesegnet）
-  --npz  BOMS 的 boms_merfish.npz（点云：seg=每转录本cell id, x/y 微米, cell_loc 质心）
+Two prediction formats supported:
+  --seg  a *_segmentation.tif / mask.tif (proseg/ucs/comseg/genesegnet)
+  --npz  BOMS boms_merfish.npz (point cloud: seg = per-transcript cell id, x/y µm, cell_loc centroid)
 
-用法：
-  # 标签图方法（自动定位 *_segmentation.tif，或 --seg 指定）
+Usage:
+  # label-image methods (auto-locate *_segmentation.tif, or specify with --seg)
   python eval_merfish.py --method UCS --dataset prostate1 \
-      --run-dir /data/qiuyijia/ucs_merfish_prostate1 \
-      --data-root /data/qiuyijia/dataset/merfish_prostate1
+      --run-dir yourpath/ucs_merfish_prostate1 \
+      --data-root yourpath/dataset/merfish_prostate1
 
   # BOMS
   python eval_merfish.py --method BOMS --dataset prostate1 \
-      --npz /data/qiuyijia/boms_merfish_prostate1/boms_merfish.npz \
-      --data-root /data/qiuyijia/dataset/merfish_prostate1
+      --npz yourpath/boms_merfish_prostate1/boms_merfish.npz \
+      --data-root yourpath/dataset/merfish_prostate1
 
-  # 一次跑多个，追加到同一张表
+  # run several at once, appending to the same table
   python eval_merfish.py ... --out results.csv
 """
 
@@ -38,7 +38,7 @@ ROI_SIZE = 10000
 
 
 # ===========================================================================
-# 几何（对齐参考文件 Geometry）
+# geometry (aligned with the reference Geometry)
 # ===========================================================================
 class Geometry:
     def __init__(self, sx, sy, ox, oy, y0, x0, size):
@@ -81,7 +81,7 @@ def load_geometry(data_root, roi_size=ROI_SIZE):
 
 
 # ===========================================================================
-# 匹配（对齐参考文件）
+# matching (aligned with the reference)
 # ===========================================================================
 def infer_match_radius(gx, gy, quantile=0.95, factor=1.25, floor=2.0):
     from scipy.spatial import cKDTree
@@ -200,7 +200,7 @@ def gene_vector_metrics(pm, gm):
 
 
 # ===========================================================================
-# 读 GT（platform 核，cell_metadata 质心在 ROI 内）
+# read GT (platform nuclei, cell_metadata centroid in ROI)
 # ===========================================================================
 def load_gt(data_root, geo):
     root = Path(data_root)
@@ -215,16 +215,16 @@ def load_gt(data_root, geo):
 
 
 # ===========================================================================
-# 读预测 -> 统一成 (质心_um, 每细胞基因向量, spots_assigned_rate, 面积, 转录本对齐)
+# read prediction -> unify into (centroid_um, per-cell gene vector, spots_assigned_rate, area, transcript alignment)
 # ===========================================================================
 def load_pred_seg(seg_path, geo, data_root):
-    """标签 tif 方法：从 mask 取质心 + 用转录本重建基因向量。"""
+    """Label tif method: take centroids from mask + rebuild gene vectors from transcripts."""
     import tifffile
     lab = np.squeeze(tifffile.imread(seg_path)).astype(np.int64)
     lab[lab < 0] = 0
-    s = geo.size / lab.shape[0]           # 该 mask 每像素 = s 个 ROI 像素
+    s = geo.size / lab.shape[0]           # each mask pixel = s ROI pixels
     ids = np.unique(lab); ids = ids[ids > 0]
-    # 质心（label 像素坐标 -> ROI 像素 -> um）
+    # centroid (label pixel coords -> ROI pixels -> um)
     rows, cols = np.nonzero(lab)
     lv = lab[rows, cols]
     o = np.argsort(lv, kind="stable")
@@ -235,7 +235,7 @@ def load_pred_seg(seg_path, geo, data_root):
     area_px = (b[1:] - b[:-1]).astype(float)
     pux, puy = geo.local_to_um((cx + 0.5) * s, (cy + 0.5) * s)
     area_um2 = area_px * s * s * (geo.um_per_px ** 2)
-    # 转录本 -> 细胞（用数据集自己的 transcripts）
+    # transcripts -> cells (using the dataset's own transcripts)
     genes, gene_idx, tx_ux, tx_uy = _load_tx(data_root)
     lx, ly = geo.um_to_local(tx_ux, tx_uy)
     r = np.clip((ly / s).astype(np.int64), 0, lab.shape[0] - 1)
@@ -256,27 +256,27 @@ def load_pred_seg(seg_path, geo, data_root):
 
 
 def load_pred_boms(npz_path, geo):
-    """BOMS 点云：seg=每转录本cell id, x/y um, cell_loc 质心, count_mat 细胞×基因。"""
+    """BOMS point cloud: seg = per-transcript cell id, x/y um, cell_loc centroid, count_mat cells×genes."""
     z = np.load(npz_path, allow_pickle=True)
     seg = z["seg"].astype(np.int64)
     x = z["x"].astype(float); y = z["y"].astype(float)
     genes = list(z["gene_names"])
     cm = z["count_mat"]
-    # cell_loc 已是质心（微米）；顺序对应 count_mat 行
+    # cell_loc is already the centroid (µm); order corresponds to count_mat rows
     cl = z["cell_loc"].astype(float)
     pux, puy = cl[:, 0], cl[:, 1]
     inside = geo.inside(pux, puy)
     pux, puy, gm = pux[inside], puy[inside], cm[inside].astype(np.float32)
     ntx = gm.sum(1).astype(np.int64)
     assign_rate = float((seg > 0).mean())
-    # BOMS 无像素面积，用每细胞转录本凸包近似跳过，面积置 nan
+    # BOMS has no pixel area; skip the per-cell transcript convex-hull approximation, area set to nan
     area = np.full(len(pux), np.nan)
     return dict(cx=pux, cy=puy, area=area, gm=gm, ntx=ntx,
                 genes=genes, assign_rate=assign_rate, coverage=np.nan)
 
 
 def _load_tx(data_root):
-    """读 detected_transcripts，返回 (基因表, 每转录本基因索引, x_um, y_um)。"""
+    """Read detected_transcripts, return (gene list, per-transcript gene index, x_um, y_um)."""
     root = Path(data_root)
     txp = next(root.rglob("detected_transcripts.csv*"), None)
     if txp is None:
@@ -284,7 +284,7 @@ def _load_tx(data_root):
     cols = ["global_x", "global_y", "gene"]
     d = pd.read_csv(txp, usecols=lambda c: c in cols)
     g = d["gene"].astype(str).to_numpy()
-    # 去掉 blank/control
+    # drop blank/control
     keep = ~np.char.startswith(np.char.lower(g.astype(str)),
                                ("blank"))
     genes = sorted(set(g[keep]))
@@ -296,7 +296,7 @@ def _load_tx(data_root):
 
 
 # ===========================================================================
-# 主评估
+# main evaluation
 # ===========================================================================
 def evaluate(pred, gx, gy, method, dataset, gt_root):
     px, py = pred["cx"], pred["cy"]
@@ -308,9 +308,9 @@ def evaluate(pred, gx, gy, method, dataset, gt_root):
     rec = tp / n_gt if n_gt else np.nan
     f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else np.nan
 
-    # 质心偏移
+    # centroid shift
     shift = ed
-    # 匹配对的转录本计数相关（pred ntx vs gt ntx 需 GT 每细胞转录本；这里用配对细胞的 pred ntx 与 GT 邻域计数近似）
+    # transcript-count correlation of matched pairs (pred ntx vs gt ntx needs GT per-cell transcripts; here approximate with pred ntx of paired cells and GT neighborhood counts)
     m = {
         "method": method, "dataset": dataset,
         "Pred cell count": n_pred, "GT cell count": n_gt,
@@ -329,25 +329,25 @@ def evaluate(pred, gx, gy, method, dataset, gt_root):
         "match_radius_um": radius,
     }
 
-    # 基因向量相似度（需 GT 每细胞基因向量）——用 GT platform 质心 + 数据集转录本重建
+    # gene-vector similarity (needs GT per-cell gene vectors) — rebuilt from GT platform centroids + dataset transcripts
     gtm = _gt_gene_vectors(gt_root, gx, gy, pred["genes"])
     if gtm is not None and tp:
         pm = pred["gm"][ep]
         gmv = gtm[eg]
         m.update(gene_vector_metrics(pm, gmv))
-        # 匹配对转录本计数相关
+        # matched-pair transcript-count correlation
         m.update(numeric_pair_metrics(pred["ntx"][ep], gtm[eg].sum(1),
                                       "matched_cell_transcript_count"))
     return m
 
 
 def _gt_gene_vectors(data_root, gx, gy, genes):
-    """把转录本按最近 GT 质心归属，重建 GT 每细胞基因向量（半径内）。"""
+    """Assign transcripts to the nearest GT centroid to rebuild GT per-cell gene vectors (within radius)."""
     from scipy.spatial import cKDTree
     g2, gidx_all, tx_x, tx_y = _load_tx(data_root)
-    # 对齐到 pred 的基因表
+    # align to pred gene list
     remap = {g: i for i, g in enumerate(genes)}
-    # gidx_all 是相对 g2 的索引，转回基因名再映射
+    # gidx_all is an index into g2; convert back to gene names then remap
     inv = {i: g for i, g in enumerate(g2)}
     gene_name = np.array([inv[i] for i in gidx_all])
     col = np.array([remap.get(n, -1) for n in gene_name])
@@ -391,13 +391,13 @@ def main():
 
     m = evaluate(pred, gx, gy, args.method, args.dataset, args.data_root)
 
-    # 打印
+    # print
     print("=" * 60)
     for k, v in m.items():
         print(f"{k:48s} {v}")
     print("=" * 60)
 
-    # 追加到 csv
+    # append to csv
     outp = Path(args.out)
     df = pd.DataFrame([m])
     if outp.exists():

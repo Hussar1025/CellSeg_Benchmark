@@ -2,23 +2,23 @@
 # -*- coding: utf-8 -*-
 
 """
-ComSeg × MERFISH liver1 / liver2
+ComSeg x MERFISH liver1 / liver2
 ================================
 
-模式：
-    官方 cell-boundary prior + transcript cell_id prior
-    即之前使用的 ComSeg with-prior 模式。
+Mode:
+    official cell-boundary prior + transcript cell_id prior
+    i.e. the ComSeg with-prior mode used before.
 
-本版本只做已确认的修正：
+This version makes only confirmed fixes:
 
-1. P() 支持 end= 等 print 参数。
-2. centroid z 恢复之前老代码的约定：
+1. P() supports print args such as end=.
+2. centroid z restored to the old convention:
        z = cell_id * 0.001
-3. community_detection 保持 "with_prior"。
-4. min_merge_correlation 默认保持 0.99。
-5. 其它 ComSeg 参数保持当前 liver 实验方案。
+3. community_detection stays "with_prior".
+4. min_merge_correlation default stays 0.99.
+5. Other ComSeg params keep the current liver experiment setup.
 
-运行：
+Run:
     python comseg_merfish_liver.py --dataset liver1 --force
     python comseg_merfish_liver.py --dataset liver2 --force
 """
@@ -52,10 +52,10 @@ CFG = {
     "liver1": {
 
         "base":
-            "/data/qiuyijia/dataset/merfish_liver1",
+            "yourpath/dataset/merfish_liver1",
 
         "mask":
-            "/data/qiuyijia/ucs_merfish_liver1/nuclei_mask.tif",
+            "yourpath/ucs_merfish_liver1/nuclei_mask.tif",
 
         "x0": 5236.737991920782,
         "x1": 6316.729987066785,
@@ -67,10 +67,10 @@ CFG = {
     "liver2": {
 
         "base":
-            "/data/qiuyijia/dataset/merfish_liver2",
+            "yourpath/dataset/merfish_liver2",
 
         "mask":
-            "/data/qiuyijia/ucs_merfish_liver2/nuclei_mask.tif",
+            "yourpath/ucs_merfish_liver2/nuclei_mask.tif",
 
         "x0": 5771.0386869252825,
         "x1": 6851.029458488514,
@@ -102,8 +102,8 @@ def safe_kwargs(func, kwargs, name):
 
         if ignored:
             P(
-                f"  [{name}] 当前 ComSeg 版本"
-                f"不接受参数：{ignored}"
+                f"  [{name}] current ComSeg version "
+                f"does not accept arguments: {ignored}"
             )
 
         return valid
@@ -235,7 +235,7 @@ def ensure_sentinel(
 def get_dirs(dataset):
 
     root = (
-        f"/data/qiuyijia/comseg/"
+        f"yourpath/comseg/"
         f"merfish_{dataset}"
     )
 
@@ -289,7 +289,7 @@ def prepare_data(
     if not os.path.isfile(mask_path):
 
         raise FileNotFoundError(
-            f"prior mask 不存在："
+            f"prior mask not found: "
             f"{mask_path}"
         )
 
@@ -340,7 +340,7 @@ def prepare_data(
     ):
 
         P(
-            "\n[1a] 构建 centroid prior"
+            "\n[1a] build centroid prior"
         )
 
 
@@ -361,7 +361,7 @@ def prepare_data(
         )
 
 
-        # nuclei_mask 的建立方式与 UCS 相同：
+        # nuclei_mask is built the same way as UCS:
         # local x = round(global_x) - int(ROI_X0)
         # local y = round(global_y) - int(ROI_Y0)
 
@@ -397,9 +397,9 @@ def prepare_data(
 
 
         # ====================================================
-        # ★ 恢复之前老 ComSeg with-prior 代码的约定
+        # ★ restore the old ComSeg with-prior convention:
         #
-        # 不再使用 3 + tiny jitter。
+        # no longer use 3 + tiny jitter.
         # ====================================================
 
         nuc["z"] = (
@@ -488,7 +488,7 @@ def prepare_data(
 
         P(
             "\n[1b] pass1: "
-            "统计 ROI 基因丰度"
+            "count ROI gene abundance"
         )
 
 
@@ -595,7 +595,7 @@ def prepare_data(
         )
 
         P(
-            f"    使用 top-"
+            f"    using top-"
             f"{len(keep_genes)}"
         )
 
@@ -606,7 +606,7 @@ def prepare_data(
 
         P(
             "\n[1c] pass2: "
-            "生成 ComSeg transcript CSV"
+            "generate ComSeg transcript CSV"
         )
 
 
@@ -776,7 +776,7 @@ def prepare_data(
 
         if first:
             raise RuntimeError(
-                "没有生成 transcript CSV"
+                "no transcript CSV generated"
             )
 
 
@@ -1206,7 +1206,7 @@ def export_result(
     ):
 
         raise RuntimeError(
-            "ComSeg export 得到空 AnnData"
+            "ComSeg export returned empty AnnData"
         )
 
 
@@ -1303,7 +1303,7 @@ def main():
 
 
     # ========================================================
-    # 保持当前实验参数，不主动修改
+    # Keep current experiment params; do not change
     # ========================================================
 
     ap.add_argument(

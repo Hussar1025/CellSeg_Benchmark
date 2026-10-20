@@ -3,55 +3,55 @@
 """
 ucs_stereo_2.py —— UCS @ stereo_2 (E14.5_E1S3)
 
-之前汇总表里 stereo_2 的 UCS 行是假的(有评估无产物)，这是重跑。
+The stereo_2 UCS row in the earlier summary table was bogus (evaluation but no artifact); this is the rerun.
 
-gene_map 内存 = H * W * n_genes * 4 bytes
-  --top-genes N : 砍基因维，线性。top 2000 通常覆盖 85-95% 转录本，代价小
-  --bin-px B    : 砍空间维，平方(H和W各除B)，但分辨率从 0.5um 降到 0.5*B um
-                  小鼠胚胎细胞 6-10um，bin-px 2 后一个细胞只有 6-10 px 宽
-  优先加大 --top-genes，尽量保住 --bin-px 1
+gene_map memory = H * W * n_genes * 4 bytes
+  --top-genes N : trims the gene axis, linear. top 2000 usually covers 85-95% of transcripts, cheap.
+  --bin-px B    : trims the spatial axis, quadratic (H and W each / B), but resolution drops 0.5 -> 0.5*B um.
+                  mouse embryo cells are 6-10um; after bin-px 2 a cell is only 6-10 px wide.
+  prefer raising --top-genes, keep --bin-px 1 if possible.
 
-⚠ 评估注意: nuclei_mask 从 GEM 的 cell 列建(CellBin 官方分割)，GT 也是同一列
-   -> prior 与 GT 同源，转录本级指标会循环虚高。检测/定位/计数指标仍有效。
+⚠ Evaluation note: nuclei_mask is built from the GEM cell column (official CellBin segmentation), GT is the same column
+   -> prior and GT share the same source, so transcript-level metrics are circularly inflated. Detection/localization/count metrics remain valid.
 
-用法:
-  python3 ucs_stereo_2.py --check                    # 先估体积
+Usage:
+  python3 ucs_stereo_2.py --check                    # estimate volume first
   python3 ucs_stereo_2.py --top-genes 2000
   python3 ucs_stereo_2.py --top-genes 1000 --bin-px 1
 """
 import argparse, subprocess, sys
 from pathlib import Path
 
-DIR = "/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all"
+DIR = "yourpath/dataset/stereoseq/stereo-seq_data_all"
 SLICE = "E14.5_E1S3"
 GT_N = 4872
 DATASET = "stereo_2"
-BASE = "/data/qiuyijia/ucs/UCS/ucs_stereo_1_run.py"
+BASE = "yourpath/ucs/UCS/ucs_stereo_1_run.py"
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
-                    help="只估 gene_map 体积，不跑")
+                    help="estimate gene_map volume only, don't run")
     ap.add_argument("--top-genes", type=int, default=0,
-                    help="只保留表达量最高的 N 个基因，0=全部")
+                    help="keep only the top-N highest-expression genes, 0=all")
     ap.add_argument("--bin-px", type=int, default=1,
-                    help="空间下采样倍数，1=原始 0.5um/px")
+                    help="spatial downsampling factor, 1=raw 0.5um/px")
     ap.add_argument("--nucleus-erode", type=int, default=2)
     ap.add_argument("--base", default=BASE)
     a = ap.parse_args()
 
     if not Path(a.base).exists():
-        sys.exit(f"✗ 基础脚本不存在: {a.base}\n"
-                 f"  ls /data/qiuyijia/ucs/UCS/ | grep stereo")
+        sys.exit(f"✗ base script not found: {a.base}\n"
+                 f"  ls yourpath/ucs/UCS/ | grep stereo")
 
     gem = f"{DIR}/{SLICE}_Dorsal_Midbrain_GEM_CellBin.tsv.gz"
     tif = f"{DIR}/{SLICE}.tif"
     for p in (gem, tif):
         if not Path(p).exists():
-            sys.exit(f"✗ 不存在: {p}")
+            sys.exit(f"✗ not found: {p}")
 
-    out = f"/data/qiuyijia/ucs_stereoseq_{SLICE}"
+    out = f"yourpath/ucs_stereoseq_{SLICE}"
     cmd = [sys.executable, a.base,
            "--gem", gem, "--ssdna", tif, "--out-dir", out,
            "--nucleus-erode", str(a.nucleus_erode),
@@ -63,17 +63,17 @@ def main():
 
     print(f"=== UCS @ {DATASET} ({SLICE})  GT {GT_N:,} ===")
     if a.top_genes or a.bin_px > 1:
-        print(f"    top_genes={a.top_genes or '全部'}  bin_px={a.bin_px} "
-              f"(空间省 {a.bin_px**2}x)")
+        print(f"    top_genes={a.top_genes or 'all'}  bin_px={a.bin_px} "
+              f"(spatial saving {a.bin_px**2}x)")
     print("$ " + " ".join(cmd))
     rc = subprocess.call(cmd)
     if rc != 0 and not a.check:
-        print("\n若报 gene_map 太大:")
-        print("  优先加大 --top-genes (线性省，代价小):")
-        print("    --top-genes 2000  省 ~11x")
-        print("    --top-genes 1000  省 ~22x")
-        print("    --top-genes 500   省 ~44x")
-        print("  再考虑 --bin-px 2 (平方省 4x，但分辨率降到 1.0um/px)")
+        print("\nIf gene_map is too large:")
+        print("  prefer raising --top-genes (linear, cheap):")
+        print("    --top-genes 2000  saves ~11x")
+        print("    --top-genes 1000  saves ~22x")
+        print("    --top-genes 500   saves ~44x")
+        print("  then consider --bin-px 2 (quadratic, saves 4x, but resolution drops to 1.0um/px)")
     sys.exit(rc)
 
 

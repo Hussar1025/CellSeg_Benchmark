@@ -52,8 +52,8 @@ from scipy.stats import pearsonr, spearmanr
 
 
 VERSION = "2026.09.23"
-DEFAULT_OUTPUTS = Path("/data/qiuyijia/bering/stereo_outputs")
-DEFAULT_EVAL_DIR = Path("/data/qiuyijia/eval/bering")
+DEFAULT_OUTPUTS = Path("yourpath/bering/stereo_outputs")
+DEFAULT_EVAL_DIR = Path("yourpath/eval/bering")
 DEFAULT_RADIUS_UM = 15.0
 DEFAULT_BATCH_SIZE = 500_000
 DEFAULT_VECTOR_SAMPLE = 2_000
@@ -240,7 +240,7 @@ def combine_cell_partials(parts: List[pd.DataFrame], id_column: str) -> pd.DataF
 
 
 def load_gt_cells(spec: DatasetSpec, batch_size: int, quiet: bool) -> pd.DataFrame:
-    info("  重建 CellBin GT 质心和计数...", quiet)
+    info("  rebuild CellBin GT centroids and counts...", quiet)
     parquet = pq.ParquetFile(spec.prepared_path)
     parts: List[pd.DataFrame] = []
     columns = ["cell_id", "x_location", "y_location"]
@@ -292,7 +292,7 @@ def unique_batch_rows(
 def load_pred_cells(
     spec: DatasetSpec, expected_input_rows: int, batch_size: int, quiet: bool
 ) -> Tuple[pd.DataFrame, Dict[str, int]]:
-    info("  汇总 Bering 预测细胞（按 transcript_id 去重）...", quiet)
+    info("  aggregate Bering predicted cells (dedup by transcript_id)...", quiet)
     parquet = pq.ParquetFile(spec.assignments_path)
     seen = np.zeros(expected_input_rows, dtype=bool)
     parts: List[pd.DataFrame] = []
@@ -444,7 +444,7 @@ def vector_cosine(
     gt_ids = gt_cells.iloc[sampled.gt_index.to_numpy()]["cell_id"].astype(str)
     pred_to_slot = dict(zip(pred_ids, sampled.slot))
     gt_to_slot = dict(zip(gt_ids, sampled.slot))
-    info(f"  计算 vec_cosine（固定抽样 {len(sampled):,} 对）...", quiet)
+    info(f"  compute vec_cosine (fixed sample of {len(sampled):,} pairs)...", quiet)
 
     gt_gene = aggregate_sampled_genes(
         spec.prepared_path,
@@ -603,7 +603,7 @@ def evaluate_dataset(
         f"recall={recall:.4f}, F1={f1:.4f}, cosine={cosine:.4f}",
         quiet,
     )
-    info(f"  写出: {dataset_out}", quiet)
+    info(f"  written: {dataset_out}", quiet)
     return result
 
 
@@ -612,7 +612,7 @@ def main() -> None:
     discovered = discover_datasets(args.outputs_dir)
     selected = select_datasets(discovered, args.dataset)
     info(
-        "发现并选择数据集: " + ", ".join(spec.name for spec in selected),
+        "discovered and selected datasets: " + ", ".join(spec.name for spec in selected),
         args.quiet,
     )
     for spec in selected:
@@ -623,7 +623,7 @@ def main() -> None:
             args.quiet,
         )
     if args.check_only:
-        info("输入检查完成；未运行评估。", args.quiet)
+        info("input check done; evaluation not run.", args.quiet)
         return
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -643,7 +643,7 @@ def main() -> None:
     combined_path = args.out_dir / "bering_stereo_evaluation.csv"
     combined.to_csv(combined_path, index=False)
     info("=" * 72, args.quiet)
-    info(f"汇总结果已写入: {combined_path}", args.quiet)
+    info(f"summary results written: {combined_path}", args.quiet)
 
 
 if __name__ == "__main__":

@@ -17,9 +17,7 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
-BASE = Path(os.path.expanduser(
-    "~/Cosmx_6k_COAD_data/cellist_result/boms_5000_cellist_fixed_roi"
-))
+BASE = Path(os.path.expanduser("yourpath"))
 
 INPUT_DIR = BASE / "input"
 ROI_DAPI_FILE = INPUT_DIR / "DAPI_boms_5000_fixed_roi.tif"
@@ -38,16 +36,16 @@ PARAM_GRID = [
     # baseline
     {"diameter": 20, "cellprob_threshold": 0.0,  "flow_threshold": 0.4, "no_local_threshold": False},
 
-    # 放宽 cellprob
+    # relaxed cellprob
     {"diameter": 20, "cellprob_threshold": -1.0, "flow_threshold": 0.4, "no_local_threshold": False},
     {"diameter": 20, "cellprob_threshold": -2.0, "flow_threshold": 0.4, "no_local_threshold": False},
 
-    # 关闭 local threshold
+    # local threshold disabled
     {"diameter": 20, "cellprob_threshold": 0.0,  "flow_threshold": 0.4, "no_local_threshold": True},
     {"diameter": 20, "cellprob_threshold": -1.0, "flow_threshold": 0.4, "no_local_threshold": True},
     {"diameter": 20, "cellprob_threshold": -2.0, "flow_threshold": 0.4, "no_local_threshold": True},
 
-    # 小 diameter
+    # smaller diameter
     {"diameter": 15, "cellprob_threshold": 0.0,  "flow_threshold": 0.4, "no_local_threshold": True},
     {"diameter": 15, "cellprob_threshold": -1.0, "flow_threshold": 0.4, "no_local_threshold": True},
     {"diameter": 15, "cellprob_threshold": -2.0, "flow_threshold": 0.4, "no_local_threshold": True},
@@ -64,7 +62,7 @@ PARAM_GRID = [
     {"diameter": 8, "cellprob_threshold": -1.0,  "flow_threshold": 0.4, "no_local_threshold": True},
     {"diameter": 8, "cellprob_threshold": -2.0,  "flow_threshold": 0.4, "no_local_threshold": True},
 
-    # flow 放宽测试
+    # relaxed flow test
     {"diameter": 12, "cellprob_threshold": -2.0, "flow_threshold": 0.8, "no_local_threshold": True},
     {"diameter": 10, "cellprob_threshold": -2.0, "flow_threshold": 0.8, "no_local_threshold": True},
     {"diameter": 8,  "cellprob_threshold": -2.0, "flow_threshold": 0.8, "no_local_threshold": True},

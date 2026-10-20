@@ -1,43 +1,52 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-cosmx_lymph.py  (CelloType)
+cosmx_lymph.py (CelloType)
 ===========================
-在 CosMx 人淋巴结数据集（/data/qiuyijia/dataset/cosmx_lymph_node）上跑 CelloType
-（TissueNet 预训练，零样本，不微调）做整细胞分割，以数据集自带的 CosMx CellLabels 为 GT
-做 benchmark。数据读取 / FOV 选择 / 指标 / 聚合全部走
-/data/qiuyijia/eval/cosmx_lymph_common.py，与 cellpose / cellsam / mesmer /
-stardist 四个版本逐行同源 —— 方法之间唯一差别就是推理这一步。
+Run CelloType (TissueNet pretrained, zero-shot, no fine-tuning) whole-cell
+segmentation on the CosMx human lymph node dataset and benchmark against the
+dataset's own CosMx CellLabels as GT. Data loading / FOV selection / metrics /
+aggregation all go through cosmx_lymph_common.py, line-for-line identical to
+the cellpose / cellsam / mesmer / stardist versions -- the only difference
+between methods is the inference step.
 
-数据集事实（已实测）
---------------------
-* 数据集**自带 FOV 划分**：共 **400 个 FOV**，每个 4256x4256 @0.1203um/px。
-  napari OME-Zarr 是拼好的全片(93618x102128)，本脚本按 .zattrs 的 fov_offsets 裁回单 FOV。
-* metadata 共 1,852,946 个细胞，中位 **4897 cells/FOV** → **凑 1w 细胞只要 2 个 FOV**。
-* 默认 FOV = (48, 261)：密度最接近全片中位数、且分处切片前后两半，GT 4898+4896=9794。
+Dataset facts (measured)
+------------------------
+* The dataset ships its own FOV split: 400 FOVs, each 4256x4256 @0.1203um/px.
+  The napari OME-Zarr is a stitched whole slide (93618x102128); this script
+  crops single FOVs back out using fov_offsets from .zattrs.
+* metadata has 1,852,946 cells, median 4897 cells/FOV -> 2 FOVs give ~1w cells.
+* Default FOVs = (48, 261): densities closest to the whole-slide median and
+  one in each half of the slide, GT 4898+4896=9794.
 
-为什么不微调（公平性）
-----------------------
-Cellpose(cpsam) / StarDist / CellSAM / Mesmer 在这套 benchmark 里全是零样本，
-CelloType 也零样本，五方法才在同一起跑线。而且只有同一张切片的 FOV，
-切它自己训自己测会系统性高估；GT 本身是 NanoString 算法输出（银标准），
-在它上面训 CelloType 只是"模仿厂商"。
+Why no fine-tuning (fairness)
+-----------------------------
+Cellpose(cpsam) / StarDist / CellSAM / Mesmer are all zero-shot in this
+benchmark; CelloType also zero-shot keeps all five methods on the same
+footing. Only FOVs from the same slide are available; train/test on the same
+data systematically overestimates. GT itself is NanoString's algorithm output
+(a silver standard); fine-tuning CelloType on it only imitates the vendor.
 
-三个必须写对的点
-----------------
-1) **动态范围**：zarr 是 uint16，CelloType 读 PNG 即 uint8，预训练权重也在 8-bit 上训的。
-   所以按 1~99.5 百分位拉伸到 uint8（--norm pct，默认）。这是放回方法期望的量纲。
-2) **通道排布**：CelloType/TissueNet 约定 [R=可选, G=膜, B=核]，默认 opt_mem_nuc。
-   核=DNA，膜=Membrane，与其它四个方法完全同源。
-3) **切块**：4256² 整图进 Detectron2 会被按短边缩放而掉小细胞，所以默认 tile 模式，
-   512 窗 + 128 重叠自己切块拼接。本数据集细胞等效直径中位 ~65px，
-   overlap=128 > 2x 细胞直径，骑缝细胞不会被切两半。
+Three things that must be right
+-------------------------------
+1) Dynamic range: zarr is uint16; CelloType reads PNG as uint8, and the
+   pretrained weights were trained on 8-bit. So stretch to uint8 by the
+   1~99.5 percentile (--norm pct, default). This puts data back into the
+   expected units.
+2) Channel layout: CelloType/TissueNet convention is [R=optional, G=membrane,
+   B=nuclear], default opt_mem_nuc. Nuclear=DNA, membrane=Membrane, identical
+   to the other four methods.
+3) Tiling: 4256^2 fed whole into Detectron2 gets rescaled by short edge and
+   drops small cells, so tile mode is the default: 512 windows + 128 overlap,
+   stitched here. Cell equivalent diameter median is ~65px, so overlap=128 >
+   2x diameter and seam cells are not split.
 
-依赖：/data/qiuyijia/anaconda3/envs/cellotype（CelloType + Detectron2 + MaskDINO）
-      需要 models/tissuenet_model_0019999.pth 与 configs/maskdino_R50_..._2048.yaml。
-      该 env **没装 zarr**，所以要先在带 zarr 的 env 里导一次缓存（见文件末尾用法）。
-      注意：本机该 env 目前 import MultiScaleDeformableAttention 报 GLIBC_2.34 缺失，
-      需在能跑 Detectron2 的机器上执行（脚本本身与环境无关）。
+Dependencies: cellotype env (CelloType + Detectron2 + MaskDINO); needs
+models/tissuenet_model_0019999.pth and configs/maskdino_R50_..._2048.yaml.
+That env has no zarr, so export a cache once from an env that has zarr (see
+usage at the end of the file). Note: on this machine that env currently fails
+to import MultiScaleDeformableAttention with a missing GLIBC_2.34; run on a
+machine where Detectron2 works (the script itself is environment-agnostic).
 """
 
 import os
@@ -46,19 +55,16 @@ import argparse
 
 import numpy as np
 
-sys.path.insert(0, "/data/qiuyijia/eval")
+sys.path.insert(0, "yourpath")
 import cosmx_lymph_common as C
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-DEFAULT_MODEL = "/data/qiuyijia/cellotype/CelloType/models/tissuenet_model_0019999.pth"
-DEFAULT_CONFIG = ("/data/qiuyijia/cellotype/CelloType/configs/"
-                  "maskdino_R50_bs16_50ep_4s_dowsample1_2048.yaml")
+DEFAULT_MODEL = "yourpath"
+DEFAULT_CONFIG = ("yourpath")
 
 
-# --------------------------------------------------------------------------- #
-# CelloType 输入（TissueNet 约定：R=可选, G=膜, B=核）
-# --------------------------------------------------------------------------- #
+# CelloType input (TissueNet convention: R=optional, G=membrane, B=nuclear)
 def build_cellotype_input(chans, mem_channel, channel_order="opt_mem_nuc", norm="pct"):
     nuclear, membrane = C.nuc_mem(chans, mem_channel)
     if norm == "pct":
@@ -79,9 +85,8 @@ def build_cellotype_input(chans, mem_channel, channel_order="opt_mem_nuc", norm=
     return np.stack(order, axis=-1).astype(np.uint8)
 
 
-# --------------------------------------------------------------------------- #
-# 切块 + 实例拼接（只依赖稳定的 predict()；沿用本仓库 CosMx_cellotype.py 那套）
-# --------------------------------------------------------------------------- #
+# Tiling + instance stitching (depends only on the stable predict(); same recipe
+# as the repo's CosMx_cellotype.py)
 def _starts(size, tile, step):
     if size <= tile:
         return [0]
@@ -94,10 +99,15 @@ def _starts(size, tile, step):
 def tile_predict_stitch(img_rgb, predict_fn, tile=512, overlap=128, merge_frac=0.5,
                         verbose=True):
     """
-    把大图切成 tile×tile（overlap 重叠）逐块 predict，再贪心拼成一张全局实例掩膜。
-    贪心策略：先到先得；后续块若与已有实例重叠 >= merge_frac 则并入，否则新 id 填空白像素。
-    overlap 建议 >= 2x 细胞直径（本数据集细胞 ~65px，128 足够），避免骑缝细胞被切两半。
-    注：这是对稳定 API 的便捷封装；更严谨的大图推理可用官方 SAHI(NMM 合并)。
+    Cut a large image into tile x tile windows (with overlap), predict each, then
+    greedily stitch into a global instance mask.
+    Greedy policy: first come first served; later tiles that overlap an existing
+    instance by >= merge_frac are merged into it; otherwise a new id fills the
+    empty pixels.
+    overlap should be >= 2x cell diameter (~65px here; 128 is enough) to avoid
+    splitting cells on seams.
+    Note: convenient wrapper around the stable API; for stricter large-image
+    inference use the official SAHI (NMM merge).
     """
     H, W = img_rgb.shape[:2]
     gmask = np.zeros((H, W), np.int32)
@@ -112,7 +122,7 @@ def tile_predict_stitch(img_rgb, predict_fn, tile=512, overlap=128, merge_frac=0
             local = np.asarray(predict_fn(img_rgb[y0:y1, x0:x1]))
             if local.ndim > 2:
                 local = np.squeeze(local)
-            g_sub = gmask[y0:y1, x0:x1]           # 视图，原地改即改 gmask
+            g_sub = gmask[y0:y1, x0:x1]           # view; in-place writes update gmask
             for lid in np.unique(local):
                 if lid == 0:
                     continue
@@ -132,13 +142,11 @@ def tile_predict_stitch(img_rgb, predict_fn, tile=512, overlap=128, merge_frac=0
                         nxt += 1
             done += 1
             if verbose and done % 20 == 0:
-                print(f"    [tile] {done}/{total} 块, 已有 {nxt-1} 个实例", flush=True)
+                print(f"    [tile] {done}/{total} tiles, {nxt-1} instances so far", flush=True)
     return gmask
 
 
-# --------------------------------------------------------------------------- #
-# CelloType 运行器（模型只加载一次）
-# --------------------------------------------------------------------------- #
+# CelloType runner (model loaded once)
 class CelloTypeRunner:
     def __init__(self, model_path, config_path, confidence, max_det, device,
                  infer="tile", tile=512, overlap=128):
@@ -156,10 +164,10 @@ class CelloTypeRunner:
         if self._predictor is None:
             from cellotype.predict import CelloTypePredictor
             if not (self.model_path and os.path.exists(self.model_path)):
-                raise SystemExit(f"找不到 CelloType 权重：{self.model_path}（用 --model-path 指定）")
+                raise SystemExit(f"CelloType weights not found: {self.model_path} (pass --model-path)")
             if not (self.config_path and os.path.exists(self.config_path)):
-                raise SystemExit(f"找不到 CelloType 配置：{self.config_path}（用 --config-path 指定）")
-            print(f"[cellotype] 加载 {os.path.basename(self.model_path)} "
+                raise SystemExit(f"CelloType config not found: {self.config_path} (pass --config-path)")
+            print(f"[cellotype] loading {os.path.basename(self.model_path)} "
                   f"| conf={self.confidence} max_det={self.max_det} device={self.device}")
             self._predictor = CelloTypePredictor(
                 model_path=self.model_path, confidence_thresh=self.confidence,
@@ -175,12 +183,10 @@ class CelloTypeRunner:
                                    tile=self.tile, overlap=self.overlap).astype(np.int32)
 
 
-# --------------------------------------------------------------------------- #
 # main
-# --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser(
-        description="CosMx 淋巴结：CelloType(TissueNet预训练,零样本) + 对 CosMx CellLabels 的 benchmark",
+        description="CosMx lymph node: CelloType (TissueNet pretrained, zero-shot) + benchmark vs CosMx CellLabels",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     C.add_common_args(ap, out_dir_default=os.path.join(HERE, "cosmx_lymph_output"))
@@ -189,19 +195,19 @@ def main():
     ap.add_argument("--config-path", default=DEFAULT_CONFIG)
     ap.add_argument("--confidence", type=float, default=0.4)
     ap.add_argument("--max-det", type=int, default=1000,
-                    help="每块最大检测数。512² 块内本数据集约 70~90 个细胞，1000 足够")
+                    help="max detections per tile. A 512^2 tile holds ~70-90 cells here; 1000 is enough")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--gpu-id", default=None,
-                    help="设 CUDA_VISIBLE_DEVICES（原 CosMx 版写死了 6，这里改成可选）")
+                    help="set CUDA_VISIBLE_DEVICES (the original CosMx version hard-coded 6; optional here)")
     ap.add_argument("--channel-order", default="opt_mem_nuc",
                     choices=["opt_mem_nuc", "nuc_mem_opt", "mem_nuc_opt"],
-                    help="三通道排布，需与 CelloType 预训练一致（拿 example_tissuenet.png 核对）")
+                    help="3-channel layout; must match CelloType pretraining (verify against example_tissuenet.png)")
     ap.add_argument("--norm", default="pct", choices=["pct", "raw"],
-                    help="pct=1~99.5百分位拉到uint8(默认,匹配预训练8-bit量纲)")
+                    help="pct=1~99.5 percentile stretched to uint8 (default, matches pretraining 8-bit units)")
     ap.add_argument("--infer", choices=["tile", "whole"], default="tile")
     ap.add_argument("--tile", type=int, default=512)
     ap.add_argument("--overlap", type=int, default=128,
-                    help="切块重叠，建议 >= 2x 细胞直径（本数据集细胞 ~65px）")
+                    help="tile overlap; >= 2x cell diameter (~65px here)")
     args = ap.parse_args()
 
     if args.gpu_id is not None:
@@ -223,8 +229,9 @@ def main():
         confidence=args.confidence, max_det=args.max_det,
         infer=args.infer, tile=args.tile, overlap=args.overlap,
         channel_order=args.channel_order, norm=args.norm,
-        note_cellotype="CelloType 原生整细胞、零样本；uint16 需按百分位拉到 8-bit；"
-                       "4256² 用 512/128 切块拼接（whole 模式会被 Detectron2 缩放而掉小细胞）。")
+        note_cellotype="CelloType is natively whole-cell and zero-shot; uint16 must be "
+                       "stretched to 8-bit by percentile; 4256^2 uses 512/128 tiling "
+                       "(whole mode gets rescaled by Detectron2 and drops small cells).")
 
     C.run_benchmark(args, "CelloType(TissueNet)", segment_fn, meta_extra, "cellotype")
 
@@ -234,14 +241,14 @@ if __name__ == "__main__":
 
 
 '''
-# 1) 先在有 zarr 的 env（cellpose / cellsam / deepcell 任一）导出缓存
-/data/qiuyijia/anaconda3/envs/cellpose/bin/python \
-    /data/qiuyijia/cellotype/CelloType/code/cosmx_lymph.py --use-default-fovs --export-cache
+# 1) first export the cache in an env that has zarr (cellpose / cellsam / deepcell)
+yourpath \
+    yourpath --use-default-fovs --export-cache
 
-# 2) 再在 cellotype env（没 zarr）里跑
-CT=/data/qiuyijia/anaconda3/envs/cellotype/bin/python
-nohup $CT /data/qiuyijia/cellotype/CelloType/code/cosmx_lymph.py \
+# 2) then run in the cellotype env (no zarr)
+CT=yourpath
+nohup $CT yourpath \
     --use-default-fovs --infer tile --overlay --gpu-id 0 \
-    --out-dir /data/qiuyijia/cellotype/CelloType/code/cosmx_lymph_output \
-    > /data/qiuyijia/cellotype/CelloType/code/cosmx_lymph.log 2>&1 &
+    --out-dir yourpath \
+    > yourpath 2>&1 &
 '''

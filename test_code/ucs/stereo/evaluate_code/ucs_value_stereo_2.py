@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ucs_value_stereo_2.py — 评估 UCS @ stereo_2 (Stereo-seq E14.5_E1S3)
+ucs_value_stereo_2.py — evaluate UCS @ stereo_2 (Stereo-seq E14.5_E1S3)
 
-产物: /data/qiuyijia/ucs_stereoseq_E14.5/ucs_log/pred/segmentation_mask.tif
-健康检查已通过:
-  nuclei_mask      4,872 标签  直径 8.3 um   (输入正常)
-  mask_shift_0     4,872        直径 14.4 um
-  segmentation     4,870 / 4872 = 1.000  直径 14.4 um
-  核 8.3um -> 细胞 14.4um，扩展倍率合理。E16.5_E2S7 那次的单像素退化
-  (腐蚀循环里 if e.sum()==0 就 fallback 到质心) 在这个数据集没有触发。
+Artifact: yourpath/ucs_stereoseq_E14.5/ucs_log/pred/segmentation_mask.tif
+Health check passed:
+  nuclei_mask      4,872 labels  diameter 8.3 um   (input OK)
+  mask_shift_0     4,872         diameter 14.4 um
+  segmentation     4,870 / 4872 = 1.000  diameter 14.4 um
+  nucleus 8.3um -> cell 14.4um, reasonable expansion factor. The single-pixel
+  degradation seen on E16.5_E2S7 (erode loop falls back to centroid when
+  e.sum()==0) did not trigger on this dataset.
 
-⚠ 循环偏差: nuclei_mask 从 GEM 的 cell 列(CellBin 官方分割)栅格化而来，
-  而 GT 也是同一个 cell 列 -> prior 与 GT 同源。
-  assignment / coverage 类指标循环虚高，只有检测/定位/计数/形态有效。
-  结果里 uses_platform_prior=True、并在 note 中注明。
+⚠ Circular bias: nuclei_mask is rasterized from the GEM cell column (official CellBin segmentation),
+  and GT is the same cell column -> prior and GT share the same source.
+  assignment / coverage metrics are circularly inflated; only detection/localization/count/morphology are valid.
+  The result sets uses_platform_prior=True and notes it.
 
-坐标: GEM bin 1 = 0.5 um；mask 的 (0,0) 对应 GEM 的 (x.min, y.min)，
-      评估时统一换算到 um。
+Coordinates: GEM bin 1 = 0.5 um; mask (0,0) maps to GEM (x.min, y.min),
+      converted to um uniformly in evaluation.
 
-指标覆盖: 检测(P/R/F1, cell_ratio) 定位(loc mean/median/p95)
-          计数(pearson/spearman/mae/rmse) 表达向量(cosine/JS/pearson)
-          归属(assign_accuracy, coverage) 形态(面积/等效直径分位)
+Metrics: detection(P/R/F1, cell_ratio) localization(loc mean/median/p95)
+         counts(pearson/spearman/mae/rmse) expression vectors(cosine/JS/pearson)
+         assignment(assign_accuracy, coverage) morphology(area/equivalent-diameter quantiles)
 
-用法:
+Usage:
   python3 ucs_value_stereo_2.py
   python3 ucs_value_stereo_2.py --mask mask_shift_0.tif
   python3 ucs_value_stereo_2.py --match-radius 8
@@ -36,10 +37,10 @@ import sys
 import numpy as np
 import pandas as pd
 
-ROOT = "/data/qiuyijia/ucs_stereoseq_E14.5"
-GEM = ("/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all/"
+ROOT = "yourpath/ucs_stereoseq_E14.5"
+GEM = ("yourpath/dataset/stereoseq/stereo-seq_data_all/"
        "E14.5_E1S3_Dorsal_Midbrain_GEM_CellBin.tsv.gz")
-OUT = "/data/qiuyijia/eval_results_qv20/stereo_2"
+OUT = "yourpath/eval_results_qv20/stereo_2"
 METHOD, DATASET = "UCS", "stereo_2"
 BIN_UM = 0.5
 GT_N = 4872
@@ -97,40 +98,40 @@ def main():
 
     mp = os.path.join(a.root, "ucs_log", "pred", a.mask)
     if not os.path.exists(mp):
-        sys.exit(f"✗ mask 不存在: {mp}")
+        sys.exit(f"✗ mask not found: {mp}")
     m = tifffile.imread(mp)
     lab, cnt = np.unique(m, return_counts=True)
     area = cnt[lab > 0]
     n_pred = int((lab > 0).sum())
     log(f"  {a.mask}  {m.shape} {m.dtype}")
-    log(f"  标签 {n_pred:,}   前景 {(m>0).mean()*100:.2f}%   "
-        f"标签上界 {lab[lab>0].max():,}")
+    log(f"  labels {n_pred:,}   foreground {(m>0).mean()*100:.2f}%   "
+        f"max label {lab[lab>0].max():,}")
     if np.median(area) <= 2:
-        sys.exit("✗ 面积中位 <=2px，栅格化退化，该结果无效")
+        sys.exit("✗ area median <=2px, rasterization degraded, result invalid")
 
     q = np.percentile(area, [5, 25, 50, 75, 95])
-    log(f"\n【形态】面积 px  p5/p25/中位/p75/p95 = "
+    log(f"\n[morphology] area px  p5/p25/median/p75/p95 = "
         f"{q[0]:.0f}/{q[1]:.0f}/{q[2]:.0f}/{q[3]:.0f}/{q[4]:.0f}")
-    log(f"        面积 um2 中位 {q[2]*BIN_UM**2:.1f}   "
-        f"等效直径 中位 {2*np.sqrt(q[2]/np.pi)*BIN_UM:.2f} um  "
-        f"(小鼠胚胎细胞约 6-10 um)")
-    log(f"        <10px 的 {int((area<10).sum()):,} "
+    log(f"        area um2 median {q[2]*BIN_UM**2:.1f}   "
+        f"equivalent diameter median {2*np.sqrt(q[2]/np.pi)*BIN_UM:.2f} um  "
+        f"(mouse embryo cells ~6-10 um)")
+    log(f"        <10px: {int((area<10).sum()):,} "
         f"({(area<10).mean()*100:.2f}%)   "
-        f"最大标签占前景 {area.max()/area.sum()*100:.2f}%")
+        f"largest label / foreground {area.max()/area.sum()*100:.2f}%")
 
     # ── GEM / GT ────────────────────────────────────────────────────
-    log(f"\n【GEM】{os.path.basename(a.gem)}")
+    log(f"\n[GEM] {os.path.basename(a.gem)}")
     d = read_gem(a.gem)
     x0, y0 = int(d.x.min()), int(d.y.min())
-    log(f"  {len(d):,} 行   基因 {d.gene.nunique():,}   "
-        f"原点 ({x0},{y0})   span "
+    log(f"  {len(d):,} rows   genes {d.gene.nunique():,}   "
+        f"origin ({x0},{y0})   span "
         f"{d.x.max()-x0+1} x {d.y.max()-y0+1} bin")
     gt = d[d.cell > 0].groupby("cell").agg(
         x=("x", "mean"), y=("y", "mean"), n=("count", "sum"))
-    log(f"  GT 细胞 {len(gt):,}  (期望 {GT_N:,})   "
-        f"每细胞 tx 中位 {gt.n.median():.0f}")
+    log(f"  GT cells {len(gt):,}  (expected {GT_N:,})   "
+        f"median tx per cell {gt.n.median():.0f}")
 
-    # ── 预测质心 ────────────────────────────────────────────────────
+    # ── predicted centroids ──────────────────────────────────────────
     idx = np.arange(1, int(m.max()) + 1)
     cen = ndimage.center_of_mass(m > 0, m, idx)
     keep = [i for i, c in enumerate(cen) if np.isfinite(c[0])]
@@ -138,14 +139,14 @@ def main():
     plab = idx[keep]
     px = (cen[:, 1] + x0) * BIN_UM
     py = (cen[:, 0] + y0) * BIN_UM
-    log(f"\n【预测】质心 {len(px):,}   "
+    log(f"\n[predicted] centroids {len(px):,}   "
         f"x[{px.min():.1f},{px.max():.1f}] y[{py.min():.1f},{py.max():.1f}] um")
 
     gx = gt.x.to_numpy(float) * BIN_UM
     gy = gt.y.to_numpy(float) * BIN_UM
     r = a.match_radius or float(np.sqrt(
         (gx.max() - gx.min()) * (gy.max() - gy.min()) / max(len(gt), 1)))
-    log(f"\n【匹配】KD-tree 一对一，半径 {r:.2f} um")
+    log(f"\n[matching] KD-tree one-to-one, radius {r:.2f} um")
     dist, gi = cKDTree(np.c_[gx, gy]).query(np.c_[px, py], k=1,
                                             distance_upper_bound=r)
     ok = np.isfinite(dist) & (dist < r)
@@ -182,8 +183,8 @@ def main():
                uses_platform_prior=True, detection_comparable=True,
                data_error=False)
 
-    # ── 转录本级归属 ────────────────────────────────────────────────
-    log(f"\n【归属】把 GEM 的每个 bin 投到 mask 上")
+    # ── transcript-level assignment ──────────────────────────────────
+    log(f"\n[assignment] project each GEM bin onto the mask")
     H, W = m.shape
     bx = (d.x.to_numpy(int) - x0)
     by = (d.y.to_numpy(int) - y0)
@@ -193,8 +194,8 @@ def main():
     w = d["count"].to_numpy(float)
     assigned = plab_at > 0
     cov = float(w[assigned].sum() / w.sum())
-    log(f"  bin 落在 mask 内 {inside.mean()*100:.1f}%   "
-        f"被分配的转录本占比 {cov*100:.1f}%")
+    log(f"  bins inside mask {inside.mean()*100:.1f}%   "
+        f"assigned transcript fraction {cov*100:.1f}%")
     res["coverage_fraction"] = cov
     res["assign_rate"] = cov
 
@@ -211,12 +212,12 @@ def main():
         acc = float(np.average(want == real, weights=w[ok2]))
         res["assign_accuracy"] = acc
         res["overall_correct"] = acc * cov
-        log(f"  assign_accuracy {acc:.4f}  (按 MIDCount 加权, "
-            f"n={int(ok2.sum()):,} bin)")
+        log(f"  assign_accuracy {acc:.4f}  (MIDCount-weighted, "
+            f"n={int(ok2.sum()):,} bins)")
         log(f"  overall_correct  {res['overall_correct']:.4f}")
-        log(f"  ⚠ prior 与 GT 同源，此项循环虚高，不可与无先验方法直接比较")
+        log(f"  ⚠ prior and GT share the same source; this metric is circularly inflated, not directly comparable with prior-free methods")
 
-    # ── 计数 + 表达向量 ────────────────────────────────────────────
+    # ── counts + expression vectors ─────────────────────────────────
     if pairs:
         pn = np.zeros(len(px))
         np.add.at(pn, [lab2pi.get(int(l), 0) for l in plab_at[assigned]],
@@ -231,12 +232,12 @@ def main():
                        count_spearman=float(spearmanr(A[k], B[k])[0]),
                        count_mae=float(np.abs(A[k]-B[k]).mean()),
                        count_rmse=float(np.sqrt(((A[k]-B[k])**2).mean())))
-            log(f"\n【计数】n={int(k.sum()):,}  "
+            log(f"\n[counts] n={int(k.sum()):,}  "
                 f"pearson {res['count_pearson']:.4f}  "
                 f"spearman {res['count_spearman']:.4f}  "
                 f"mae {res['count_mae']:.1f}  rmse {res['count_rmse']:.1f}")
 
-        log(f"\n【表达向量】构建 pred / GT 计数矩阵 ...")
+        log(f"\n[expression vectors] building pred / GT count matrices ...")
         genes = sorted(d.gene.astype(str).unique())
         gidx = {v: i for i, v in enumerate(genes)}
         gcode = d.gene.astype(str).map(gidx).to_numpy()
@@ -271,10 +272,10 @@ def main():
             log(f"  vec_cosine {res['vec_cosine']:.4f}  "
                 f"vec_js_dist {res['vec_js_dist']:.4f}  "
                 f"vec_pearson {res['vec_pearson']:.4f}  "
-                f"(n={int(kk.sum()):,}, {len(genes):,} 基因)")
+                f"(n={int(kk.sum()):,}, {len(genes):,} genes)")
 
-    res["note"] = ("nuclei_mask 从 GEM 的 cell 列栅格化，与 GT 同源 -> "
-                   "assignment/coverage 循环虚高，仅检测/定位/计数/形态有效；"
+    res["note"] = ("nuclei_mask rasterized from the GEM cell column, same source as GT -> "
+                   "assignment/coverage circularly inflated, only detection/localization/count/morphology valid; "
                    f"mask={a.mask}")
 
     os.makedirs(a.out, exist_ok=True)

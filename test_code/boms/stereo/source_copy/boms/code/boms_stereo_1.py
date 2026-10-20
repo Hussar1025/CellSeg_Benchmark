@@ -1,34 +1,39 @@
 #!/usr/bin/env python
 """
-BOMS × Stereo-seq —— E14.5(E1S3) / E16.5(E2S6) / E16.5(E2S7)
+BOMS × Stereo-seq — E14.5(E1S3) / E16.5(E2S6) / E16.5(E2S7)
 
-===== 本版修复：sweep() 之前硬编码了错误的网格大小 =====
-之前的版本里 sweep() 写死了 `cfg.grid or 3`，完全没用 --check 阶段
-plan_patches() 已经算出的正确 n_split。E14.5/E2S7 用 top-500 基因后，
-n_mol×n_gene 实测都在 int32 安全范围内，真正需要的是 n_split=1
-（不切分），但硬编码的 3 把 ROI 强行切成 3×3=9 份去找"左上角"，
-而 Stereo-seq 的 GEM 覆盖率只有 6-9%，边角那块很可能真的一个分子
-都没有 —— "0 分子 × 0 基因"就是这么来的，报错信息本身没有问题，
-是调用方传错了参数。
+===== This version's fix: sweep() previously hard-coded the wrong grid size =====
+The old sweep() hard-coded `cfg.grid or 3`, ignoring the correct n_split that
+plan_patches() had already computed in the --check stage. With top-500 genes,
+E14.5/E2S7 n_mol×n_gene both fit in int32, so what is actually needed is
+n_split=1 (no tiling), but the hard-coded 3 forced the ROI into 3×3=9 parts to
+look for a "top-left corner". Stereo-seq GEM coverage is only 6-9%, so that
+corner tile may genuinely contain zero molecules — "0 molecules × 0 genes" came
+from exactly that; the error message itself was fine, the caller passed the
+wrong argument.
 
-本版把 main() 里 --check/--sweep-hs/正式运行三条路径统一用
-plan_patches() 算出的同一个 n_split，不再有任何硬编码的兜底值。
+This version unifies the --check / --sweep-hs / full-run paths in main() to use
+the same n_split from plan_patches(), with no hard-coded fallback value.
 
-===== 和 ProSeg 那次"实验性适配"的关键区别 =====
-ProSeg 的 RNA 扩散模型依赖分子间精确相对位置，把同一 bin 的多个 UMI
-展开成挤在同一坐标点的"假分子"，物理假设直接失效。
-BOMS 核心是 mean-shift 密度估计（KDE），只关心局部密度峰值，对位置
-量化不敏感，只要网格分辨率(0.5µm)远小于带宽参数h_s(预期几十µm量级)，
-量化误差可忽略——这次的适配比 ProSeg 更站得住脚，但依然是近似，
-不是真正单分子数据，评估时仍需标注。
+===== Key difference vs. the ProSeg "experimental adaptation" =====
+ProSeg's RNA diffusion model relies on exact relative molecule positions, so
+expanding multiple UMIs in one bin into "fake molecules" crowded onto the same
+coordinate breaks its physical assumption.
+BOMS's core is mean-shift density estimation (KDE), which only cares about local
+density peaks and is insensitive to position quantization. As long as the grid
+resolution (0.5 µm) is far smaller than the bandwidth h_s (expected ~tens of
+µm), the quantization error is negligible. This adaptation is better grounded
+than ProSeg's, but it is still an approximation, not true single-molecule data,
+and must be flagged during evaluation.
 
-===== 复用既有机制 =====
-· 每个 patch 独立 checkpoint，可断点续跑（n_split=1 时只有一个 patch）
-· patch 内局部基因重新编号（避免 C++ 后端基因索引越界）
-· 最终 count_mat 用全局基因表重建
-· overlap + 核心区去重（n_split=1 时没有重叠边界，逻辑自动退化为直通）
+===== Reused existing machinery =====
+- Each patch checkpoints independently for resume (n_split=1 means one patch).
+- Genes are re-indexed locally per patch (avoids C++ backend gene-index OOB).
+- The final count_mat is rebuilt from the global gene table.
+- overlap + core-region dedup (n_split=1 has no overlap boundary, so the logic
+  degrades to a pass-through).
 
-用法：
+Usage:
   python boms_stereo_1.py --dataset E14.5_E1S3 --check
   python boms_stereo_1.py --dataset E14.5_E1S3 --sweep-hs
   python boms_stereo_1.py --dataset E14.5_E1S3 --h-s 70
@@ -46,11 +51,11 @@ from scipy.sparse import csr_matrix
 SEP = "=" * 68
 P = lambda *a: print(*a, flush=True)
 
-DATA_DIR = "/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all"
-OUT_BASE = "/data/qiuyijia/boms_stereo"
-BIN_UM = 0.5          # 1 bin = 0.5µm，转成µm和MERFISH的h_s量纲一致
+DATA_DIR = "yourpath/dataset/stereoseq/stereo-seq_data_all"
+OUT_BASE = "yourpath/boms_stereo"
+BIN_UM = 0.5          # 1 bin = 0.5 µm; convert to µm so h_s matches MERFISH units
 INT32_MAX = 2 ** 31
-OVERLAP_UM = 30.0     # 与 MERFISH 版本一致的重叠带宽
+OVERLAP_UM = 30.0     # overlap bandwidth, consistent with the MERFISH version
 
 DATASETS = {
     "E14.5_E1S3": dict(
@@ -66,7 +71,7 @@ DATASETS = {
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Step 1: 读 GEM，展开 UMI，转 µm（带缓存）
+#  Step 1: read GEM, expand UMIs, convert to µm (cached)
 # ══════════════════════════════════════════════════════════════════════════
 def load_expanded(dataset, top_genes, force=False):
     ckdir = f"{OUT_BASE}/{dataset}/ckpt"
@@ -74,11 +79,11 @@ def load_expanded(dataset, top_genes, force=False):
     cache = f"{ckdir}/expanded_top{top_genes}.npz"
     if os.path.exists(cache) and not force:
         d = np.load(cache, allow_pickle=True)
-        P(f"  ⚡ 复用展开缓存: {len(d['x']):,} 条分子  {len(d['genes'])} 基因")
+        P(f"  ⚡ [reuse] expanded cache: {len(d['x']):,} molecules  {len(d['genes'])} genes")
         return d["x"], d["y"], d["gi"], list(d["genes"])
 
     gem_path = DATASETS[dataset]["gem"]
-    P(f"  读 GEM {os.path.basename(gem_path)} ...")
+    P(f"  read GEM {os.path.basename(gem_path)} ...")
     opener = gzip.open if gem_path.endswith(".gz") else open
     skip = 0
     with opener(gem_path, "rt") as fh:
@@ -102,22 +107,22 @@ def load_expanded(dataset, top_genes, force=False):
     gem = gem.rename(columns=ren)
     if "count" not in gem.columns:
         gem["count"] = 1
-    P(f"    原始 {len(gem):,} 行  基因 {gem.gene.nunique():,}")
+    P(f"    raw {len(gem):,} rows  genes {gem.gene.nunique():,}")
 
     if top_genes > 0:
         top = gem.gene.value_counts().head(top_genes).index
         gem = gem[gem.gene.isin(top)]
-        P(f"    降到 top-{top_genes} 基因后 {len(gem):,} 行")
+        P(f"    after top-{top_genes} genes {len(gem):,} rows")
 
-    P(f"  展开 UMI（每个 count 变成一个分子；对 BOMS 的 mean-shift "
-      f"影响远小于对 ProSeg 扩散模型的影响，见文件头说明）...")
+    P(f"  expand UMIs (each count becomes one molecule; far less impact on "
+      f"BOMS mean-shift than on ProSeg's diffusion model, see header note)...")
     rep = gem.loc[gem.index.repeat(gem["count"].clip(1).astype(int))]
     genes = sorted(rep.gene.unique())
     g2i = {g: i for i, g in enumerate(genes)}
     gi = rep.gene.map(g2i).values.astype(np.int32)
     x = (rep.x.values.astype(np.float64)) * BIN_UM
     y = (rep.y.values.astype(np.float64)) * BIN_UM
-    P(f"    展开后 {len(x):,} 个分子（µm 坐标）")
+    P(f"    expanded to {len(x):,} molecules (µm coords)")
 
     np.savez_compressed(cache, x=x, y=y, gi=gi,
                         genes=np.array(genes, dtype=object))
@@ -126,12 +131,12 @@ def load_expanded(dataset, top_genes, force=False):
 
 def plan_patches(n_mol, n_gene, force_grid=None):
     """
-    算出需要多大的 patch 网格才能让每块都不溢出 int32。
-    ★ 这是唯一计算 n_split 的地方——--check / --sweep-hs / 正式运行
-      三条路径全部调用这一个函数，不再各自维护一份数字。
+    Compute the patch grid size so no tile overflows int32.
+    ★ This is the ONLY place n_split is computed — the --check / --sweep-hs /
+      full-run paths all call this function instead of each keeping its own value.
     """
     if force_grid:
-        P(f"    使用强制指定的网格 {force_grid}×{force_grid}")
+        P(f"    using forced grid {force_grid}×{force_grid}")
         return force_grid
     prod = n_mol * n_gene
     n_split = 1
@@ -139,8 +144,8 @@ def plan_patches(n_mol, n_gene, force_grid=None):
         n_split += 1
         if n_split > 8:
             break
-    P(f"    n_mol×n_gene = {prod:,}  →  需要 {n_split}×{n_split} = "
-      f"{n_split**2} 个 patch")
+    P(f"    n_mol×n_gene = {prod:,}  →  need {n_split}×{n_split} = "
+      f"{n_split**2} patches")
     return n_split
 
 
@@ -162,13 +167,13 @@ def patch_bounds(x, y, n_split, overlap):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Step 2: 单 patch（带 ckpt）
+#  Step 2: single patch (with checkpoint)
 # ══════════════════════════════════════════════════════════════════════════
 def run_patch(pb, x, y, gi, ckdir, cfg, force=False):
     ck = f"{ckdir}/patch_{pb['i']}_{pb['j']}_hs{cfg.h_s}.npz"
     if os.path.exists(ck) and not force:
         d = np.load(ck, allow_pickle=True)
-        P(f"  ⚡ patch({pb['i']},{pb['j']}) 复用: {len(d['cell_loc']):,} 细胞")
+        P(f"  ⚡ patch({pb['i']},{pb['j']}) [reuse]: {len(d['cell_loc']):,} cells")
         return ck
 
     m = ((x >= pb["rx0"]) & (x < pb["rx1"]) &
@@ -176,7 +181,7 @@ def run_patch(pb, x, y, gi, ckdir, cfg, force=False):
     X, Y, GI = x[m], y[m], gi[m]
     n = len(X)
     if n < 1000:
-        P(f"  patch({pb['i']},{pb['j']}) 仅 {n} 分子，跳过")
+        P(f"  patch({pb['i']},{pb['j']}) only {n} molecules, skip")
         np.savez_compressed(ck, cell_loc=np.zeros((0, 2)),
                             seg=np.zeros(0, np.int32), gi=GI, x=X, y=Y,
                             core=np.array([pb["cx0"], pb["cx1"],
@@ -187,8 +192,8 @@ def run_patch(pb, x, y, gi, ckdir, cfg, force=False):
     remap = {g: k for k, g in enumerate(uniq_g)}
     G_local = np.array([remap[g] for g in GI], dtype=np.int64)
     prod = n * len(uniq_g)
-    P(f"  patch({pb['i']},{pb['j']}): {n:,} 分子 × {len(uniq_g)} 基因  "
-      f"n×g={prod:,}  {'✓' if prod < INT32_MAX else '✘ 仍溢出，需更细网格'}")
+    P(f"  patch({pb['i']},{pb['j']}): {n:,} molecules × {len(uniq_g)} genes  "
+      f"n×g={prod:,}  {'✓' if prod < INT32_MAX else '✘ still overflows, need finer grid'}")
     if prod >= INT32_MAX:
         return None
 
@@ -201,12 +206,12 @@ def run_patch(pb, x, y, gi, ckdir, cfg, force=False):
             x_min=float(X.min())-1, x_max=float(X.max())+1,
             y_min=float(Y.min())-1, y_max=float(Y.max())+1)
     except Exception as e:
-        P(f"    ✘ run_boms 失败: {type(e).__name__}: {e}")
+        P(f"    ✘ run_boms failed: {type(e).__name__}: {e}")
         return None
 
     seg = np.asarray(seg).astype(np.int32)
     cell_loc = np.asarray(cell_loc, dtype=np.float64)
-    P(f"    ✓ {len(cell_loc):,} 细胞  ({time.time()-t0:.0f}s) → ckpt")
+    P(f"    ✓ {len(cell_loc):,} cells  ({time.time()-t0:.0f}s) → ckpt")
     np.savez_compressed(ck, cell_loc=cell_loc, seg=seg, gi=GI, x=X, y=Y,
                         core=np.array([pb["cx0"], pb["cx1"],
                                        pb["cy0"], pb["cy1"]]))
@@ -214,11 +219,11 @@ def run_patch(pb, x, y, gi, ckdir, cfg, force=False):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Step 3: 合并（全局基因表重建 count_mat）
+#  Step 3: merge (rebuild count_mat from the global gene table)
 # ══════════════════════════════════════════════════════════════════════════
 def merge(ckpts, genes, cfg, out_path):
     n_gene = len(genes)
-    P(f"\n{SEP}\n合并 {len(ckpts)} 个 patch（全局基因表 {n_gene}）\n{SEP}")
+    P(f"\n{SEP}\nmerge {len(ckpts)} patches (global gene table {n_gene})\n{SEP}")
 
     all_loc, all_x, all_y, all_gi, all_seg = [], [], [], [], []
     offset = 0
@@ -240,19 +245,19 @@ def merge(ckpts, genes, cfg, out_path):
         all_gi.append(d["gi"][ok])
         offset += int(keep.sum())
         P(f"  {os.path.basename(ck)[:36]:38} {len(loc):>7,} → "
-          f"核心区 {int(keep.sum()):>7,}")
+          f"core {int(keep.sum()):>7,}")
 
     if not all_loc:
-        P("  ✘ 无有效 patch"); return None
+        P("  ✘ no valid patch"); return None
 
     cell_loc = np.vstack(all_loc)
     seg = np.concatenate(all_seg)
     tx_x, tx_y = np.concatenate(all_x), np.concatenate(all_y)
     tx_gi = np.concatenate(all_gi)
     n_cell = len(cell_loc)
-    P(f"\n  合并后 {n_cell:,} 细胞   已分配分子 {len(seg):,}")
+    P(f"\n  after merge {n_cell:,} cells   assigned molecules {len(seg):,}")
 
-    P(f"  重建 count_mat ({n_cell:,} × {n_gene}) ...")
+    P(f"  rebuild count_mat ({n_cell:,} × {n_gene}) ...")
     count_mat = csr_matrix(
         (np.ones(len(seg), np.int32), (seg, tx_gi)),
         shape=(n_cell, n_gene)).toarray().astype(np.int32)
@@ -265,7 +270,7 @@ def merge(ckpts, genes, cfg, out_path):
         seg2 = remap[seg]; ok = seg2 >= 0
         seg, tx_x, tx_y, tx_gi = seg2[ok], tx_x[ok], tx_y[ok], tx_gi[ok]
         cell_loc, count_mat = cell_loc[keep], count_mat[keep]
-        P(f"  min_size≥{cfg.min_size} 过滤: {n_cell:,} → {len(cell_loc):,}")
+        P(f"  min_size≥{cfg.min_size} filter: {n_cell:,} → {len(cell_loc):,}")
 
     np.savez_compressed(
         out_path, cell_loc=cell_loc, seg=seg.astype(np.int32),
@@ -275,30 +280,32 @@ def merge(ckpts, genes, cfg, out_path):
 
     n = len(cell_loc)
     gt = DATASETS[cfg.dataset]["gt_cells"]
-    P(f"\n{SEP}\n  最终 {n:,} 细胞   GT {gt:,}   ratio {n/gt:.3f}")
+    P(f"\n{SEP}\n  final {n:,} cells   GT {gt:,}   ratio {n/gt:.3f}")
     P(f"  → {out_path}")
     return out_path
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  h_s 扫描 ★ 本版修复：不再硬编码网格大小
+#  h_s sweep ★ this version's fix: no more hard-coded grid size
 # ══════════════════════════════════════════════════════════════════════════
 def sweep(x, y, gi, dataset, cfg, n_split):
     """
-    ★ 修复：之前这里硬编码了 `patch_bounds(x, y, cfg.grid or 3, ...)`，
-      完全没用 --check 阶段 plan_patches() 已经算出的正确 n_split。
-      Stereo-seq 的 GEM 覆盖率只有 6-9%，硬切 3×3 网格后"左上角"那块
-      很可能真的是空的（0 分子 × 0 基因），这才是之前报错
-      "zero-size array to reduction operation" 的根本原因——
-      不是算法本身有问题，是参数传递漏了一步。
+    ★ Fix: previously this hard-coded `patch_bounds(x, y, cfg.grid or 3, ...)`,
+      ignoring the correct n_split that plan_patches() already computed in the
+      --check stage. Stereo-seq GEM coverage is only 6-9%, so after forcibly
+      tiling a 3×3 grid the "top-left" tile may really be empty (0 molecules ×
+      0 genes) — that is the root cause of the previous
+      "zero-size array to reduction operation" error, not a bug in the
+      algorithm but a missing step in argument passing.
 
-      现在 n_split 由调用方（main()）统一用 plan_patches() 算好后传入，
-      如果 n_split=1（--check 已确认不需要切分），直接用全量数据扫描，
-      不再人为切出一个可能不存在的"左上角"。
+      Now n_split is computed by plan_patches() in main() and passed in; when
+      n_split=1 (--check already confirmed no tiling is needed), it sweeps the
+      full data directly instead of fabricating a possibly nonexistent
+      "top-left" tile.
     """
     if n_split <= 1:
-        P(f"\n  n_split=1（--check 已确认不需要切分），"
-          f"直接用全量 {len(x):,} 分子做扫描")
+        P(f"\n  n_split=1 (--check confirmed no tiling needed), "
+          f"sweep all {len(x):,} molecules directly")
         X, Y, GI = x, y, gi
     else:
         pbs = patch_bounds(x, y, n_split, OVERLAP_UM)
@@ -306,11 +313,11 @@ def sweep(x, y, gi, dataset, cfg, n_split):
         m = ((x >= pb["rx0"]) & (x < pb["rx1"]) &
              (y >= pb["ry0"]) & (y < pb["ry1"]))
         X, Y, GI = x[m], y[m], gi[m]
-        P(f"\n  用左上 patch({pb['i']},{pb['j']}) 做扫描: {len(X):,} 分子")
+        P(f"\n  sweep top-left patch({pb['i']},{pb['j']}): {len(X):,} molecules")
 
     if len(X) == 0:
-        P(f"  ✘ 扫描区域是空的（这次已经用了正确的 n_split={n_split}，"
-          f"如果还是空，说明 ROI 边界本身有问题，需要另外排查）")
+        P(f"  ✘ sweep region is empty (this time with correct n_split={n_split}; "
+          f"if still empty, the ROI bounds themselves are wrong and need separate investigation)")
         return
 
     uniq_g = np.unique(GI)
@@ -319,9 +326,9 @@ def sweep(x, y, gi, dataset, cfg, n_split):
     n_patches_total = max(n_split ** 2, 1)
     target = DATASETS[dataset]["gt_cells"] // n_patches_total
 
-    P(f"\n{SEP}\nh_s 扫描（{len(X):,} 分子 × {len(uniq_g)} 基因）")
-    P(f"目标 ≈ {target:,}（GT {DATASETS[dataset]['gt_cells']:,} / "
-      f"{n_patches_total} 块）\n{SEP}")
+    P(f"\n{SEP}\nh_s sweep ({len(X):,} molecules × {len(uniq_g)} genes)")
+    P(f"target ≈ {target:,} (GT {DATASETS[dataset]['gt_cells']:,} / "
+      f"{n_patches_total} tiles)\n{SEP}")
 
     from boms import run_boms
     rows = []
@@ -334,7 +341,7 @@ def sweep(x, y, gi, dataset, cfg, n_split):
                 y_min=float(Y.min())-1, y_max=float(Y.max())+1)
             n = len(loc)
             flag = "  ←" if 0.7*target < n < 1.4*target else ""
-            P(f"  h_s={hs:>6.1f}  {n:>8,} 细胞  vs目标{n-target:>+8,}  "
+            P(f"  h_s={hs:>6.1f}  {n:>8,} cells  vs target{n-target:>+8,}  "
               f"({time.time()-t0:.0f}s){flag}")
             rows.append((hs, n))
         except Exception as e:
@@ -344,19 +351,19 @@ def sweep(x, y, gi, dataset, cfg, n_split):
         df = pd.DataFrame(rows, columns=["h_s", "cells"])
         df["gap"] = (df.cells - target).abs()
         b = df.sort_values("gap").iloc[0]
-        P(f"\n  最接近: h_s={b.h_s} → {int(b.cells):,} 细胞"
-          f"（目标 {target:,}）")
-        P(f"  正式跑: --h-s {b.h_s}")
+        P(f"\n  closest: h_s={b.h_s} → {int(b.cells):,} cells"
+          f" (target {target:,})")
+        P(f"  full run: --h-s {b.h_s}")
         df.drop(columns=["gap"]).to_csv(
             f"{OUT_BASE}/{dataset}/hs_sweep.csv", index=False)
     else:
-        P(f"\n  ✘ 全部 h_s 都失败了，检查上面的报错信息")
+        P(f"\n  ✘ all h_s failed, check the errors above")
 
 
 def show_status(dataset):
     ckdir = f"{OUT_BASE}/{dataset}/ckpt"
     out_path = f"{OUT_BASE}/{dataset}/boms_{dataset}.npz"
-    P(f"\n{SEP}\n{dataset} 断点状态\n{SEP}")
+    P(f"\n{SEP}\n{dataset} checkpoint status\n{SEP}")
     if os.path.isdir(ckdir):
         for f in sorted(os.listdir(ckdir)):
             full = os.path.join(ckdir, f)
@@ -366,9 +373,9 @@ def show_status(dataset):
         d = np.load(out_path, allow_pickle=True)
         gt = DATASETS[dataset]["gt_cells"]
         n = len(d['cell_loc'])
-        P(f"\n  ✓ 最终结果: {n:,} 细胞  GT {gt:,}  ratio {n/gt:.3f}")
+        P(f"\n  ✓ final result: {n:,} cells  GT {gt:,}  ratio {n/gt:.3f}")
     else:
-        P(f"\n  尚无最终结果")
+        P(f"\n  no final result yet")
 
 
 def main():
@@ -376,7 +383,7 @@ def main():
     ap.add_argument("--dataset", required=True, choices=list(DATASETS))
     ap.add_argument("--top-genes", type=int, default=500)
     ap.add_argument("--grid", type=int, default=None,
-                    help="强制指定 N×N 网格，不指定则自动算")
+                    help="force N×N grid; auto-computed if omitted")
     ap.add_argument("--h-s", type=float, default=70.0)
     ap.add_argument("--h-r", type=float, default=0.3)
     ap.add_argument("--K", type=int, default=30)
@@ -404,11 +411,11 @@ def main():
     P(f"  GT {DATASETS[cfg.dataset]['gt_cells']:,}")
 
     x, y, gi, genes = load_expanded(cfg.dataset, cfg.top_genes, cfg.force)
-    # ★ 唯一计算 n_split 的地方，--check / --sweep-hs / 正式运行都用这个值
+    # ★ the only place n_split is computed; --check / --sweep-hs / full run all use it
     n_split = plan_patches(len(x), len(genes), cfg.grid)
 
     if cfg.check:
-        P(f"\n  --check：预计 {n_split}×{n_split}={n_split**2} 个 patch")
+        P(f"\n  --check: expect {n_split}×{n_split}={n_split**2} patches")
         return
 
     if cfg.sweep_hs:
@@ -416,14 +423,14 @@ def main():
         return
 
     pbs = patch_bounds(x, y, n_split, OVERLAP_UM)
-    P(f"\n  {n_split}×{n_split}={len(pbs)} 个 patch  h_s={cfg.h_s}")
+    P(f"\n  {n_split}×{n_split}={len(pbs)} patches  h_s={cfg.h_s}")
     ckpts = []
     for pb in pbs:
         ck = run_patch(pb, x, y, gi, ckdir, cfg, cfg.force)
         if ck:
             ckpts.append(ck)
     if not ckpts:
-        P("  ✘ 无成功 patch"); return
+        P("  ✘ no successful patch"); return
     merge(ckpts, genes, cfg, out_path)
 
 

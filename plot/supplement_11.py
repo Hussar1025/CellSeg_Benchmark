@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-正文图 —— 稳健性与挑战场景（六个子图，各自单独输出一个 PDF 和一个 PNG）
-  a  平台效应 vs 组织效应（每个方法一个点，y = x 对角线，阴影 = 平台效应占主导）       <- 附表 S6 "Platform vs tissue"
-  b  数据集之间方法排名的一致性：同一平台 vs 不同平台的数据集对（转录本方法 / 图像方法）  <- 与附图 S3a,b 同一计算
-  c  F1 对细胞密度：BOMS、GeneSegNet、ComSeg、ProSeg 画在同一坐标系，点按方法着色、形状区分方法，
-     每个方法一条 F1 ~ log10(密度) 的线性趋势线，图例中标出 Spearman ρ                          <- 与附图 S14 同一数据
-  d  基因面板：Xenium 标准面板与 Prime 5K 面板上的 F1 中位数（每个方法一行哑铃图）；
-     图像方法排除 H&E 输入的 xenium_1                                                         <- 与 Fig. 3c,d 同一数据
-  e  运行时间对分析区域转录本数（估计）：Cellist、Baysor、ComSeg、Cellpose-SAM 画在同一双对数坐标系，
-     每个方法一条拟合线，图例中标出斜率 k                                                     <- 与附图 S15 同一数据
-  f  每个方法的 CPU 内存峰值：全部数据集的中位数（空心）、整张切片 Xenium 胰腺癌（实心）、
-     任一数据集上的最大值（×，只在高于整张切片时画出）；竖虚线为 256 GiB 的典型工作站上限      <- 资源表
-全部文字 Arial Regular；每张图画完后检查文字是否两两重叠，有重叠就放大画布重画。
-本地运行：python main_fig_robustness.py
-（与 supp_common.py、supp_figB_rank_consistency.py、robustness_bars.py 放在同一目录）
+Main figure -- robustness and challenge scenarios (six panels, each output as one PDF and one PNG)
+  a  platform effect vs tissue effect (one point per method, y = x diagonal, shading = platform effect dominates)       <- supplementary table S6 "Platform vs tissue"
+  b  rank consistency of methods between datasets: same-platform vs across-platform dataset pairs (transcript / image methods)  <- same computation as supplementary Fig. S3a,b
+  c  F1 vs cell density: BOMS, GeneSegNet, ComSeg, ProSeg on the same axes, points colored by method and shapes distinguishing methods,
+     one linear trend line of F1 ~ log10(density) per method, Spearman ρ shown in the legend                          <- same data as supplementary Fig. S14
+  d  gene panel: median F1 on the Xenium standard panel vs the Prime 5K panel (one dumbbell row per method);
+     image methods exclude the H&E-input xenium_1                                                         <- same data as Fig. 3c,d
+  e  runtime vs transcripts in the analysis region (estimated): Cellist, Baysor, ComSeg, Cellpose-SAM on the same log-log axes,
+     one fitted line per method, slope k shown in the legend                                                     <- same data as supplementary Fig. S15
+  f  CPU peak memory per method: median over all datasets (hollow), whole-slide Xenium pancreatic cancer (filled),
+     maximum on any dataset (x, drawn only when above the whole slide); vertical dashed line = 256 GiB typical workstation limit      <- resource table
+All text Arial Regular; after each panel, check whether text overlaps and enlarge the canvas to redraw if so.
+Run locally: python main_fig_robustness.py
+(place in the same directory as supp_common.py, supp_figB_rank_consistency.py, robustness_bars.py)
 """
 import os
 
@@ -28,16 +28,16 @@ from scipy.stats import spearmanr
 import supplement_6 as C
 import supp_figB_rank_consistency as RC
 
-# ======================== 参数 ========================
-S6_FILES = [r"E:\Supplementary_Table_S6.xlsx", r"E:\Supplementary_Table_S5.xlsx", r"E:\Supplementary_Table_S7.xlsx"]
+# ======================== Parameters ========================
+S6_FILES = ["yourpath/Supplementary_Table_S6.xlsx", "yourpath/Supplementary_Table_S5.xlsx", "yourpath/Supplementary_Table_S7.xlsx"]
 OUT_DIR = C.OUT_DIR
 OUT_PREFIX = "main_fig_robustness"
 FONT = 7
-PANEL_W, PANEL_H = 2.35, 2.25          # 单个子图默认大小（inch），重叠时自动放大
+PANEL_W, PANEL_H = 2.35, 2.25          # default panel size (inch); auto-enlarged when text overlaps
 
-C_METHODS = ["BOMS", "GeneSegNet", "ComSeg", "ProSeg"]           # 子图 c
-E_METHODS = ["Cellist", "Baysor", "ComSeg", "Cellpose-SAM"]      # 子图 e
-METHOD_STYLE = {   # 子图 c、e 中每个方法的颜色与形状（颜色取自四类方法色，同类两个方法用不同形状区分）
+C_METHODS = ["BOMS", "GeneSegNet", "ComSeg", "ProSeg"]           # panel c
+E_METHODS = ["Cellist", "Baysor", "ComSeg", "Cellpose-SAM"]      # panel e
+METHOD_STYLE = {   # color and shape per method in panels c/e (colors from the four method categories; two same-category methods use different shapes)
     "ProSeg": ("#4490A9", "o"), "BOMS": ("#1F5F73", "s"), "Baysor": ("#7FB8CC", "D"),
     "ComSeg": ("#5B9BD5", "^"), "GeneSegNet": ("#E0A800", "v"), "Cellist": ("#FFC000", "P"),
     "Cellpose-SAM": ("#ED7D31", "X"),
@@ -58,7 +58,7 @@ mpl.rcParams.update({
 })
 
 
-# ======================== 通用工具 ========================
+# ======================== Utilities ========================
 def frame(ax):
     for s in ax.spines.values():
         s.set_visible(True); s.set_linewidth(0.6); s.set_color("black")
@@ -69,12 +69,12 @@ def save(fig, letter):
     for ext, kw in [(".pdf", {}), (".png", {"dpi": 600})]:
         p = os.path.join(OUT_DIR, f"{OUT_PREFIX}_{letter}{ext}")
         fig.savefig(p, bbox_inches="tight", facecolor="white", **kw)
-        print("已保存:", p)
+        print("Saved:", p)
     plt.close(fig)
 
 
 def text_overlaps(fig):
-    """所有可见文字（含刻度、标题、图例）两两比较，返回重叠的对数。"""
+    """Count overlapping pairs among all visible text (ticks, titles, legend)."""
     fig.canvas.draw()
     rend = fig.canvas.get_renderer()
     boxes = []
@@ -88,7 +88,7 @@ def text_overlaps(fig):
 
 
 def build(draw_fn, letter, w=PANEL_W, h=PANEL_H, **kw):
-    """画图并检查文字重叠；有重叠就放大画布重画（最多 10 次）。"""
+    """Draw and check text overlap; enlarge the canvas and redraw if any (up to 10 tries)."""
     n = None
     for attempt in range(10):
         fig = plt.figure(figsize=(w, h))
@@ -96,16 +96,16 @@ def build(draw_fn, letter, w=PANEL_W, h=PANEL_H, **kw):
         n = text_overlaps(fig)
         if n == 0:
             break
-        print(f"  [{letter}] 第 {attempt + 1} 次布局有 {n} 处文字重叠，放大画布重试")
+        print(f"  [{letter}] layout attempt {attempt + 1}: {n} text overlaps, enlarging canvas and retrying")
         plt.close(fig)
         w, h = w * 1.08, h * 1.08
     if n:
-        print(f"  [{letter}] 警告：放大 10 次后仍有 {n} 处文字重叠，请检查")
+        print(f"  [{letter}] [Warning] {n} text overlaps remain after 10 enlargements, please check")
     save(fig, letter)
 
 
 def place_labels(ax, xs, ys, names, fs=FONT - 1.2):
-    """方法名放在点旁边：不与其他标签、任何点或已有文字重叠，且完全在坐标框内；离点较远时画引线。"""
+    """Place method names beside points: no overlap with other labels, any point, or existing text, and fully inside the axes; draw a leader line when far from the point."""
     from matplotlib.transforms import Bbox
     fig = ax.figure
     fig.canvas.draw()
@@ -149,17 +149,17 @@ def place_labels(ax, xs, ys, names, fs=FONT - 1.2):
             break
         if best is not None:
             placed.append(best[2])
-            print(f"    [提示] 标签 '{names[i]}' 未找到完全无重叠的位置")
+            print(f"    [Hint] label '{names[i]}' has no fully non-overlapping position")
 
 
-# ======================== 数据 ========================
+# ======================== Data ========================
 def load_s6():
     for f in S6_FILES:
         if os.path.exists(f) and "Platform vs tissue" in pd.ExcelFile(f).sheet_names:
             d = pd.read_excel(f, sheet_name="Platform vs tissue", header=3).dropna(subset=["Method"])
-            print("稳健性附表：", f)
+            print("Robustness supplementary table:", f)
             return d
-    raise FileNotFoundError(f"S6_FILES 中没有含 'Platform vs tissue' 的附表：{S6_FILES}")
+    raise FileNotFoundError(f"S6_FILES has no supplementary table with 'Platform vs tissue': {S6_FILES}")
 
 
 # ======================== a ========================
@@ -182,7 +182,7 @@ def draw_a(fig, pvt):
     ax.set_ylabel("Tissue effect (median |ΔF1|)")
     frame(ax)
     xs, ys, ms = d["Platform effect"].to_numpy(float), d["Tissue effect"].to_numpy(float), list(d["Method"])
-    # 几乎重合的点合并成一个标签
+    # merge nearly overlapping points into one label
     P = ax.transData.transform(np.column_stack([xs, ys])) / (fig.dpi / 72)
     left, gx, gy, gn = list(range(len(xs))), [], [], []
     while left:
@@ -344,22 +344,22 @@ def draw_f(fig, res):
     frame(ax)
 
 
-# ======================== 主程序 ========================
+# ======================== Main ========================
 def main():
     acc = C.load_accuracy()
     meta = C.dataset_table(acc)
     d = acc.join(meta, on="ds")
     res = C.load_resources().join(meta, on="ds")
 
-    # b 的数据：与附图 S3a,b 完全相同的计算
+    # b data: identical computation to supplementary Fig. S3a,b
     agg, _ = C.RB.load_both(C.PATH_OMICS, C.PATH_IMAGE)
     pairs = {}
     for kind in ["rna", "image"]:
         Cm, plat, _ = RC.corr_matrix(agg, kind)
         Cm, plat, _ = RC.drop_incomplete(Cm, plat)
         pairs[kind] = RC.pair_table(Cm, plat)
-        print(f"[b] {kind}: 同一平台中位 ρ = {pairs[kind][pairs[kind].same].rho.median():.2f}，"
-              f"不同平台中位 ρ = {pairs[kind][~pairs[kind].same].rho.median():.2f}")
+        print(f"[b] {kind}: within-platform median ρ = {pairs[kind][pairs[kind].same].rho.median():.2f}, "
+              f"across-platform median ρ = {pairs[kind][~pairs[kind].same].rho.median():.2f}")
 
     build(draw_a, "a", w=3.1, h=3.1, pvt=load_s6())
     build(draw_b, "b", pairs=pairs)

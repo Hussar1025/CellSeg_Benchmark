@@ -1,22 +1,22 @@
 #!/usr/bin/env python
 """
-GeneSegNet 推理 —— 用胰腺癌从零训练的权重，测同平台跨组织迁移
+GeneSegNet inference - same-platform cross-tissue transfer with pancreas weights trained from scratch
 
-===== 本脚本的每一个 API 调用都来自实际读到的源码，不是猜测 =====
+===== Every API call here comes from source code actually read, not guesswork =====
 
-GeneSegModel.__init__（models.py:17-59）：
-  · pretrained_model 是路径字符串时，构造函数内部会：
+GeneSegModel.__init__ (models.py:17-59):
+  - When pretrained_model is a path string, the constructor internally:
       self.net.load_model(self.pretrained_model[0], cpu=(not self.gpu))
       self.diam_mean = self.net.diam_mean.data.cpu().numpy()[0]
-    也就是说 diam_mean 会被【checkpoint 里存的值覆盖】，我们传的
-    diam_mean 参数只在权重加载失败时才有意义。不用纠结传多少。
-  · parse_model_string() 会尝试从权重文件名解析
-    residual_on/style_on/concatenation，能解析到就直接覆盖我们传的值。
-    我们的权重文件名是
-    "GeneSegNet_residual_on_style_on_concatenation_off_models_..."，
-    大概率会被正确解析。
+    That is, diam_mean is overwritten by the value stored in the checkpoint; the
+    diam_mean argument only matters if weight loading fails. Do not fuss over its value.
+  - parse_model_string() tries to parse
+    residual_on/style_on/concatenation from the weight filename and overrides our values when found.
+    Our weight filename is
+    "GeneSegNet_residual_on_style_on_concatenation_off_models_...",
+    so it will most likely parse correctly.
 
-GeneSegModel.eval()（models.py:60-146）实际签名：
+GeneSegModel.eval() (models.py:60-146) actual signature:
     eval(self, x, batch_size=8, channels=None, channel_axis=None,
          z_axis=None, normalize=True, invert=False,
          rescale=None, diameter=None, do_3D=False, anisotropy=None,
@@ -25,29 +25,29 @@ GeneSegModel.eval()（models.py:60-146）实际签名：
          flow_threshold=0.8, confidence_threshold=0.9,
          compute_masks=True, min_size=300, stitch_threshold=0.0,
          progress=None, loop_run=False, model_loaded=False)
-  返回 (masks, flows, styles)。x 是单张 (H,W,2) 数组时走非列表分支，
-  内部会自动分块（tile=True），不需要我们手工切 patch。
+  Returns (masks, flows, styles). A single (H,W,2) array x takes the non-list branch,
+  and is tiled internally (tile=True); no manual patch cutting needed.
 
-GeneSeg_test.py 的 test() 函数展示了官方自己怎么调用 eval()——
-本脚本的调用方式直接照抄它的参数组合（channels=None 对应训练时用的
---all_channels；diameter 留 None 让网络用自己学到的 diam_labels，
-这是判断"跨组织泛化"最公平的方式——不能把目标组织的真实细胞大小
-提前告诉模型，那样就不是盲测了）。
+test() in GeneSeg_test.py shows how the official code calls eval() -
+this script copies its argument combination directly (channels=None matches --all_channels
+used in training; diameter=None lets the network use its learned diam_labels,
+the fairest way to judge "cross-tissue generalization": do not tell the model
+the target tissue's true cell size in advance, or it is no longer a blind test).
 
-===== 三个目标的定位不同 =====
-xenium_lymph / xenium_breast：与训练数据同平台（Xenium），只换组织，
-    专门用来隔离"组织差异"这一个变量，是这次微调实验最初设定的目标。
-merfish：跨平台（探针化学、原生分辨率、DAPI 染色方式都不同），
-    是更宽松的第二层测试，回答"这个泛化能力能不能扛住平台差异"，
-    不应该和前两个目标的结果放在同一个"组织泛化"结论里讨论。
+===== The three targets serve different purposes =====
+xenium_lymph / xenium_breast: same platform as training data (Xenium), only tissue changes,
+    isolating the "tissue difference" variable; this was the original fine-tuning goal.
+merfish: cross-platform (probe chemistry, native resolution, and DAPI staining all differ),
+    a looser second-tier test asking whether generalization survives platform differences;
+    do not discuss it in the same "tissue generalization" conclusion as the first two.
 
-===== 已确认可复用的既有约定 =====
-· PIXEL_SIZE = 0.2125 µm/px（两个 Xenium 目标一致，训练数据也是这个值）
-· SIGMA = 6（转录本高斯热图的模糊核，必须和训练时完全一致，
-  否则热图通道的信号分布和网络学到的不匹配）
-· GPU 选择：CUDA_VISIBLE_DEVICES 固定物理卡后，torch 内部永远是 cuda:0
+===== Established reusable conventions =====
+- PIXEL_SIZE = 0.2125 um/px (both Xenium targets agree, and training used this value)
+- SIGMA = 6 (blur kernel for the transcript Gaussian heatmap; must match training exactly,
+  or the heatmap channel distribution will not match what the network learned)
+- GPU selection: once CUDA_VISIBLE_DEVICES pins a physical card, torch always sees cuda:0
 
-用法：
+Usage:
   python run_genesegnet_infer.py --target xenium_lymph --scan-thresholds
   python run_genesegnet_infer.py --target xenium_lymph --run \
       --confidence 0.5 --flow-threshold 0.6
@@ -68,52 +68,52 @@ import tifffile
 SEP = "=" * 68
 P = lambda *a: print(*a, flush=True)
 
-GENESEGNET_PKG_DIR = "/data/qiuyijia/GeneSegNet/GeneSegNet"
-MODEL_PATH = ("/data/qiuyijia/genesegnet_pancreas_train/models/models/"
+GENESEGNET_PKG_DIR = "yourpath/GeneSegNet/GeneSegNet"
+MODEL_PATH = ("yourpath/genesegnet_pancreas_train/models/models/"
               "GeneSegNet_residual_on_style_on_concatenation_off_models_"
               "2026_07_29_16_09_58.677716")
-OUT_DIR = "/data/qiuyijia/genesegnet_infer"
+OUT_DIR = "yourpath/genesegnet_infer"
 
 PIXEL_SIZE_XENIUM = 0.2125
-SIGMA = 6                     # ★ 必须与训练时完全一致
+SIGMA = 6                     # * must match training exactly
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  目标数据集定义
+#  Target dataset definitions
 # ══════════════════════════════════════════════════════════════════════════
 TARGETS = {
     "xenium_lymph": dict(
         kind="xenium",
-        data_dir="/data/qiuyijia/dataset/xenium_roi_crop",
+        data_dir="yourpath/dataset/xenium_roi_crop",
         dapi_rel="morphology_focus/morphology_focus_0000.ome.tif",
         pixel_size=PIXEL_SIZE_XENIUM,
         roi_x0=3982.5, roi_y0=2522.5, img_w=1576, img_h=1577,
         gt_cells=2442,
-        note="同平台跨组织（Xenium 淋巴结），本次实验的主要目标之一",
+        note="Same-platform cross-tissue (Xenium lymph node), one of the main targets",
     ),
     "xenium_breast": dict(
         kind="xenium",
-        data_dir="/data/qiuyijia/dataset/xenium_breast",
+        data_dir="yourpath/dataset/xenium_breast",
         dapi_rel="morphology_focus/ch0000_dapi.ome.tif",
         pixel_size=PIXEL_SIZE_XENIUM,
         roi_x0=53994/2*PIXEL_SIZE_XENIUM - 5000*PIXEL_SIZE_XENIUM/2,
         roi_y0=27420/2*PIXEL_SIZE_XENIUM - 5000*PIXEL_SIZE_XENIUM/2,
         img_w=5000, img_h=5000,
         gt_cells=8809,
-        note="同平台跨组织（Xenium 乳腺），本次实验的主要目标之一",
+        note="Same-platform cross-tissue (Xenium breast), one of the main targets",
     ),
     "merfish": dict(
         kind="merfish",
-        data_dir="/data/qiuyijia/dataset/merfish_mouse_brain",
+        data_dir="yourpath/dataset/merfish_mouse_brain",
         stem=("datasets_mouse_brain_map_BrainReceptorShowcase_"
               "Slice1_Replicate1"),
         roi_x0=3589.0, roi_x1=5761.0, roi_y0=2327.0, roi_y1=4499.0,
         gt_cells=8444,
-        note="★ 跨平台（探针化学/原生分辨率/DAPI 染色都不同于训练数据），"
-             "是比 xenium_lymph/breast 更宽松的第二层测试，"
-             "不能和前两者的结果放在同一个'组织泛化'结论里比较",
+        note="* Cross-platform (probe chemistry/native resolution/DAPI staining all differ from training data),"
+             "a looser second-tier test than xenium_lymph/breast,"
+             "not comparable in the same 'tissue generalization' conclusion as the first two",
     ),
 }
 
@@ -129,14 +129,14 @@ def pick_gpu(min_free_gb=6.0):
     except Exception:
         return None, 0.0
     best, bf = None, -1.0
-    P("  GPU 状态：")
+    P("  GPU status:")
     for line in out.strip().splitlines():
         idx, free, util = [x.strip() for x in line.split(",")]
         fg = float(free) / 1024
         mark = ""
         if fg > bf and fg >= min_free_gb:
             best, bf, mark = idx, fg, "  ←"
-        P(f"    GPU {idx}: {fg:5.1f} GB 空闲  {util:>3}% 负载{mark}")
+        P(f"    GPU {idx}: {fg:5.1f} GB free  {util:>3}% load{mark}")
     return best, bf
 
 
@@ -146,45 +146,45 @@ def setup_gpu(want_gpu):
     else:
         gpu_str, _ = pick_gpu(6.0)
         if gpu_str is None:
-            P("  ⚠ 无 ≥6GB 空闲 GPU，将用 CPU（会慢很多）")
+            P("  WARNING: no GPU with >=6GB free; using CPU (much slower)")
     if gpu_str is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = gpu_str
-        P(f"  → 使用物理 GPU {gpu_str}（CUDA_VISIBLE_DEVICES 已设，"
-          f"torch 内部对应 cuda:0）")
+        P(f"  -> using physical GPU {gpu_str} (CUDA_VISIBLE_DEVICES set, "
+          f"torch sees it as cuda:0")
     return gpu_str is not None
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  DAPI 加载（memmap → zarr → 全量 imread 的降级顺序，和之前多次用过的一致）
+#  DAPI loading (fallback order memmap -> zarr -> full imread, same as used before)
 # ══════════════════════════════════════════════════════════════════════════
 def open_dapi_xenium(path):
     try:
         mm = tifffile.memmap(path, mode="r")
         if mm.ndim == 3:
             mm = mm[0] if mm.shape[0] <= 8 else mm[..., 0]
-        P(f"    memmap 成功  {mm.shape}  {mm.dtype}")
+        P(f"    memmap ok  {mm.shape}  {mm.dtype}")
         return mm
     except Exception as e:
-        P(f"    memmap 失败({type(e).__name__}) → 试 zarr")
+        P(f"    memmap failed ({type(e).__name__}) -> trying zarr")
     try:
         import zarr
         z = zarr.open(tifffile.imread(path, aszarr=True), mode="r")
         a = z[0] if isinstance(z, zarr.hierarchy.Group) else z
         if a.ndim == 3:
             a = a[0] if a.shape[0] <= 8 else a[..., 0]
-        P(f"    zarr 成功  {a.shape}")
+        P(f"    zarr ok  {a.shape}")
         return a
     except Exception as e:
-        P(f"    zarr 失败({type(e).__name__}) → 全量 imread")
+        P(f"    zarr failed ({type(e).__name__}) -> full imread")
     a = tifffile.imread(path)
     if a.ndim == 3:
         a = a[0] if a.shape[0] <= 8 else a[..., 0]
-    P(f"    imread 成功  {a.shape}")
+    P(f"    imread ok  {a.shape}")
     return a
 
 
 def to_u8(img, lo_pct=1, hi_pct=99.5):
-    """与训练 patch 完全一致的归一化方式：百分位拉伸到 uint8"""
+    """Normalization identical to training patches: percentile stretch to uint8"""
     if img.dtype == np.uint8:
         return img
     nz = img[img > 0]
@@ -196,7 +196,7 @@ def to_u8(img, lo_pct=1, hi_pct=99.5):
 
 
 def gaussian_heatmap(px, py, h, w, sigma=SIGMA):
-    """与训练 patch 完全一致的转录本热图生成方式"""
+    """Transcript heatmap generation identical to training patches"""
     hm = np.zeros((h, w), np.float32)
     ok = (px >= 0) & (px < w) & (py >= 0) & (py < h)
     if ok.any():
@@ -209,7 +209,7 @@ def gaussian_heatmap(px, py, h, w, sigma=SIGMA):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  按目标加载 (image_2ch, gt_centroids)
+#  Load per target (image_2ch, gt_centroids)
 # ══════════════════════════════════════════════════════════════════════════
 def load_xenium(cfg):
     x0 = cfg["roi_x0"]; y0 = cfg["roi_y0"]
@@ -219,7 +219,7 @@ def load_xenium(cfg):
 
     P(f"  ROI µm x[{x0:.1f},{x1:.1f}] y[{y0:.1f},{y1:.1f}]  "
       f"→ {w}×{h} px @ {ps} µm/px")
-    P(f"  读 DAPI {dapi_path}")
+    P(f"  reading DAPI {dapi_path}")
     dapi = open_dapi_xenium(dapi_path)
     FH, FW = dapi.shape
     px0, py0 = int(round(x0 / ps)), int(round(y0 / ps))
@@ -230,9 +230,9 @@ def load_xenium(cfg):
         pad[:crop.shape[0], :crop.shape[1]] = crop
         crop = pad
     dapi_u8 = to_u8(crop)
-    P(f"    DAPI crop {dapi_u8.shape}  均值 {dapi_u8.mean():.1f}")
+    P(f"    DAPI crop {dapi_u8.shape}  mean {dapi_u8.mean():.1f}")
 
-    P(f"  读转录本 + GT 质心 ...")
+    P(f"  reading transcripts + GT centroids ...")
     tx = pd.read_parquet(f"{cfg['data_dir']}/transcripts.parquet",
                          columns=["feature_name", "x_location",
                                   "y_location", "qv"])
@@ -243,14 +243,14 @@ def load_xenium(cfg):
         ("NegControl", "Unassigned", "BLANK", "antisense"), na=False)]
     tpx = ((tx.x_location.values - x0) / ps).astype(np.int32).clip(0, w - 1)
     tpy = ((tx.y_location.values - y0) / ps).astype(np.int32).clip(0, h - 1)
-    P(f"    转录本 {len(tx):,} 条")
+    P(f"    transcripts {len(tx):,} total")
     hm_u8 = gaussian_heatmap(tpx, tpy, h, w)
 
     gt = pd.read_parquet(f"{cfg['data_dir']}/cells.parquet",
                          columns=["cell_id", "x_centroid", "y_centroid"])
     gt = gt[(gt.x_centroid >= x0) & (gt.x_centroid < x1) &
             (gt.y_centroid >= y0) & (gt.y_centroid < y1)]
-    P(f"    GT {len(gt):,} 细胞（参考 {cfg['gt_cells']:,}）")
+    P(f"    GT {len(gt):,} cells (reference {cfg['gt_cells']:,})")
 
     image_2ch = np.stack([dapi_u8, hm_u8], axis=-1)
     gt_xy_px = np.stack([(gt.x_centroid.values - x0) / ps,
@@ -265,7 +265,7 @@ def load_merfish(cfg, resolution):
     w = int(round((x1 - x0) / resolution))
     h = int(round((y1 - y0) / resolution))
     P(f"  ROI µm x[{x0},{x1}] y[{y0},{y1}] → {w}×{h} px @ {resolution} µm/px")
-    P(f"  ★ 跨平台目标：DAPI 染色特性、原生分辨率都与训练数据不同")
+    P(f"  * cross-platform target: DAPI staining and native resolution differ from training data")
 
     tform = pd.read_csv(
         f"{d}/images/{stem}_images_micron_to_mosaic_pixel_transform.csv",
@@ -276,7 +276,7 @@ def load_merfish(cfg, resolution):
     mx1, my1 = int(np.ceil(sx * x1 + ox)), int(np.ceil(sy * y1 + oy))
 
     dapi_path = f"{d}/images/{stem}_images_mosaic_DAPI_z3.tif"
-    P(f"  读 DAPI {dapi_path}")
+    P(f"  reading DAPI {dapi_path}")
     try:
         mm = tifffile.memmap(dapi_path, mode="r")
         FH, FW = mm.shape
@@ -291,9 +291,9 @@ def load_merfish(cfg, resolution):
             a[max(0, my0):min(FH, my1), max(0, mx0):min(FW, mx1)])
     crop_u8 = to_u8(crop)
     crop_u8 = cv2.resize(crop_u8, (w, h), interpolation=cv2.INTER_AREA)
-    P(f"    DAPI crop → {crop_u8.shape}  均值 {crop_u8.mean():.1f}")
+    P(f"    DAPI crop -> {crop_u8.shape}  mean {crop_u8.mean():.1f}")
 
-    P(f"  读转录本 + GT 质心 ...")
+    P(f"  reading transcripts + GT centroids ...")
     chunks = []
     for ck in pd.read_csv(
             f"{d}/{stem}_detected_transcripts_S1R1.csv",
@@ -307,7 +307,7 @@ def load_merfish(cfg, resolution):
     tx = tx[~tx.gene.astype(str).str.startswith(("Blank", "blank", "BLANK"))]
     tpx = ((tx.global_x.values - x0) / resolution).astype(np.int32).clip(0, w-1)
     tpy = ((tx.global_y.values - y0) / resolution).astype(np.int32).clip(0, h-1)
-    P(f"    转录本 {len(tx):,} 条")
+    P(f"    transcripts {len(tx):,} total")
     hm_u8 = gaussian_heatmap(tpx, tpy, h, w)
 
     meta = pd.read_csv(
@@ -315,7 +315,7 @@ def load_merfish(cfg, resolution):
         columns={"Unnamed: 0": "cell_id"})
     gt = meta[(meta.center_x >= x0) & (meta.center_x < x1) &
               (meta.center_y >= y0) & (meta.center_y < y1)]
-    P(f"    GT {len(gt):,} 细胞（参考 {cfg['gt_cells']:,}）")
+    P(f"    GT {len(gt):,} cells (reference {cfg['gt_cells']:,})")
 
     image_2ch = np.stack([crop_u8, hm_u8], axis=-1)
     gt_xy_px = np.stack([(gt.center_x.values - x0) / resolution,
@@ -332,17 +332,17 @@ def load_target(name, resolution):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  模型
+#  Model
 # ══════════════════════════════════════════════════════════════════════════
 def build_model():
     for p in (GENESEGNET_PKG_DIR,):
         if p not in sys.path:
             sys.path.insert(0, p)
-    import models   # 与 GeneSeg_train.py 同目录下的裸模块名导入方式一致
+    import models   # bare-module import as in GeneSeg_train.py
 
     if not os.path.exists(MODEL_PATH):
-        sys.exit(f"✘ 权重不存在: {MODEL_PATH}")
-    P(f"  权重 {os.path.basename(MODEL_PATH)}  "
+        sys.exit(f"weights not found: {MODEL_PATH}")
+    P(f"  weights {os.path.basename(MODEL_PATH)}  "
       f"({os.path.getsize(MODEL_PATH)/1e6:.1f} MB)")
 
     device, gpu = models.assign_device(use_torch=True, gpu=True, device=0)
@@ -353,14 +353,14 @@ def build_model():
         gpu=gpu, device=device,
         pretrained_model=MODEL_PATH,
         model_type=None,
-        diam_mean=42.0,          # 会被 checkpoint 里存的真实值覆盖，写多少不重要
+        diam_mean=42.0,          # overwritten by the checkpoint value; value irrelevant
         residual_on=True, style_on=True, concatenation=False,
         net_avg=False,
-        nchan=2,                 # DAPI + 转录本热图，两通道
+        nchan=2,                 # DAPI + transcript heatmap, two channels
     )
-    P(f"  模型加载完成 ({time.time()-t0:.1f}s)")
-    P(f"    实际 diam_mean（从 checkpoint 读出）: {model.diam_mean:.2f}")
-    P(f"    实际 diam_labels（训练集经验直径）: {model.diam_labels:.2f}")
+    P(f"  model loaded ({time.time()-t0:.1f}s)")
+    P(f"    actual diam_mean (from checkpoint): {model.diam_mean:.2f}")
+    P(f"    actual diam_labels (empirical training diameter): {model.diam_labels:.2f}")
     return model
 
 
@@ -368,12 +368,12 @@ def run_eval(model, image_2ch, confidence, flow_threshold, min_size,
             diameter=None):
     masks, flows, styles = model.eval(
         image_2ch,
-        channels=None,            # 对应训练时用的 --all_channels
-        diameter=diameter,        # None → 用 model.diam_labels，公平盲测
+        channels=None,            # matches --all_channels used in training
+        diameter=diameter,        # None -> model.diam_labels, fair blind test
         do_3D=False,
         net_avg=False,
         augment=False,
-        tile=True,                # 大图内部自动分块，不需要手工切 patch
+        tile=True,                # tiles large images internally; no manual patching
         resample=True,
         interp=True,
         flow_threshold=flow_threshold,
@@ -383,13 +383,13 @@ def run_eval(model, image_2ch, confidence, flow_threshold, min_size,
         invert=False,
         batch_size=8,
         normalize=True,
-        model_loaded=True,        # 权重已在构造函数里加载过，不用重复加载
+        model_loaded=True,        # weights already loaded in constructor; do not reload
     )
     return masks
 
 
 def match_to_gt(masks, gt_xy_px, match_radius_px):
-    """粗略的一对一匹配，只为诊断用，不是完整评估"""
+    """Rough one-to-one matching for diagnostics only, not a full evaluation"""
     from scipy.spatial import cKDTree
     import skimage.measure
     props = skimage.measure.regionprops(masks)
@@ -415,10 +415,10 @@ def match_to_gt(masks, gt_xy_px, match_radius_px):
 def scan_thresholds(model, image_2ch, gt_xy_px, n_gt, match_radius_px,
                     confidences, flow_thresholds, min_size):
     P(f"\n{SEP}")
-    P(f"阈值扫描（GT {n_gt:,}）")
+    P(f"threshold scan (GT {n_gt:,})")
     P(SEP)
-    P(f"  {'confidence':>10} {'flow_th':>8} {'原始细胞数':>10} "
-      f"{'匹配':>6} {'vs GT':>9}")
+    P(f"  {'confidence':>10} {'flow_th':>8} {'raw cells':>10} "
+      f"{'match':>6} {'vs GT':>9}")
     P("  " + "-" * 52)
     rows = []
     for conf in confidences:
@@ -436,17 +436,17 @@ def scan_thresholds(model, image_2ch, gt_xy_px, n_gt, match_radius_px,
                              n_pred=n_pred, n_match=n_match))
     df = pd.DataFrame(rows)
     if df.n_pred.max() == 0:
-        P(f"\n  ✘ 所有阈值组合下原始细胞数都是 0")
-        P(f"     说明 flow field 对这个目标没有有效信号，"
-          f"和当初 NSCLC 权重在淋巴结上的失败模式一致")
-        P(f"     （那次扫 confidence_threshold 0.0~0.6，细胞数恒为 99，"
-          f"问题不在阈值而在模型本身没学到这类细胞的特征）")
+        P(f"\n  ✘ raw cell count is 0 for every threshold combination")
+        P(f"     the flow field has no useful signal for this target, "
+          f"matching the failure mode of NSCLC weights on lymph node")
+        P(f"     (that scan varied confidence_threshold 0.0-0.6 and count stayed at 99; "
+          f"the problem is not the threshold but that the model learned no features for these cells)")
     else:
         df["gap"] = (df.n_pred - n_gt).abs()
         b = df.sort_values("gap").iloc[0]
-        P(f"\n  最接近 GT: confidence={b.confidence} "
-          f"flow_threshold={b.flow_threshold} → {int(b.n_pred):,} 细胞")
-        P(f"  正式跑: --run --confidence {b.confidence} "
+        P(f"\n  closest to GT: confidence={b.confidence} "
+          f"flow_threshold={b.flow_threshold} -> {int(b.n_pred):,} cells")
+        P(f"  full run: --run --confidence {b.confidence} "
           f"--flow-threshold {b.flow_threshold}")
     return df
 
@@ -464,16 +464,16 @@ def main():
     ap.add_argument("--flow-threshold", type=float, default=0.6)
     ap.add_argument("--min-size", type=int, default=300)
     ap.add_argument("--diameter", type=float, default=None,
-                    help="留空=盲测（用模型自己的 diam_labels）；"
-                         "指定数值=告诉模型目标组织的真实细胞直径(px)，"
-                         "这样做更容易得高分但不是公平的泛化测试")
+                    help="empty = blind test (use the model's own diam_labels); "
+                         "a value tells the model the target tissue's true cell diameter (px); "
+                         "this scores higher but is not a fair generalization test")
     ap.add_argument("--match-radius-um", type=float, default=8.0)
     ap.add_argument("--resolution", type=float, default=0.5,
-                    help="仅 merfish 用：工作分辨率 µm/px")
+                    help="merfish only: working resolution um/px")
     ap.add_argument("--gpu", type=int, default=None)
     cfg = ap.parse_args()
 
-    P(SEP); P(f"GeneSegNet 推理 —— {cfg.target}"); P(SEP)
+    P(SEP); P(f"GeneSegNet inference - {cfg.target}"); P(SEP)
     tgt = TARGETS[cfg.target]
     setup_gpu(cfg.gpu)
 
@@ -488,28 +488,28 @@ def main():
                              match_radius_px, cfg.confidences,
                              cfg.flow_thresholds, cfg.min_size)
         df.to_csv(f"{OUT_DIR}/{cfg.target}_scan.csv", index=False)
-        P(f"\n  扫描表 → {OUT_DIR}/{cfg.target}_scan.csv")
+        P(f"\n  scan table -> {OUT_DIR}/{cfg.target}_scan.csv")
         return
 
     if not cfg.run:
-        P(f"\n  加 --scan-thresholds 先扫参数，或 --run 直接指定阈值跑一次")
+        P(f"\n  add --scan-thresholds to scan parameters first, or --run to run once with fixed thresholds")
         return
 
     P(f"\n  confidence={cfg.confidence}  flow_threshold={cfg.flow_threshold}"
-      f"  diameter={'盲测(None)' if cfg.diameter is None else cfg.diameter}")
+      f"  diameter={'blind (None)' if cfg.diameter is None else cfg.diameter}")
     masks = run_eval(model, image_2ch, cfg.confidence, cfg.flow_threshold,
                      cfg.min_size, cfg.diameter)
     n_pred = int(masks.max())
     n_pred_total, n_match = match_to_gt(masks, gt_xy_px, match_radius_px)
     P(f"\n{SEP}")
-    P(f"  细胞数 {n_pred:,}  (GT {n_gt:,}, ratio {n_pred/max(n_gt,1):.3f})")
-    P(f"  粗略匹配（仅诊断用，非完整评估）: {n_match:,}")
+    P(f"  cell count {n_pred:,}  (GT {n_gt:,}, ratio {n_pred/max(n_gt,1):.3f})")
+    P(f"  rough matching (diagnostics only, not a full evaluation): {n_match:,}")
     out_mask = f"{OUT_DIR}/{cfg.target}_mask.tif"
     tifffile.imwrite(out_mask, masks.astype(np.uint32))
     P(f"  mask → {out_mask}")
-    P(f"\n  完整 19 项指标评估：把这个 mask 接入本次对话中已经建立的")
-    P(f"  eval_cellist_xenium.py 同款评估框架（质心匹配 + 计数相关 +")
-    P(f"  基因向量余弦 + 分配准确率），而不是只看这里的粗略计数")
+    P(f"\n  full 19-metric evaluation: feed this mask into the evaluation framework")
+    P(f"  already set up in this conversation (eval_cellist_xenium.py: centroid matching + count correlation +")
+    P(f"  gene-vector cosine + assignment accuracy), not just the rough count here")
 
 
 if __name__ == "__main__":

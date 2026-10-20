@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # directory.  Anchor the worker here so those files do not end up in whatever
 # directory happened to be current when the launcher was submitted.
 cd "$SCRIPT_DIR"
-PYTHON_BIN="${PYTHON_BIN:-/data/qiuyijia/anaconda3/envs/bering/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-yourpath/anaconda3/envs/bering/bin/python}"
 RUNNER="${SCRIPT_DIR}/bering_merfish.py"
 LOG_DIR="${BERING_LOG_DIR:-${SCRIPT_DIR}/merfish_new_logs}"
 LAUNCH_LOG="${LOG_DIR}/bering_merfish_center10000_launcher.log"
@@ -41,24 +41,24 @@ NODE_EPOCHS="${BERING_NODE_EPOCHS:-}"
 EDGE_EPOCHS="${BERING_EDGE_EPOCHS:-}"
 DRY_RUN="${BERING_DRY_RUN:-0}"
 
-DATA_ROOT="${BERING_DATA_ROOT:-/data/qiuyijia/dataset}"
+DATA_ROOT="${BERING_DATA_ROOT:-yourpath/dataset}"
 OUTPUT_ROOT="${BERING_OUTPUT_ROOT:-${SCRIPT_DIR}/merfish_new_output}"
 
 # name|input directory|output directory|log file|ROI pixels|transcript CSV|Cellpose mask
 DATASETS=(
-  "merfish_Melanoma|${DATA_ROOT}/merfish_Melanoma|${OUTPUT_ROOT}/merfish_Melanoma_center10000_output|${LOG_DIR}/bering_merfish_Melanoma_center10000.log|10000|${DATA_ROOT}/merfish_Melanoma/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_output/merfish_Melanoma/pred_cellpose_roi.tif"
-  "merfish_ovarian1|${DATA_ROOT}/merfish_ovarian1|${OUTPUT_ROOT}/merfish_ovarian1_center10000_output|${LOG_DIR}/bering_merfish_ovarian1_center10000.log|10000|${DATA_ROOT}/merfish_ovarian1/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_output/merfish_ovarian1/pred_cellpose_roi.tif"
-  "merfish_ovarian2|${DATA_ROOT}/merfish_ovarian2|${OUTPUT_ROOT}/merfish_ovarian2_center10000_output|${LOG_DIR}/bering_merfish_ovarian2_center10000.log|10000|${DATA_ROOT}/merfish_ovarian2/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_output/merfish_ovarian2/pred_cellpose_roi.tif"
-  "merfish_colon1|${DATA_ROOT}/merfish_colon1|${OUTPUT_ROOT}/merfish_colon1_center10000_output|${LOG_DIR}/bering_merfish_colon1_center10000.log|10000|${DATA_ROOT}/merfish_colon1/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_output/merfish_colon1/pred_cellpose_roi.tif"
-  "merfish_colon2|${DATA_ROOT}/merfish_colon2|${OUTPUT_ROOT}/merfish_colon2_center10000_output|${LOG_DIR}/bering_merfish_colon2_center10000.log|10000|${DATA_ROOT}/merfish_colon2/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_output/merfish_colon2/pred_cellpose_roi.tif"
-  "merfish_Uterian|${DATA_ROOT}/merfish_Uterian|${OUTPUT_ROOT}/merfish_Uterian_center10000_output|${LOG_DIR}/bering_merfish_Uterian_center10000.log|10000|${DATA_ROOT}/merfish_Uterian/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_output/merfish_Uterian/pred_cellpose_roi.tif"
-  "merfish_breast_cancer|${DATA_ROOT}/merfish_breast_cancer|${OUTPUT_ROOT}/merfish_breast_cancer_center10000_output|${LOG_DIR}/bering_merfish_breast_cancer_center10000.log|10000|${DATA_ROOT}/merfish_breast_cancer/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_output/merfish_breast_cancer/pred_cellpose_roi.tif"
-  "merfish_liver1|${DATA_ROOT}/merfish_liver1|${OUTPUT_ROOT}/merfish_liver1_center10000_output|${LOG_DIR}/bering_merfish_liver1_center10000.log|10000|${DATA_ROOT}/merfish_liver1/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_liver1_output/pred_cellpose_roi.tif"
-  "merfish_liver2|${DATA_ROOT}/merfish_liver2|${OUTPUT_ROOT}/merfish_liver2_center10000_output|${LOG_DIR}/bering_merfish_liver2_center10000.log|10000|${DATA_ROOT}/merfish_liver2/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_liver2_output/pred_cellpose_roi.tif"
-  "MERFISH_Lung_cancer|${DATA_ROOT}/MERFISH_Lung_cancer|${OUTPUT_ROOT}/MERFISH_Lung_cancer_center10000_output|${LOG_DIR}/bering_MERFISH_Lung_cancer_center10000.log|10000|${DATA_ROOT}/MERFISH_Lung_cancer/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_lung_cancer/pred_cellpose_roi.tif"
-  "merfish_mouse_brain|${DATA_ROOT}/merfish_mouse_brain|${OUTPUT_ROOT}/merfish_mouse_brain_center20000_output|${LOG_DIR}/bering_merfish_mouse_brain_center20000.log|20000|${DATA_ROOT}/merfish_mouse_brain/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_detected_transcripts_S1R1.csv|/data/qiuyijia/cellpose/merfish_output/merfish_mouse_brain/pred_cellpose_roi.tif"
-  "merfish_prostate1|${DATA_ROOT}/merfish_prostate1|${OUTPUT_ROOT}/merfish_prostate1_center10000_output|${LOG_DIR}/bering_merfish_prostate1_center10000.log|10000|${DATA_ROOT}/merfish_prostate1/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_prostate1/pred_cellpose_roi.tif"
-  "merfish_prostate2|${DATA_ROOT}/merfish_prostate2|${OUTPUT_ROOT}/merfish_prostate2_center10000_output|${LOG_DIR}/bering_merfish_prostate2_center10000.log|10000|${DATA_ROOT}/merfish_prostate2/detected_transcripts.csv|/data/qiuyijia/cellpose/merfish_prostate2/pred_cellpose_roi.tif"
+  "merfish_Melanoma|${DATA_ROOT}/merfish_Melanoma|${OUTPUT_ROOT}/merfish_Melanoma_center10000_output|${LOG_DIR}/bering_merfish_Melanoma_center10000.log|10000|${DATA_ROOT}/merfish_Melanoma/detected_transcripts.csv|yourpath/cellpose/merfish_output/merfish_Melanoma/pred_cellpose_roi.tif"
+  "merfish_ovarian1|${DATA_ROOT}/merfish_ovarian1|${OUTPUT_ROOT}/merfish_ovarian1_center10000_output|${LOG_DIR}/bering_merfish_ovarian1_center10000.log|10000|${DATA_ROOT}/merfish_ovarian1/detected_transcripts.csv|yourpath/cellpose/merfish_output/merfish_ovarian1/pred_cellpose_roi.tif"
+  "merfish_ovarian2|${DATA_ROOT}/merfish_ovarian2|${OUTPUT_ROOT}/merfish_ovarian2_center10000_output|${LOG_DIR}/bering_merfish_ovarian2_center10000.log|10000|${DATA_ROOT}/merfish_ovarian2/detected_transcripts.csv|yourpath/cellpose/merfish_output/merfish_ovarian2/pred_cellpose_roi.tif"
+  "merfish_colon1|${DATA_ROOT}/merfish_colon1|${OUTPUT_ROOT}/merfish_colon1_center10000_output|${LOG_DIR}/bering_merfish_colon1_center10000.log|10000|${DATA_ROOT}/merfish_colon1/detected_transcripts.csv|yourpath/cellpose/merfish_output/merfish_colon1/pred_cellpose_roi.tif"
+  "merfish_colon2|${DATA_ROOT}/merfish_colon2|${OUTPUT_ROOT}/merfish_colon2_center10000_output|${LOG_DIR}/bering_merfish_colon2_center10000.log|10000|${DATA_ROOT}/merfish_colon2/detected_transcripts.csv|yourpath/cellpose/merfish_output/merfish_colon2/pred_cellpose_roi.tif"
+  "merfish_Uterian|${DATA_ROOT}/merfish_Uterian|${OUTPUT_ROOT}/merfish_Uterian_center10000_output|${LOG_DIR}/bering_merfish_Uterian_center10000.log|10000|${DATA_ROOT}/merfish_Uterian/detected_transcripts.csv|yourpath/cellpose/merfish_output/merfish_Uterian/pred_cellpose_roi.tif"
+  "merfish_breast_cancer|${DATA_ROOT}/merfish_breast_cancer|${OUTPUT_ROOT}/merfish_breast_cancer_center10000_output|${LOG_DIR}/bering_merfish_breast_cancer_center10000.log|10000|${DATA_ROOT}/merfish_breast_cancer/detected_transcripts.csv|yourpath/cellpose/merfish_output/merfish_breast_cancer/pred_cellpose_roi.tif"
+  "merfish_liver1|${DATA_ROOT}/merfish_liver1|${OUTPUT_ROOT}/merfish_liver1_center10000_output|${LOG_DIR}/bering_merfish_liver1_center10000.log|10000|${DATA_ROOT}/merfish_liver1/detected_transcripts.csv|yourpath/cellpose/merfish_liver1_output/pred_cellpose_roi.tif"
+  "merfish_liver2|${DATA_ROOT}/merfish_liver2|${OUTPUT_ROOT}/merfish_liver2_center10000_output|${LOG_DIR}/bering_merfish_liver2_center10000.log|10000|${DATA_ROOT}/merfish_liver2/detected_transcripts.csv|yourpath/cellpose/merfish_liver2_output/pred_cellpose_roi.tif"
+  "MERFISH_Lung_cancer|${DATA_ROOT}/MERFISH_Lung_cancer|${OUTPUT_ROOT}/MERFISH_Lung_cancer_center10000_output|${LOG_DIR}/bering_MERFISH_Lung_cancer_center10000.log|10000|${DATA_ROOT}/MERFISH_Lung_cancer/detected_transcripts.csv|yourpath/cellpose/merfish_lung_cancer/pred_cellpose_roi.tif"
+  "merfish_mouse_brain|${DATA_ROOT}/merfish_mouse_brain|${OUTPUT_ROOT}/merfish_mouse_brain_center20000_output|${LOG_DIR}/bering_merfish_mouse_brain_center20000.log|20000|${DATA_ROOT}/merfish_mouse_brain/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_detected_transcripts_S1R1.csv|yourpath/cellpose/merfish_output/merfish_mouse_brain/pred_cellpose_roi.tif"
+  "merfish_prostate1|${DATA_ROOT}/merfish_prostate1|${OUTPUT_ROOT}/merfish_prostate1_center10000_output|${LOG_DIR}/bering_merfish_prostate1_center10000.log|10000|${DATA_ROOT}/merfish_prostate1/detected_transcripts.csv|yourpath/cellpose/merfish_prostate1/pred_cellpose_roi.tif"
+  "merfish_prostate2|${DATA_ROOT}/merfish_prostate2|${OUTPUT_ROOT}/merfish_prostate2_center10000_output|${LOG_DIR}/bering_merfish_prostate2_center10000.log|10000|${DATA_ROOT}/merfish_prostate2/detected_transcripts.csv|yourpath/cellpose/merfish_prostate2/pred_cellpose_roi.tif"
 )
 
 usage() {

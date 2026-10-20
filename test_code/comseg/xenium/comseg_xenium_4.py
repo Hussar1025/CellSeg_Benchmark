@@ -67,17 +67,17 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 DATASETS = {
-    "xenium_8": {"root": "/data/qiuyijia/dataset/xenium_8", "tag": "xenium_8"},
-    "pancreas": {"root": "/data/qiuyijia/dataset/xenium_pancreas_cancer", "tag": "pancreas"},
-    "breast": {"root": "/data/qiuyijia/dataset/xenium_breast", "tag": "breast"},
-    "colon": {"root": "/data/qiuyijia/dataset/xenium_colon", "tag": "colon"},
-    "colon": {"root": "/data/qiuyijia/dataset/xenium_colon", "tag": "colon"},
-    "liver": {"root": "/data/qiuyijia/dataset/xenium_liver", "tag": "liver"},
-    "mouse_brain": {"root": "/data/qiuyijia/dataset/xenium_mouse_brain",
+    "xenium_8": {"root": "yourpath/dataset/xenium_8", "tag": "xenium_8"},
+    "pancreas": {"root": "yourpath/dataset/xenium_pancreas_cancer", "tag": "pancreas"},
+    "breast": {"root": "yourpath/dataset/xenium_breast", "tag": "breast"},
+    "colon": {"root": "yourpath/dataset/xenium_colon", "tag": "colon"},
+    "colon": {"root": "yourpath/dataset/xenium_colon", "tag": "colon"},
+    "liver": {"root": "yourpath/dataset/xenium_liver", "tag": "liver"},
+    "mouse_brain": {"root": "yourpath/dataset/xenium_mouse_brain",
                     "tag": "mouse_brain"},
 }
-OUT_TEMPLATE = "/data/qiuyijia/comseg_xenium_{tag}_roi{roi}"
-CELLIST_TEMPLATE = "/data/qiuyijia/cellist_xenium_{tag}_roi{roi}"
+OUT_TEMPLATE = "yourpath/comseg_xenium_{tag}_roi{roi}"
+CELLIST_TEMPLATE = "yourpath/cellist_xenium_{tag}_roi{roi}"
 
 CONTROL_PREFIXES = (
     "NegControlProbe", "NegControlCodeword", "negcontrol",

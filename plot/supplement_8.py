@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-附图 —— 数据集特征与分割准确性的关系（两个子图各出一张图：supp_fig_features_a / supp_fig_features_b）
-  a  每个方法的 F1 与四项数据集特征的 Spearman 相关（细胞密度、每细胞转录本数、基因面板大小、分析区域细胞数）；
-     格内标出 ρ，P < 0.05 加 *（各格的 n 写在 _spearman.csv 中）；空白格画一条细黑虚线
-  b  每个方法一格：F1 对细胞密度（cells/mm²），点按平台着色，标出全部数据集与 MERFISH 内的 Spearman ρ
-每细胞转录本数取自全样本（附表 S1 的规模信息）；密度 = 分析区域参考细胞数 / 面积，面积缺失的数据集不参与密度分析。
-本地运行：python supp_fig_features.py（与 supp_common.py、robustness_bars.py 放在同一目录）
+Supplementary figure — dataset features vs segmentation accuracy (two figures, one per panel: supp_fig_features_a / supp_fig_features_b)
+  a  Spearman correlation of F1 with four dataset features per method (cell density, transcripts per cell, gene panel size, region cell count);
+     each cell shows ρ, P < 0.05 adds * (per-cell n is written to _spearman.csv); empty cells show a thin black dashed line
+  b  One cell per method: F1 vs cell density (cells/mm²), colored by platform, with Spearman ρ over all datasets and within MERFISH
+Transcripts per cell is taken from the whole sample (scale info in Table S1); density = region reference cell count / area, datasets without area are excluded from the density analysis.
+Local run: python supp_fig_features.py (same directory as supp_common.py, robustness_bars.py)
 """
 import numpy as np
 import pandas as pd
@@ -50,7 +50,7 @@ def compute():
 
 
 def figure_a(R):
-    """F1 与数据集特征的 Spearman 相关热图（单独一张图）。"""
+    """Spearman correlation heatmap between F1 and dataset features (single figure)."""
     fig = plt.figure(figsize=(5.4, 4.4))
     axA = fig.add_axes([0.20, 0.12, 0.50, 0.78])
     labs = [f.replace("\n", " ") for _, f in FEATS]
@@ -86,7 +86,7 @@ def figure_a(R):
 
 
 def figure_b(d, gap_x=0.08, gap_y=0.11):
-    """每个方法一格的 F1 vs 细胞密度（单独一张图）。间距不足时自动加大，直到各小图互不重叠。"""
+    """One cell per method: F1 vs cell density (single figure). Spacing is auto-enlarged until panels no longer overlap."""
     nc = 4
     for attempt in range(8):
         fig = plt.figure(figsize=(7.2, 7.6))
@@ -119,7 +119,7 @@ def figure_b(d, gap_x=0.08, gap_y=0.11):
         hits = C.check_no_overlap(fig, axes)
         if hits == 0:
             break
-        print(f"  [b] 第 {attempt + 1} 次布局有 {hits} 处重叠，加大间距重试")
+        print(f"  [b] layout attempt {attempt + 1} has {hits} overlaps, enlarging spacing and retrying")
         plt.close(fig)
         gap_x, gap_y = gap_x + 0.015, gap_y + 0.015
     fig.legend(handles=[Line2D([], [], ls="", marker="o", ms=4, mfc=C.PLAT_COLOR[p], mec="black", mew=0.3,
@@ -134,7 +134,7 @@ def main():
     figure_a(R)
     figure_b(d)
     R.round(4).to_csv(f"{C.OUT_DIR}/{OUT_NAME}_spearman.csv", index=False)
-    print("已保存:", f"{C.OUT_DIR}/{OUT_NAME}_spearman.csv")
+    print("Saved:", f"{C.OUT_DIR}/{OUT_NAME}_spearman.csv")
 
 
 if __name__ == "__main__":

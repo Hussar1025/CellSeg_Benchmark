@@ -1,20 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-eval_boms_stereo.py —— BOMS × Stereo-seq 评估（19 指标 × 3 切片）
+eval_boms_stereo.py — BOMS × Stereo-seq evaluation (19 metrics × 3 slices)
 =========================================================================
-GT：GEM CellBin（CellID 列），GT 质心 = 各细胞分子加权重心
-pred：boms_stereo_1.py 产出的 npz（top-500 基因，展开 UMI）
-坐标：pred(µm) 和 GT(µm=bin×0.5) 直接对齐，无需转换
+GT: GEM CellBin (CellID column); GT centroid = count-weighted center of each
+    cell's molecules
+pred: npz produced by boms_stereo_1.py (top-500 genes, expanded UMIs)
+coords: pred(µm) and GT(µm=bin×0.5) align directly, no conversion needed
 
-★ 关键适配点（与 Xenium 评估的区别）：
-  · GT 来自 GEM CellBin 的 CellID 列（非单独 cells.parquet）
-  · 计数 / 基因向量对比仅用 pred 基因集（top-500），保证公平
-  · 每行 MIDCount>1 时按 count 加权，不展开
+★ Key adaptations (vs. the Xenium evaluation):
+  - GT comes from the GEM CellBin CellID column (not a separate cells.parquet)
+  - count / gene-vector comparison uses only the pred gene set (top-500), for fairness
+  - rows with MIDCount>1 are count-weighted, not expanded
 
 conda activate ucs
-python eval_boms_stereo.py                         # 跑全部 3 切片
-python eval_boms_stereo.py --datasets E16.5_E2S6   # 只跑 1 个
+python eval_boms_stereo.py                         # run all 3 slices
+python eval_boms_stereo.py --datasets E16.5_E2S6   # run just 1
 """
 
 import os, sys, warnings, gzip, argparse, time
@@ -27,14 +28,14 @@ from scipy.spatial.distance import jensenshannon
 warnings.filterwarnings("ignore")
 SEP = "=" * 68
 
-# ── 路径 ──────────────────────────────────────────────────────────────
-DATA_DIR = "/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all"
-OUT_BASE = "/data/qiuyijia/boms_stereo"
-EVAL_DIR = "/data/qiuyijia/eval_results/boms"
+# ── paths ──────────────────────────────────────────────────────────────
+DATA_DIR = "yourpath/dataset/stereoseq/stereo-seq_data_all"
+OUT_BASE = "yourpath/boms_stereo"
+EVAL_DIR = "yourpath/eval_results/boms"
 
-BIN_UM       = 0.5     # 1 bin = 0.5µm
-MATCH_RADIUS = 20.0    # µm；与 Xenium 评估保持一致
-QV_MIN       = None     # Stereo-seq 无 QV 字段
+BIN_UM       = 0.5     # 1 bin = 0.5 µm
+MATCH_RADIUS = 20.0    # µm; consistent with the Xenium evaluation
+QV_MIN       = None     # Stereo-seq has no QV field
 
 DATASETS = {
     "E14.5_E1S3": dict(
@@ -55,10 +56,10 @@ os.makedirs(EVAL_DIR, exist_ok=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  辅助：读 GEM CellBin
+#  helper: read GEM CellBin
 # ══════════════════════════════════════════════════════════════════════════
 def _read_gem(gem_path):
-    """读 GEM CellBin，自动检测列名，返回统一 DataFrame (gene,x,y,count,cell)"""
+    """Read GEM CellBin, auto-detect column names, return a unified DataFrame (gene,x,y,count,cell)."""
     opener = gzip.open if gem_path.endswith(".gz") else open
     skip = 0
     with opener(gem_path, "rt") as fh:
@@ -69,7 +70,7 @@ def _read_gem(gem_path):
                 break
     gem = pd.read_csv(gem_path, sep="\t", skiprows=skip)
 
-    # 统一列名
+    # unify column names
     ren = {}
     for c in gem.columns:
         cl = c.lower().strip()
@@ -83,7 +84,7 @@ def _read_gem(gem_path):
             ren[c] = "count"
         elif cl in ("cellid", "cell_id", "cell", "cellbin"):
             ren[c] = "cell"
-        elif cl == "label":          # 有些版本用 label 列
+        elif cl == "label":          # some versions use a label column
             if "cell" not in ren.values():
                 ren[c] = "cell"
     gem = gem.rename(columns=ren)
@@ -91,7 +92,7 @@ def _read_gem(gem_path):
     if "count" not in gem.columns:
         gem["count"] = 1
     if "cell" not in gem.columns:
-        raise ValueError(f"找不到 cell 列，实际列: {list(gem.columns)}")
+        raise ValueError(f"cell column not found, actual columns: {list(gem.columns)}")
 
     # bin → µm
     gem["x_um"] = gem["x"].astype(np.float64) * BIN_UM
@@ -100,23 +101,23 @@ def _read_gem(gem_path):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  单切片评估
+#  single-slice evaluation
 # ══════════════════════════════════════════════════════════════════════════
 def evaluate_one(name, info):
     t_start = time.time()
     print(f"\n{SEP}")
-    print(f"  BOMS × Stereo-seq {name}  评估")
+    print(f"  BOMS × Stereo-seq {name}  evaluation")
     print(SEP)
 
     npz_path = info["npz"]
     gem_path = info["gem"]
     if not os.path.exists(npz_path):
-        print(f"  ✘ npz 不存在: {npz_path}"); return None
+        print(f"  ✘ npz not found: {npz_path}"); return None
 
     # ════════════════════════════════════════════════════════════════════
-    # 1. 读 BOMS npz
+    # 1. read BOMS npz
     # ════════════════════════════════════════════════════════════════════
-    print("\n[1] 读 BOMS npz ...")
+    print("\n[1] read BOMS npz ...")
     d = np.load(npz_path, allow_pickle=True)
     cell_loc   = d["cell_loc"].astype(np.float64)      # (n_pred, 2) µm [x, y]
     seg        = d["seg"].astype(np.int64)              # per-mol cell idx (0-based)
@@ -128,32 +129,32 @@ def evaluate_one(name, info):
     n_gene     = len(gene_names)
     pred_xy    = cell_loc  # (n_pred, 2)
 
-    pred_per_cell = np.asarray(count_mat.sum(axis=1)).ravel()  # 每细胞转录本数
+    pred_per_cell = np.asarray(count_mat.sum(axis=1)).ravel()  # transcripts per cell
 
-    print(f"  pred 细胞: {n_pred:,}  分子: {len(seg):,}  基因: {n_gene}")
+    print(f"  pred cells: {n_pred:,}  molecules: {len(seg):,}  genes: {n_gene}")
     print(f"  cell_loc x: [{cell_loc[:,0].min():.1f},{cell_loc[:,0].max():.1f}]"
           f"  y: [{cell_loc[:,1].min():.1f},{cell_loc[:,1].max():.1f}] µm")
 
     # ════════════════════════════════════════════════════════════════════
-    # 2. 读 GT（GEM CellBin）
+    # 2. read GT (GEM CellBin)
     # ════════════════════════════════════════════════════════════════════
-    print("\n[2] 读 GT (GEM CellBin) ...")
+    print("\n[2] read GT (GEM CellBin) ...")
     gem = _read_gem(gem_path)
-    print(f"  GEM 总行: {len(gem):,}  基因: {gem.gene.nunique():,}")
+    print(f"  GEM total rows: {len(gem):,}  genes: {gem.gene.nunique():,}")
 
-    # 过滤：只看 BOMS 用的基因集（公平对比）
+    # filter: keep only the gene set BOMS used (fair comparison)
     pred_gene_set = set(gene_names)
     gene2i = {g: i for i, g in enumerate(gene_names)}
     gem_f = gem[gem.gene.isin(pred_gene_set)].copy()
-    print(f"  过滤到 pred 基因集后: {len(gem_f):,} 行")
+    print(f"  after filtering to the pred gene set: {len(gem_f):,} rows")
 
-    # GT 细胞（cell>0 = 有分配）
+    # GT cells (cell>0 = assigned)
     gt_mol = gem_f[gem_f.cell > 0].copy()
     gt_cell_ids = gt_mol.cell.unique()
     n_gt = len(gt_cell_ids)
-    print(f"  GT 细胞数: {n_gt:,}  (参考 {info['gt_cells']:,})")
+    print(f"  GT cells: {n_gt:,}  (reference {info['gt_cells']:,})")
 
-    # GT 质心（按 count 加权重心）
+    # GT centroid (count-weighted center)
     gt_mol["wx"] = gt_mol["x_um"] * gt_mol["count"]
     gt_mol["wy"] = gt_mol["y_um"] * gt_mol["count"]
     grp = gt_mol.groupby("cell").agg(
@@ -161,36 +162,36 @@ def evaluate_one(name, info):
     )
     grp["cx"] = grp["wx"] / grp["total"]
     grp["cy"] = grp["wy"] / grp["total"]
-    gt_cell_order = grp.index.values   # cell ID 顺序
+    gt_cell_order = grp.index.values   # cell ID order
     gt_xy = grp[["cx", "cy"]].values.astype(np.float64)  # (n_gt, 2)
-    gt_counts = grp["total"].values.astype(float)         # pred 基因集内的计数
-    print(f"  GT 质心 x: [{gt_xy[:,0].min():.1f},{gt_xy[:,0].max():.1f}]"
+    gt_counts = grp["total"].values.astype(float)         # counts within the pred gene set
+    print(f"  GT centroid x: [{gt_xy[:,0].min():.1f},{gt_xy[:,0].max():.1f}]"
           f"  y: [{gt_xy[:,1].min():.1f},{gt_xy[:,1].max():.1f}] µm")
 
     # ════════════════════════════════════════════════════════════════════
-    # 3. GT 基因向量（n_gt × n_gene，pred 基因集对齐）
+    # 3. GT gene vectors (n_gt × n_gene, aligned to the pred gene set)
     # ════════════════════════════════════════════════════════════════════
-    print("\n[3] 构建 GT 基因矩阵 ...")
+    print("\n[3] build GT gene matrix ...")
     gt_mol["gi"] = gt_mol["gene"].map(gene2i)
     gt_gene_agg = (gt_mol.groupby(["cell", "gi"])["count"]
                    .sum().reset_index())
-    # cell → 在 gt_cell_order 中的行号
+    # cell → row index in gt_cell_order
     cell2row = {c: i for i, c in enumerate(gt_cell_order)}
     gt_gene_agg["row"] = gt_gene_agg["cell"].map(cell2row)
     gt_gene_mat = np.zeros((n_gt, n_gene), dtype=np.int32)
     gt_gene_mat[gt_gene_agg["row"].values,
                 gt_gene_agg["gi"].values] = gt_gene_agg["count"].values
-    print(f"  GT 基因矩阵: {gt_gene_mat.shape}  "
-          f"非零率: {(gt_gene_mat > 0).mean():.2%}")
+    print(f"  GT gene matrix: {gt_gene_mat.shape}  "
+          f"nonzero fraction: {(gt_gene_mat > 0).mean():.2%}")
 
     # ════════════════════════════════════════════════════════════════════
-    # 4. 匹配
+    # 4. matching
     # ════════════════════════════════════════════════════════════════════
-    print(f"\n[4] 匹配（radius={MATCH_RADIUS}µm）...")
+    print(f"\n[4] matching (radius={MATCH_RADIUS}µm)...")
     tree = cKDTree(gt_xy)
     dists, gi = tree.query(pred_xy, k=1, distance_upper_bound=MATCH_RADIUS)
 
-    # 每个 GT 只匹配最近的 pred（一对一，贪心）
+    # each GT keeps only its nearest pred (one-to-one, greedy)
     best = {}
     for pi in range(n_pred):
         if dists[pi] >= MATCH_RADIUS:
@@ -212,9 +213,9 @@ def evaluate_one(name, info):
     gi_arr = [p[1] for p in pairs]
 
     # ════════════════════════════════════════════════════════════════════
-    # 5. 计数指标（仅 pred 基因集内的转录本）
+    # 5. count metrics (transcripts within the pred gene set only)
     # ════════════════════════════════════════════════════════════════════
-    print("\n[5] 计数指标 ...")
+    print("\n[5] count metrics ...")
     p_cnt = pred_per_cell[pi_arr].astype(float)
     g_cnt = gt_counts[gi_arr].astype(float)
 
@@ -229,9 +230,9 @@ def evaluate_one(name, info):
           f"  MAE={count_mae:.1f}  RMSE={count_rmse:.1f}")
 
     # ════════════════════════════════════════════════════════════════════
-    # 6. 基因向量（抽样 800 对）
+    # 6. gene vectors (sample 800 pairs)
     # ════════════════════════════════════════════════════════════════════
-    print("\n[6] 基因向量（抽样 800 对）...")
+    print("\n[6] gene vectors (sample 800 pairs)...")
     np.random.seed(42)
     samp = np.random.choice(len(pairs), min(800, len(pairs)), replace=False)
 
@@ -256,10 +257,10 @@ def evaluate_one(name, info):
     print(f"  cosine={vec_cosine:.4f}  JS={vec_js:.4f}  pearson={vec_pearson:.4f}")
 
     # ════════════════════════════════════════════════════════════════════
-    # 7. 分配指标
+    # 7. assignment metrics
     # ════════════════════════════════════════════════════════════════════
-    print("\n[7] 分配指标 ...")
-    # 为每个 BOMS 分子找最近的 GT 质心 → "真实"所属 GT 细胞
+    print("\n[7] assignment metrics ...")
+    # for each BOMS molecule, find the nearest GT centroid → its "true" GT cell
     tree_gt = cKDTree(gt_xy)
     d_tx, gi_tx = tree_gt.query(
         np.stack([tx_x, tx_y], axis=1), k=1,
@@ -285,7 +286,7 @@ def evaluate_one(name, info):
     print(f"  overlap={assign_overlap:.4f}  accuracy={assign_accuracy:.4f}")
 
     # ════════════════════════════════════════════════════════════════════
-    # 汇总
+    # summary
     # ════════════════════════════════════════════════════════════════════
     elapsed = time.time() - t_start
     metrics = dict(
@@ -311,28 +312,28 @@ def evaluate_one(name, info):
         assign_accuracy = round(assign_accuracy, 4),
     )
 
-    print(f"\n{SEP}\n结果 (BOMS × Stereo-seq {name})\n{SEP}")
+    print(f"\n{SEP}\nresults (BOMS × Stereo-seq {name})\n{SEP}")
     for k, v in metrics.items():
         print(f"  {k:22} {v}")
 
     out_csv = os.path.join(EVAL_DIR, f"stereo_{name}.csv")
     pd.DataFrame([metrics]).to_csv(out_csv, index=False)
-    print(f"\n  已写 → {out_csv}  ({elapsed:.0f}s)")
+    print(f"\n  written → {out_csv}  ({elapsed:.0f}s)")
     return metrics
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  主入口
+#  main entry
 # ══════════════════════════════════════════════════════════════════════════
 def main():
     global MATCH_RADIUS
     ap = argparse.ArgumentParser(
-        description="BOMS × Stereo-seq 评估（19 指标 × 3 切片）")
+        description="BOMS × Stereo-seq evaluation (19 metrics × 3 slices)")
     ap.add_argument("--datasets", nargs="+", default=list(DATASETS.keys()),
                     choices=list(DATASETS.keys()),
-                    help="要评估的切片，默认全部 3 个")
+                    help="slices to evaluate; default all 3")
     ap.add_argument("--match-radius", type=float, default=MATCH_RADIUS,
-                    help="匹配半径 µm，默认 20")
+                    help="match radius in µm, default 20")
     args = ap.parse_args()
 
     MATCH_RADIUS = args.match_radius
@@ -344,20 +345,20 @@ def main():
             if m:
                 all_metrics.append(m)
         except Exception as e:
-            print(f"\n  ✘ {name} 评估失败: {e}")
+            print(f"\n  ✘ {name} evaluation failed: {e}")
             import traceback; traceback.print_exc()
 
     if not all_metrics:
-        print("\n✘ 无任何切片评估成功")
+        print("\n✘ no slice evaluated successfully")
         sys.exit(1)
 
-    # ── 合并汇总 ──────────────────────────────────────────────────────
+    # ── combined summary ──────────────────────────────────────────────────────
     df = pd.DataFrame(all_metrics)
     combined = os.path.join(EVAL_DIR, "stereo_all.csv")
     df.to_csv(combined, index=False)
 
     print(f"\n\n{'='*78}")
-    print(f"  三切片汇总")
+    print(f"  three-slice summary")
     print(f"{'='*78}")
 
     show_cols = ["dataset", "gt_cells", "pred_cells", "f1",
@@ -368,16 +369,16 @@ def main():
                            "display.width", 120):
         print(df[[c for c in show_cols if c in df.columns]].to_string(index=False))
 
-    # ── 均值行 ──
+    # ── mean row ──
     num_cols = df.select_dtypes(include=[np.number]).columns
     means = df[num_cols].mean()
-    print(f"\n  ── 均值 ──")
+    print(f"\n  ── mean ──")
     for c in ["f1", "loc_median_um", "count_pearson",
               "vec_cosine", "vec_js_dist", "assign_overlap", "assign_accuracy"]:
         if c in means:
             print(f"  {c:22} {means[c]:.4f}")
 
-    print(f"\n  已写 → {combined}")
+    print(f"\n  written → {combined}")
     print()
 
 

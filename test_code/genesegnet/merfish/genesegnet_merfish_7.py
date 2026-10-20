@@ -20,11 +20,11 @@ Training/inference contract copied from genesegnet_merfish_1.py:
   * model checkpoint is loaded directly with GeneSegModel.
 
 Default model:
-  /data/qiuyijia/genesegnet_merfish_1/model/models/
+  yourpath/genesegnet_merfish_1/model/models/
   GeneSegNet_residual_on_style_off_concatenation_off_model_2026_08_23_13_02_46.093274
 
 Output:
-  /data/qiuyijia/genesegnet_merfish_1_infer/
+  yourpath/genesegnet_merfish_1_infer/
       tiles/*.tif
       genesegnet_merfish1_roi20000_mask.tif
       tile_qc.tsv
@@ -51,18 +51,18 @@ from scipy.spatial import cKDTree
 # ---------------------------------------------------------------------
 # Paths / constants
 # ---------------------------------------------------------------------
-ROOT_DEFAULT = Path("/data/qiuyijia/dataset/merfish_colon1")
+ROOT_DEFAULT = Path("yourpath/dataset/merfish_colon1")
 DAPI_DEFAULT = ROOT_DEFAULT / "imgs/mosaic_DAPI_z3.tif"
 TRANSFORM_DEFAULT = ROOT_DEFAULT / "imgs/micron_to_mosaic_pixel_transform.csv"
 TX_DEFAULT = ROOT_DEFAULT / "detected_transcripts.csv"
 
 MODEL_DEFAULT = Path(
-    "/data/qiuyijia/genesegnet_merfish_1/model/models/"
+    "yourpath/genesegnet_merfish_1/model/models/"
     "GeneSegNet_residual_on_style_off_concatenation_off_model_2026_08_23_13_02_46.093274"
 )
 
-OUT_DEFAULT = Path("/data/qiuyijia/genesegnet_merfish_colon1_infer")
-REPO_DEFAULT = Path("/data/qiuyijia/GeneSegNet")
+OUT_DEFAULT = Path("yourpath/genesegnet_merfish_colon1_infer")
+REPO_DEFAULT = Path("yourpath/GeneSegNet")
 
 H = 75663
 W = 114245

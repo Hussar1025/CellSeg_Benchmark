@@ -1,26 +1,26 @@
 """
-eval_cellist_cosmx.py — Cellist vs CosMx GT
-============================================
-参考代码: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
+eval_cellist_cosmx.py - Cellist vs CosMx GT
+===========================================
+Reference: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
 
-Cellist 坐标系（关键）：
-  cell_coord / segmentation.txt 中：
-    x 列 = ROW 方向（垂直 = 图像行 = GT y_global_px 方向）
-    y 列 = COL 方向（水平 = 图像列 = GT x_global_px 方向）
+Cellist coordinate system (critical):
+  In cell_coord / segmentation.txt:
+    x column = ROW direction (vertical = image row = GT y_global_px direction)
+    y column = COL direction (horizontal = image column = GT x_global_px direction)
 
-  即 Cellist x ↔ GT y，Cellist y ↔ GT x（两者对调！）
+  Therefore Cellist x <-> GT y, Cellist y <-> GT x (swapped).
 
-  全局坐标转换：
-    GT x_um = (Cellist_y_local + fov_ox) × pixel_size  （水平方向）
-    GT y_um = (Cellist_x_local + fov_oy) × pixel_size  （垂直方向）
+  Global coordinate conversion:
+    GT x_um = (Cellist_y_local + fov_ox) * pixel_size  (horizontal)
+    GT y_um = (Cellist_x_local + fov_oy) * pixel_size  (vertical)
 
-  转录本坐标查询：
-    cellist_x_key = (y_global_px - fov_oy) // 4 × 4    （GT y → Cellist x = ROW）
-    cellist_y_key = (x_global_px - fov_ox) // 4 × 4    （GT x → Cellist y = COL）
+  Transcript coordinate query:
+    cellist_x_key = (y_global_px - fov_oy) // 4 * 4    (GT y -> Cellist x = ROW)
+    cellist_y_key = (x_global_px - fov_ox) // 4 * 4    (GT x -> Cellist y = COL)
 
-运行：
+Run:
   conda activate genesegnet_env
-  python eval_cellist_cosmx.py --output-dir /data/qiuyijia/eval_results/cellist
+  python eval_cellist_cosmx.py --output-dir yourpath
 """
 from __future__ import annotations
 
@@ -43,13 +43,13 @@ from sklearn.neighbors import NearestNeighbors
 EPS = 1e-12
 SCRIPT_VERSION = "2026-06-08-genesegnet-label-image-eval-input-layer-v1"
 
-DATA_DIR         = "/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles"
+DATA_DIR         = "yourpath"
 GT_METADATA_PATH = os.path.join(DATA_DIR, "Pancreas_metadata_file.csv")
 TX_FILE          = os.path.join(DATA_DIR, "Pancreas_tx_file.csv")
 
-CELLIST_DIR   = "/data/qiuyijia/cellist/cellist_cosmx"
+CELLIST_DIR   = "yourpath"
 PIXEL_SIZE_UM = 0.1203
-CELLIST_BIN   = 4      # Cellist 输出的 bin 分辨率（像素）
+CELLIST_BIN   = 4      # Cellist output bin resolution (pixels)
 FOV_IDS       = list(range(51, 69))
 
 
@@ -59,7 +59,7 @@ class EvaluationConfig:
     gt_transcripts_path:  str   = TX_FILE
     cellist_dir:          str   = CELLIST_DIR
     pixel_size_um:        float = PIXEL_SIZE_UM
-    output_dir:           str   = "/data/qiuyijia/eval_results/cellist"
+    output_dir:           str   = "yourpath"
     method_name:          str   = "Cellist"
     cell_id_col:          str   = "cell_id"
     gt_cell_id_col:       str   = "cell_id"
@@ -80,7 +80,7 @@ class EvaluationConfig:
     verbose:                      bool  = True
 
 
-# ── 工具函数：递归查找 Cellist 文件 ──────────────────────────────────────────
+# Utility: recursively find Cellist files
 def find_cellist_file(cellist_dir: str, fov_id: int, suffix: str) -> Optional[str]:
     filename = f"F{fov_id:03d}_{suffix}"
     for p in [
@@ -92,9 +92,9 @@ def find_cellist_file(cellist_dir: str, fov_id: int, suffix: str) -> Optional[st
     return hits[0] if hits else None
 
 
-# ── GT 加载 ────────────────────────────────────────────────────────────────
+# GT loading
 def load_gt(cfg: EvaluationConfig) -> pd.DataFrame:
-    print(f"[GT] 加载: {cfg.gt_path}")
+    print(f"[GT] Loading: {cfg.gt_path}")
     df = pd.read_csv(cfg.gt_path, usecols=[
         "cell_id","CenterX_global_px","CenterY_global_px","nCount_RNA","Area","fov"
     ])
@@ -102,15 +102,15 @@ def load_gt(cfg: EvaluationConfig) -> pd.DataFrame:
     df["y"]           = df["CenterY_global_px"] * cfg.pixel_size_um
     df["total_counts"]= df["nCount_RNA"]
     df["cell_id"]     = df["cell_id"].astype(str)
-    print(f"[GT] 细胞数: {len(df):,}  "
+    print(f"[GT] Cell count: {len(df):,}  "
           f"x=[{df['x'].min():.1f},{df['x'].max():.1f}]  "
           f"y=[{df['y'].min():.1f},{df['y'].max():.1f}]")
     return df
 
 
-# ── FOV 偏移计算 ───────────────────────────────────────────────────────────
+# FOV offset computation
 def compute_fov_offsets(tx_file: str, verbose: bool = True) -> Dict[int, Tuple[int,int]]:
-    print("[Offset] 计算 FOV 偏移...")
+    print("[Offset] Computing FOV offsets...")
     meta     = pd.read_csv(GT_METADATA_PATH, usecols=["fov"])
     all_fovs = set(int(f) for f in meta["fov"].unique())
     found: Dict[int, Tuple[int,int]] = {}
@@ -126,35 +126,35 @@ def compute_fov_offsets(tx_file: str, verbose: bool = True) -> Dict[int, Tuple[i
                 oy = (s["y_global_px"] - s["y_local_px"]).median()
                 found[fid] = (int(round(ox)), int(round(oy)))
         if set(found.keys()) >= all_fovs: break
-    print(f"[Offset] 完成: {len(found)} 个 FOV")
+    print(f"[Offset] Done: {len(found)} FOVs")
     return found
 
 
-# ── Cellist 细胞表加载 ─────────────────────────────────────────────────────
+# Cellist cell table loading
 def load_cellist_cells(cfg: EvaluationConfig,
                        fov_offsets: Dict[int, Tuple[int,int]]) -> pd.DataFrame:
     """
-    关键坐标修正：
-      Cellist x_local = ROW（垂直方向）= GT y 方向
-      Cellist y_local = COL（水平方向）= GT x 方向
+    Critical coordinate correction:
+      Cellist x_local = ROW (vertical) = GT y direction
+      Cellist y_local = COL (horizontal) = GT x direction
 
-    全局 µm 坐标：
-      x_um（水平）= (Cellist_y_local + ox) × pixel_size
-      y_um（垂直）= (Cellist_x_local + oy) × pixel_size
+    Global um coordinates:
+      x_um (horizontal) = (Cellist_y_local + ox) * pixel_size
+      y_um (vertical) = (Cellist_x_local + oy) * pixel_size
     """
-    print("[Pred] 加载 Cellist 细胞质心...")
+    print("[Pred] Loading Cellist cell centroids...")
     records = []
     for fov_id in FOV_IDS:
         fpath = find_cellist_file(cfg.cellist_dir, fov_id,
                                   "Cellist_segmentation_cell_coord.txt")
         if fpath is None:
-            if cfg.verbose: print(f"  ⚠ FOV {fov_id}: 未找到 cell_coord 文件")
+            if cfg.verbose: print(f"  WARNING FOV {fov_id}: cell_coord file not found")
             continue
 
         df = pd.read_csv(fpath, sep="\t")
         df.columns = [c.strip() for c in df.columns]
         if not all(c in df.columns for c in ["Cellist","x","y","nSpot"]):
-            print(f"  ⚠ FOV {fov_id}: 列名不符 {list(df.columns)}")
+            print(f"  WARNING FOV {fov_id}: column names mismatch {list(df.columns)}")
             continue
 
         if fov_id not in fov_offsets: continue
@@ -162,13 +162,13 @@ def load_cellist_cells(cfg: EvaluationConfig,
 
         for _, row in df.iterrows():
             cell_local = row["Cellist"]
-            cx_row     = float(row["x"])   # Cellist x = ROW = 垂直 = GT y 方向
-            cy_col     = float(row["y"])   # Cellist y = COL = 水平 = GT x 方向
+            cx_row     = float(row["x"])   # Cellist x = ROW = vertical = GT y direction
+            cy_col     = float(row["y"])   # Cellist y = COL = horizontal = GT x direction
             n_spot     = int(row["nSpot"])
 
             cell_id_global = f"F{fov_id:03d}_{int(cell_local)}"
-            # 水平（GT x）= Cellist y_col + ox
-            # 垂直（GT y）= Cellist x_row + oy
+            # horizontal (GT x) = Cellist y_col + ox
+            # vertical (GT y) = Cellist x_row + oy
             x_um = (cy_col + ox) * cfg.pixel_size_um
             y_um = (cx_row + oy) * cfg.pixel_size_um
 
@@ -181,16 +181,16 @@ def load_cellist_cells(cfg: EvaluationConfig,
                 "n_transcripts": n_spot,
             })
 
-        if cfg.verbose: print(f"  FOV {fov_id}: {len(df):,} 细胞")
+        if cfg.verbose: print(f"  FOV {fov_id}: {len(df):,} cells")
 
     pred_df = pd.DataFrame(records)
-    print(f"[Pred] 总细胞数: {len(pred_df):,}  "
+    print(f"[Pred] Total cells: {len(pred_df):,}  "
           f"x=[{pred_df['x'].min():.1f},{pred_df['x'].max():.1f}]  "
           f"y=[{pred_df['y'].min():.1f},{pred_df['y'].max():.1f}]")
     return pred_df
 
 
-# ── 全量转录本指标 ─────────────────────────────────────────────────────────
+# All-transcript metrics
 def compute_all_transcript_metrics(
     cfg:         EvaluationConfig,
     fov_offsets: Dict[int, Tuple[int,int]],
@@ -198,9 +198,9 @@ def compute_all_transcript_metrics(
     verbose:     bool = True,
 ) -> dict:
     """
-    坐标查询修正（Cellist x=ROW=GT y，Cellist y=COL=GT x）：
-      cellist_x_key = floor((y_global_px - oy) / BIN) × BIN   ← GT y → Cellist x
-      cellist_y_key = floor((x_global_px - ox) / BIN) × BIN   ← GT x → Cellist y
+    Coordinate query correction (Cellist x=ROW=GT y, Cellist y=COL=GT x):
+      cellist_x_key = floor((y_global_px - oy) / BIN) * BIN   # GT y -> Cellist x
+      cellist_y_key = floor((x_global_px - ox) / BIN) * BIN   # GT x -> Cellist y
     """
     if matches.empty: return {}
 
@@ -217,8 +217,8 @@ def compute_all_transcript_metrics(
     meta["_key"] = meta["fov"].astype(str) + "_" + meta["cell_ID"].astype(str)
     fov_cell_to_str = dict(zip(meta["_key"], meta["cell_id"].astype(str)))
 
-    # ── Step 1: 从 segmentation.txt 构建坐标→cell 映射 ───────────────────────
-    print("[TX] Step 1: 读取 Cellist segmentation.txt（坐标修正版）...")
+    # Step 1: build coordinate-to-cell map from segmentation.txt
+    print("[TX] Step 1: Reading Cellist segmentation.txt (coordinate-corrected)...")
     # key = (fov, cellist_x=ROW, cellist_y=COL)
     cellist_coord: Dict[Tuple[int,int,int], str] = {}
     pred_gene_counts: Dict[str, Dict[str,int]] = {}
@@ -235,7 +235,7 @@ def compute_all_transcript_metrics(
             chunk = chunk[chunk["Cellist"].astype(str).str.strip() != ""]
             if len(chunk) == 0: continue
 
-            # x=ROW, y=COL（Cellist 内部坐标，直接用作 dict key）
+            # x=ROW, y=COL (Cellist internal coordinates)
             x_int = chunk["x"].astype(int).values   # ROW
             y_int = chunk["y"].astype(int).values   # COL
             cells = chunk["Cellist"].values
@@ -248,15 +248,13 @@ def compute_all_transcript_metrics(
                 fov_assigned += 1
                 total_pred_assigned += 1
 
-        if verbose: print(f"  FOV {fov_id}: {fov_assigned:,} 已分配位置")
+        if verbose: print(f"  FOV {fov_id}: {fov_assigned:,} assigned positions")
 
-    print(f"[TX] Cellist 坐标映射: {len(cellist_coord):,} 条")
+    print(f"[TX] Cellist coordinate map: {len(cellist_coord):,} entries")
 
-    # ── Step 2: 扫描 GT tx_file（直接用 x_local_px/y_local_px，不再用 global-offset）────
-    # 根本原因：oy 推算有系统误差（14px）导致 cellist_x_key 偏移
-    # 修复：直接读 tx_file 的 x_local_px/y_local_px（Cellist 输出的局部坐标与之直接对应）
-    # Cellist x (ROW=垂直) ↔ tx_file y_local_px; Cellist y (COL=水平) ↔ tx_file x_local_px
-    print("[TX] Step 2: 扫描 GT tx_file（直接用 x_local_px/y_local_px）...")
+    # Step 2: scan GT tx_file using x_local_px/y_local_px directly
+    # Cellist x (ROW=vertical) <-> tx_file y_local_px; Cellist y (COL=horizontal) <-> tx_file x_local_px
+    print("[TX] Step 2: Scanning GT tx_file (using x_local_px/y_local_px directly)...")
     gt_gene_counts: Dict[str, Dict[str,int]] = {}
     total_gt = 0; gt_assigned = 0; both = 0
     in_matched = 0; correct = 0; gt_read = 0
@@ -269,8 +267,8 @@ def compute_all_transcript_metrics(
         gt_read += len(chunk)
         total_gt += len(chunk)
         fov_ids_chunk = chunk["fov"].astype(int).values
-        x_local_arr   = chunk["x_local_px"].values   # 水平(COL) = Cellist y 方向
-        y_local_arr   = chunk["y_local_px"].values   # 垂直(ROW) = Cellist x 方向
+        x_local_arr   = chunk["x_local_px"].values   # horizontal (COL) = Cellist y direction
+        y_local_arr   = chunk["y_local_px"].values   # vertical (ROW) = Cellist x direction
         gt_id_v       = chunk["cell_ID"].values.astype(np.int64)
         genes         = chunk["target"].values
 
@@ -279,12 +277,11 @@ def compute_all_transcript_metrics(
             gt_id_v > 0, "").to_numpy(dtype=object)
         gt_assigned += int((gt_id_v > 0).sum())
 
-        # 直接用局部坐标：Cellist x=ROW=y_local_px，Cellist y=COL=x_local_px
         cellist_cells = []
         for i in range(len(chunk)):
             fov_id = int(fov_ids_chunk[i])
-            x_local = int(x_local_arr[i])   # 水平 → Cellist y（COL）
-            y_local = int(y_local_arr[i])   # 垂直 → Cellist x（ROW）
+            x_local = int(x_local_arr[i])   # horizontal -> Cellist y (COL)
+            y_local = int(y_local_arr[i])   # vertical -> Cellist x (ROW)
             cellist_x_key = int(y_local // CELLIST_BIN) * CELLIST_BIN
             cellist_y_key = int(x_local // CELLIST_BIN) * CELLIST_BIN
             key = (fov_id, cellist_x_key, cellist_y_key)
@@ -316,11 +313,11 @@ def compute_all_transcript_metrics(
                 gt_gene_counts[cell][gene] = gt_gene_counts[cell].get(gene,0) + int(cnt)
 
         if verbose and gt_read % 10_000_000 == 0:
-            print(f"  GT 已读 {gt_read:,}  in_matched={in_matched:,}  "
+            print(f"  GT read {gt_read:,}  in_matched={in_matched:,}  "
                   f"correct={correct:,}  both={both:,}")
 
-    # ── Step 3: 基因向量相似度 ─────────────────────────────────────────────
-    print("[TX] Step 3: 计算基因向量相似度...")
+    # Step 3: gene vector similarity
+    print("[TX] Step 3: Computing gene vector similarity...")
     cosine_sims, js_dists, pearsons = [], [], []
     valid_pairs = 0
     for pred_str, gt_str in pred_to_gt.items():
@@ -339,7 +336,7 @@ def compute_all_transcript_metrics(
 
     accuracy  = float(correct / max(in_matched, 1))
     pred_rate = float(total_pred_assigned / max(total_gt, 1))
-    print(f"[TX] 完成: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  "
+    print(f"[TX] Done: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  "
           f"pred_rate={pred_rate:.4f}  both={both:,}")
 
     return {
@@ -357,7 +354,6 @@ def compute_all_transcript_metrics(
     }
 
 
-# ── 以下与参考代码完全一致 ───────────────────────────────────────────────────
 def expand_path(path):
     return Path(os.path.expanduser(path)).resolve()
 
@@ -375,7 +371,7 @@ def normalize_columns(df, cfg, table_name):
             if a in existing: rename[a] = canonical; break
     out = df.rename(columns=rename).copy()
     missing = [c for c in [cfg.cell_id_col, cfg.x_col, cfg.y_col] if c not in out.columns]
-    if missing: raise ValueError(f"{table_name} 缺少列 {missing}")
+    if missing: raise ValueError(f"{table_name} missing columns {missing}")
     return out
 
 def collapse_to_cell_level(df, cfg, table_name):
@@ -384,7 +380,7 @@ def collapse_to_cell_level(df, cfg, table_name):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     bad = df[[cfg.x_col, cfg.y_col]].isna().any(axis=1)
     if bad.any(): df = df.loc[~bad].copy()
-    if df.empty: raise ValueError(f"{table_name}: 无有效行")
+    if df.empty: raise ValueError(f"{table_name}: no valid rows")
     grouped = df.groupby(cfg.cell_id_col, sort=False, observed=True)
     base = grouped[[cfg.x_col, cfg.y_col]].mean().reset_index()
     qc = {f"{table_name}_n_cells": int(base.shape[0])}
@@ -470,7 +466,7 @@ def match_sparse_hungarian(pred_cells, gt_cells, cfg, radius=None):
             if d<=radius+EPS: records.append((int(pi[r]),int(gi[c]),d))
     matches=pd.DataFrame(records,columns=["pred_index","gt_index","distance"])
     if matches.empty: return matches, qc
-    # attach metadata
+    # Attach metadata
     pm=pred_cells.reset_index(drop=True).reset_index().rename(columns={
         "index":"pred_index",cfg.cell_id_col:"pred_cell_id",
         cfg.x_col:"pred_x",cfg.y_col:"pred_y"})
@@ -553,13 +549,13 @@ def _json_default(obj):
     return str(obj)
 
 
-# ── 主评估流程 ──────────────────────────────────────────────────────────────
+# Main evaluation flow
 def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     if cfg.numeric_pairs is None: cfg.numeric_pairs=[("n_transcripts","total_counts")]
     outdir = expand_path(cfg.output_dir); outdir.mkdir(parents=True, exist_ok=True)
 
     gt_raw = load_gt(cfg)
-    print("\n[INFO] 计算 FOV 偏移...")
+    print("\n[INFO] Computing FOV offsets...")
     fov_offsets = compute_fov_offsets(cfg.gt_transcripts_path, verbose=cfg.verbose)
     pred_raw = load_cellist_cells(cfg, fov_offsets)
 
@@ -567,12 +563,12 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     pred_cells,pred_qc = collapse_to_cell_level(pred_raw, cfg, "pred")
 
     radius = cfg.match_radius or infer_match_radius(gt_cells, cfg)
-    print(f"[INFO] 匹配半径: {radius:.4f} µm  GT={len(gt_cells):,}  Pred={len(pred_cells):,}")
+    print(f"[INFO] Match radius: {radius:.4f} um  GT={len(gt_cells):,}  Pred={len(pred_cells):,}")
 
     matches, match_qc = match_sparse_hungarian(pred_cells, gt_cells, cfg, radius=radius)
-    print(f"[INFO] 匹配细胞数: {len(matches):,}")
+    print(f"[INFO] Matched cells: {len(matches):,}")
 
-    # 合并 n_transcripts
+    # Merge n_transcripts
     if not matches.empty:
         nt = pred_cells[[cfg.cell_id_col,"n_transcripts"]].rename(
             columns={cfg.cell_id_col:"pred_cell_id","n_transcripts":"pred_n_transcripts"})
@@ -583,7 +579,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         if "gt_total_counts" not in matches.columns:
             matches = matches.merge(gt_nt, on="gt_cell_id", how="left")
 
-    print("\n[INFO] 计算转录本指标（约 20-30 分钟）...")
+    print("\n[INFO] Computing transcript metrics (about 20-30 min)...")
     tx_result = compute_all_transcript_metrics(
         cfg=cfg, fov_offsets=fov_offsets,
         matches=matches, verbose=cfg.verbose,
@@ -618,7 +614,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         gt_cells.to_csv(outdir/"gt_cell_level_table.csv", index=False)
 
     if cfg.verbose:
-        print(f"\n[DONE] → {sel_csv}")
+        print(f"\n[DONE] -> {sel_csv}")
         print("\n=== SELECTED METRICS ===")
         print(sel_df.T.to_string(header=False))
     return sel_df
@@ -629,7 +625,7 @@ def parse_args():
     p.add_argument("--gt-path",            default=GT_METADATA_PATH)
     p.add_argument("--gt-transcripts-path",default=TX_FILE)
     p.add_argument("--cellist-dir",        default=CELLIST_DIR)
-    p.add_argument("--output-dir",         default="/data/qiuyijia/eval_results/cellist")
+    p.add_argument("--output-dir",         default="yourpath")
     p.add_argument("--method-name",        default="Cellist")
     p.add_argument("--match-radius",       type=float, default=None)
     p.add_argument("--no-save-matched-table",     action="store_true")

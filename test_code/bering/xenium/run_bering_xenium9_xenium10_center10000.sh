@@ -3,7 +3,7 @@
 # xenium9 and xenium10.  The datasets run sequentially on one selected GPU.
 #
 # Default (submit a detached worker):
-#   /data/qiuyijia/bering/run_bering_xenium9_xenium10_center10000.sh
+#   yourpath/bering/run_bering_xenium9_xenium10_center10000.sh
 #
 # Useful alternatives:
 #   BERING_CUDA_VISIBLE_DEVICES=6 ./run_bering_xenium9_xenium10_center10000.sh
@@ -14,7 +14,7 @@
 set -u -o pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-/data/qiuyijia/anaconda3/envs/bering/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-yourpath/anaconda3/envs/bering/bin/python}"
 RUNNER="${SCRIPT_DIR}/bering_xenium_benchmark.py"
 CONFIG_DIR="${SCRIPT_DIR}/configs"
 LOG_DIR="${SCRIPT_DIR}/logs"
@@ -24,8 +24,8 @@ CUDA_DEVICE="${BERING_CUDA_VISIBLE_DEVICES:-6}"
 MODE="background"
 
 DATASETS=(
-  "xenium9|${CONFIG_DIR}/xenium9_center10000.json|${LOG_DIR}/xenium9_center10000.log|/data/qiuyijia/bering/xenium9_center10000_output|/data/qiuyijia/dataset/xenium9/Xenium_Prime_Human_Skin_FFPE_outs.zip"
-  "xenium10|${CONFIG_DIR}/xenium10_center10000.json|${LOG_DIR}/xenium10_center10000.log|/data/qiuyijia/bering/xenium10_center10000_output|/data/qiuyijia/dataset/xenium10/transcripts.zip"
+  "xenium9|${CONFIG_DIR}/xenium9_center10000.json|${LOG_DIR}/xenium9_center10000.log|yourpath/bering/xenium9_center10000_output|yourpath/dataset/xenium9/Xenium_Prime_Human_Skin_FFPE_outs.zip"
+  "xenium10|${CONFIG_DIR}/xenium10_center10000.json|${LOG_DIR}/xenium10_center10000.log|yourpath/bering/xenium10_center10000_output|yourpath/dataset/xenium10/transcripts.zip"
 )
 
 usage() {

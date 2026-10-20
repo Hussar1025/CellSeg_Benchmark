@@ -1,4 +1,4 @@
-# Baysor preset for /data/qiuyijia/dataset/starmap_BY1/BY1_raw.csv
+# Baysor preset for yourpath/dataset/starmap_BY1/BY1_raw.csv
 # Coordinates are STARmap voxel coordinates (x, y, z); keep the 3-D z axis.
 
 [molecules]

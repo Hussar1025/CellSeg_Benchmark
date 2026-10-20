@@ -25,10 +25,10 @@ each, so the culprit is named rather than guessed at.  It loads the same data th
 trainer does, touches nothing on disk, and trains nothing.
 
     conda activate genesegnet_env
-    cd /data/qiuyijia/GeneSegNet/GeneSegNet
+    cd yourpath/GeneSegNet/GeneSegNet
     python debug_train_labels.py \
-        --train-dir /data/qiuyijia/genesegnet_xenium/pancreas_cancer/split/train/ \
-        --val-dir   /data/qiuyijia/genesegnet_xenium/pancreas_cancer/split/val/ \
+        --train-dir yourpath/genesegnet_xenium/pancreas_cancer/split/train/ \
+        --val-dir   yourpath/genesegnet_xenium/pancreas_cancer/split/val/ \
         --chan 2 --n 6
 """
 

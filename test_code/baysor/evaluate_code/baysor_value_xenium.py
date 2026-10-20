@@ -35,48 +35,48 @@ USES_PRIOR = False
 
 DATASETS = {
     # x0, x1, y0, y1 are micrometres.
-    "breast": dict(root="/data/qiuyijia/dataset/xenium_breast",
-                   pred="/data/qiuyijia/baysor/xenium_breast_output",
+    "breast": dict(root="yourpath/dataset/xenium_breast",
+                   pred="yourpath/baysor/xenium_breast_output",
                    roi=(5205.6125, 6268.1125, 2382.125, 3444.625), label="xenium_breast"),
-    "colon": dict(root="/data/qiuyijia/dataset/xenium_colon",
-                  pred="/data/qiuyijia/baysor/xenium_colon_output",
+    "colon": dict(root="yourpath/dataset/xenium_colon",
+                  pred="yourpath/baysor/xenium_colon_output",
                   roi=(1963.7125, 4088.7125, 2561.05, 4686.05), label="xenium_colon"),
     # Baysor was run on a 15000 x 15000 native-pixel ROI, but the benchmark
     # comparison intentionally uses its centered 10000 x 10000 sub-ROI.  The
     # exact bounds come from dataset/xenium_liver/central_roi_10000/
     # gt_roi_info.json (native x0=21974, y0=13704).
-    "liver": dict(root="/data/qiuyijia/dataset/xenium_liver",
-                  pred="/data/qiuyijia/baysor/xenium_liver_output",
+    "liver": dict(root="yourpath/dataset/xenium_liver",
+                  pred="yourpath/baysor/xenium_liver_output",
                   roi=(4669.475, 6794.475, 2912.1, 5037.1), label="xenium_liver"),
-    "mouse_brain": dict(root="/data/qiuyijia/dataset/xenium_mouse_brain",
-                        pred="/data/qiuyijia/baysor/xenium_mouse_brain_output",
+    "mouse_brain": dict(root="yourpath/dataset/xenium_mouse_brain",
+                        pred="yourpath/baysor/xenium_mouse_brain_output",
                         roi=(2566.3625, 4691.3625, 1478.15, 3603.15), label="xenium_mouse_brain"),
-    "roi_crop": dict(root="/data/qiuyijia/dataset/xenium_roi_crop",
-                     pred="/data/qiuyijia/baysor/xenium_roi_crop_output",
+    "roi_crop": dict(root="yourpath/dataset/xenium_roi_crop",
+                     pred="yourpath/baysor/xenium_roi_crop_output",
                      roi=(3982.5, 4317.5, 2522.5, 2857.5), label="xenium_roi_crop"),
-    "xenium7": dict(root="/data/qiuyijia/dataset/xenium7/outs",
-                    pred="/data/qiuyijia/baysor/xenium7_output",
+    "xenium7": dict(root="yourpath/dataset/xenium7/outs",
+                    pred="yourpath/baysor/xenium7_output",
                     roi=(4692.0, 6817.0, 2169.625, 4294.625), label="xenium7",
-                    gt_tx="/data/qiuyijia/dataset/xenium7/outs/_roi_cache/tx_roi_10210_22080_10000_qv20.parquet"),
-    "xenium8": dict(root="/data/qiuyijia/dataset/xenium_8",
-                    pred="/data/qiuyijia/baysor/xenium_8_output",
+                    gt_tx="yourpath/dataset/xenium7/outs/_roi_cache/tx_roi_10210_22080_10000_qv20.parquet"),
+    "xenium8": dict(root="yourpath/dataset/xenium_8",
+                    pred="yourpath/baysor/xenium_8_output",
                     roi=(4675.2125, 6800.2125, 1841.1, 3966.1), label="xenium8",
-                    gt_tx="/data/qiuyijia/dataset/xenium_8/_roi_cache/tx_roi_8664_22001_10000_qv20.parquet"),
-    "xenium9": dict(root="/data/qiuyijia/dataset/xenium9",
-                    pred="/data/qiuyijia/baysor/xenium9_ncellsinit_output",
+                    gt_tx="yourpath/dataset/xenium_8/_roi_cache/tx_roi_8664_22001_10000_qv20.parquet"),
+    "xenium9": dict(root="yourpath/dataset/xenium9",
+                    pred="yourpath/baysor/xenium9_ncellsinit_output",
                     roi=(3479.475, 5604.475, 1093.7375, 3218.7375), label="xenium9",
-                    gt_zip="/data/qiuyijia/dataset/xenium9/Xenium_Prime_Human_Skin_FFPE_outs.zip",
-                    gt_tx="/data/qiuyijia/dataset/xenium9/_roi_cache/tx_roi_16374_5147_10000_qv20.parquet"),
-    "xenium10": dict(root="/data/qiuyijia/dataset/xenium10",
-                     pred="/data/qiuyijia/baysor/xenium10_ncellsinit_output",
+                    gt_zip="yourpath/dataset/xenium9/Xenium_Prime_Human_Skin_FFPE_outs.zip",
+                    gt_tx="yourpath/dataset/xenium9/_roi_cache/tx_roi_16374_5147_10000_qv20.parquet"),
+    "xenium10": dict(root="yourpath/dataset/xenium10",
+                     pred="yourpath/baysor/xenium10_ncellsinit_output",
                      roi=(4369.85, 6494.85, 2921.875, 5046.875), label="xenium10",
-                     gt_h5ad_zip="/data/qiuyijia/dataset/xenium10/transcriptome.zip",
-                     gt_tx="/data/qiuyijia/dataset/xenium10/_roi_cache/tx_roi_20564_13750_10000_qv20.parquet"),
-    "pancreas": dict(root="/data/qiuyijia/dataset/xenium_pancreas_cancer",
-                     pred="/data/qiuyijia/baysor/xenium_pancreas_output",
+                     gt_h5ad_zip="yourpath/dataset/xenium10/transcriptome.zip",
+                     gt_tx="yourpath/dataset/xenium10/_roi_cache/tx_roi_20564_13750_10000_qv20.parquet"),
+    "pancreas": dict(root="yourpath/dataset/xenium_pancreas_cancer",
+                     pred="yourpath/baysor/xenium_pancreas_output",
                      roi=(-np.inf, np.inf, -np.inf, np.inf), label="xenium_pancreas",
                      stats="cells.parquet", segmentation="molecules.parquet",
-                     gt_boundaries="/data/qiuyijia/dataset/xenium_pancreas_cancer/cell_boundaries.parquet",
+                     gt_boundaries="yourpath/dataset/xenium_pancreas_cancer/cell_boundaries.parquet",
                      uses_platform_prior=True),
 }
 
@@ -527,7 +527,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset", choices=list(DATASETS), default="breast"); ap.add_argument("--all", action="store_true")
     ap.add_argument("--run-dir"); ap.add_argument("--segmentation"); ap.add_argument("--stats"); ap.add_argument("--data-root")
-    ap.add_argument("--out-dir", default="/data/qiuyijia/eval/baysor"); ap.add_argument("--qv-min", type=float, default=20.0)
+    ap.add_argument("--out-dir", default="yourpath/eval/baysor"); ap.add_argument("--qv-min", type=float, default=20.0)
     ap.add_argument("--match-radius", type=float); ap.add_argument("--batch-size", type=int, default=1_000_000)
     ap.add_argument("--roi", nargs=4, type=float, metavar=("X0", "X1", "Y0", "Y1")); ap.add_argument("--version", action="store_true")
     args = ap.parse_args()

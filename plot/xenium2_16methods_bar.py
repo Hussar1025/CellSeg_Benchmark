@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Fig. 3b（作图）—— xenium_2 上 16 个方法的转录本划分一致性柱状图
+Fig. 3b (plot) -- bar chart of transcript assignment consistency for 16 methods on xenium_2
 ================================================================
-读 fig3d_metrics_xenium2.py 产出的 metrics_transcript_xenium_2.csv，
-以基线方法（Cellpose-3）为零点画双向柱状图，每个指标一张独立 PDF。
-方法按字典序排列。超长的柱体在末端挖一道斜向留白表示已截断。
+Reads metrics_transcript_xenium_2.csv produced by fig3d_metrics_xenium2.py,
+and draws a two-sided bar chart relative to the baseline method (Cellpose-3) as the zero point, one PDF per metric.
+Methods are in alphabetical order. Overlong bars get a diagonal break at the end to indicate clipping.
 
-相对上一版的修改：
-  · METHOD_TYPE 补全到 16 个方法；基线为 Cellpose-3；路径改到 SpaSegBench/result
-  · 柱体加粗、行距收紧（BAR_HEIGHT 0.64 -> 0.86，ROW_H_IN 0.46 -> 0.36），柱间空隙更小
-  · 所有方法现在都在同一批 qv>=20 转录本上评估，图像与转录本方法可以直接比较
-画图逻辑不变。assign_rate 那一张要和前四张一起看——
-归属率低的方法低 ARI 主要来自覆盖率而非归属错误。
+Changes from the previous version:
+  · METHOD_TYPE extended to 16 methods; baseline is Cellpose-3; path changed to yourpath/result
+  · bars thicker and row spacing tightened (BAR_HEIGHT 0.64 -> 0.86, ROW_H_IN 0.46 -> 0.36), smaller gaps
+  · all methods now evaluated on the same set of qv>=20 transcripts, so image and transcript methods are directly comparable
+Plotting logic unchanged. Read assign_rate together with the first four panels --
+the low ARI of methods with low assignment rate comes mainly from coverage, not from assignment errors.
 """
 
 import os
@@ -33,7 +33,7 @@ plt.rcParams["ps.fonttype"] = 42
 
 
 # ==========================================================================
-SPASEG = "/data/qiuyijia/SpaSegBench/result"
+SPASEG = "yourpath/result"
 IN_CSV = f"{SPASEG}/metrics_transcript_xenium_2.csv"
 OUT_DIR = f"{SPASEG}/figs_xenium_2"
 FILE_FORMAT = "pdf"
@@ -54,16 +54,16 @@ TYPE_MARK = " †"
 
 SORT_MODE = "alpha"
 KEEP_BASELINE_ROW = True
-SHOW_MISSING = True            # 没有结果的方法也占一行，标 "n/a"，保证 16 个方法都出现
+SHOW_MISSING = True            # methods without results still occupy a row marked "n/a", so all 16 methods appear
 
-# 柱长压缩：缩小长短柱之间的差距。柱长按 sign(Δ)·|Δ|^GAMMA 绘制，刻度仍标原始差值 Δ，
-# 所以读数不变，只是长柱被压短、短柱被拉长。GAMMA=1 为线性（不压缩），0.5 为平方根压缩。
-# 压缩后长柱不再一枝独秀，默认不再截断（CLIP=None）；如需线性 + 截断，设 GAMMA=1.0, CLIP="max_ratio"。
-# 注意：压缩后柱长与差值不再成正比，图注须写明"横轴为平方根尺度"。
-GAMMA = 1.0                 # 1.0 = 原始线性尺度（当前）；<1 为压缩尺度（已弃用，保留开关）
+# Bar-length compression: shrink the gap between long and short bars. Bar length is drawn as
+# sign(Δ)·|Δ|^GAMMA while ticks still show the raw difference Δ, so readings stay the same and only
+# long bars shrink and short bars grow. GAMMA=1 is linear (none), 0.5 is sqrt. Clip defaults off
+# (CLIP=None); use GAMMA=1.0, CLIP="max_ratio" for linear + clip. After compression, the caption must state "x-axis is square-root scale".
+GAMMA = 1.0                 # 1.0 = original linear scale (current); <1 = compressed scale (deprecated, switch kept)
 SYMMETRIC_X = True
 PAD_FRAC = 0.10
-CLIP = "max_ratio"          # 超长柱截断并加断口标记
+CLIP = "max_ratio"          # clip overlong bars and add a break mark
 CLIP_RATIO = 0.80
 MIN_SPAN = 0.02
 BRK_GAP_FRAC = 0.022
@@ -73,10 +73,10 @@ BRK_POS_FRAC = 0.055
 POS_COLOR, NEG_COLOR = "#ED7D31", "#4490A9"
 FRAME_COLOR, FRAME_WIDTH = "#1A1A1A", 0.8
 BAR_EDGE_WIDTH = 0.4
-BAR_HEIGHT = 0.74            # 柱体占行高的比例；越大柱间空隙越小（1.0 = 无空隙）
+BAR_HEIGHT = 0.74            # fraction of row height taken by the bar; larger = smaller gaps (1.0 = no gap)
 
 PLOT_W_IN = 2.0
-ROW_H_IN = 0.14             # 每行高度（英寸）：柱更细、行距更小、整张图更矮
+ROW_H_IN = 0.14             # row height (inch): thinner bars, tighter rows, shorter overall figure
 LEFT_PAD_IN = 0.08
 RIGHT_IN, TOP_IN, BOTTOM_IN = 0.08, 0.06, 0.34
 TICK_FS, ROW_FS, LABEL_FS = 7, 8, 8
@@ -106,20 +106,20 @@ def load(path):
         df = df[df["dataset"].astype(str) == DATASET]
     ds = df["dataset"].astype(str).unique()
     if len(ds) != 1:
-        raise SystemExit(f"csv 里有 {len(ds)} 个数据集 {list(ds)}，请设置 DATASET")
+        raise SystemExit(f"csv has {len(ds)} datasets {list(ds)}, please set DATASET")
     have = [m for m in METRICS if m in df.columns]
     if set(METRICS) - set(have):
-        print(f"[warn] csv 缺这些指标列：{sorted(set(METRICS) - set(have))}")
+        print(f"[warn] csv missing these metric columns: {sorted(set(METRICS) - set(have))}")
     if not have:
-        raise SystemExit("一个指标列都没有")
+        raise SystemExit("no metric columns at all")
     df = df.drop_duplicates("method").set_index("method")
     unk = [m for m in df.index if m not in METHOD_TYPE]
     if unk:
-        print(f"[warn] 这些方法没登记类别：{unk}")
+        print(f"[warn] these methods have no registered category: {unk}")
     miss = [m for m in METHOD_TYPE if m not in df.index]
     if miss:
-        print(f"[warn] csv 里缺这些方法：{miss}" +
-              ("（图中保留空行并标 n/a）" if SHOW_MISSING else "（不会出现在图中）"))
+        print(f"[warn] csv missing these methods: {miss}" +
+              (" (kept as blank rows marked n/a)" if SHOW_MISSING else " (omitted from the figure)"))
     return df, have, ds[0]
 
 
@@ -178,8 +178,8 @@ def fwd(d):
 
 
 def nice_ticks(vmax):
-    """原始单位下的刻度（正负对称）：每侧 2 个 —— 不超过最大值的最大整数刻度，
-    以及在绘图尺度上大约位于它一半处的刻度，避免 0 附近挤在一起。"""
+    """Ticks in original units (symmetric about zero): 2 per side -- the largest round tick not
+    exceeding the maximum, and a tick about halfway to it in plot scale, to avoid crowding near 0."""
     if vmax <= 0:
         return [0.0]
     cand = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1.0]
@@ -231,7 +231,7 @@ def draw_one(df, metric, ds, out_path):
     if clipped.any():
         for i in np.nonzero(clipped)[0]:
             draw_break_gap(ax, v_draw[i], ypos[i], BAR_HEIGHT, hi - lo)
-        print(f"    {metric}: 截断阈值 {clip_at:.4f}，截断 "
+        print(f"    {metric}: clip threshold {clip_at:.4f}, clipped "
               f"{', '.join(rows[i] for i in np.nonzero(clipped)[0])}")
 
     ax.set_ylim(-0.6, n_row - 0.4)
@@ -251,11 +251,11 @@ def draw_one(df, metric, ds, out_path):
         ax.spines[side].set_linewidth(FRAME_WIDTH)
 
     lab = METRIC_LABEL.get(metric, metric)
-    scale_txt = "" if GAMMA == 1 else ("  [√ scale]" if abs(GAMMA - 0.5) < 1e-9 else f"  [|Δ|^{GAMMA:g} scale]")
+    scale_txt = "" if GAMMA == 1 else ("  [sqrt scale]" if abs(GAMMA - 0.5) < 1e-9 else f"  [|Δ|^{GAMMA:g} scale]")
     ax.set_xlabel((f"Δ{lab} ({ref_txt})" if ref_txt else lab) + scale_txt, fontsize=LABEL_FS)
     fig.savefig(out_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-    print(f"  已保存：{out_path}")
+    print(f"  Saved: {out_path}")
 
 
 def main():
@@ -265,12 +265,12 @@ def main():
     os.makedirs(outdir, exist_ok=True)
     df, metrics, ds = load(src)
     if REF_MODE == "baseline" and BASELINE not in df.index:
-        raise SystemExit(f"基线 '{BASELINE}' 不在数据里。方法：{sorted(df.index)}")
+        raise SystemExit(f"baseline '{BASELINE}' is not in the data. Methods: {sorted(df.index)}")
     n_img = sum(1 for m in df.index if METHOD_TYPE.get(m) == "image")
-    print(f"数据集 {ds} | 方法 {len(df)} 个（图像 {n_img}，RNA {len(df)-n_img}）"
-          f" | 参照 {REF_MODE} | 排序 {SORT_MODE} | 输出 {FILE_FORMAT}")
+    print(f"dataset {ds} | {len(df)} methods (image {n_img}, RNA {len(df)-n_img})"
+          f" | reference {REF_MODE} | sort {SORT_MODE} | output {FILE_FORMAT}")
     show = pd.DataFrame({m: df[m].astype(float) - reference_of(df, m)[0] for m in metrics})
-    print("零点：" + ", ".join(f"{m}={reference_of(df,m)[0]:.4f}" for m in metrics))
+    print("Zero point: " + ", ".join(f"{m}={reference_of(df,m)[0]:.4f}" for m in metrics))
     print(show.round(4).to_string())
     for met in metrics:
         draw_one(df, met, ds, os.path.join(outdir, f"bar_{ds}_{met}.{FILE_FORMAT}"))

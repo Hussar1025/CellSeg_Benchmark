@@ -3,16 +3,15 @@
 """
 cellist_xenium.py
 =======================================================================
-Cellist on centered Xenium ROIs (liver / mouse brain), built on the same
-pattern as your CosMx scripts: Python API for the nucleus step, output
-validation, incremental summary TSV, DONE/FAILED flags, logging.
+Cellist on centered Xenium ROIs (liver / mouse brain), same pattern as the
+CosMx scripts: Python API for the nucleus step, output validation,
+incremental summary TSV, DONE/FAILED flags, logging.
 
 Stages
 ------
   prep    ROI DAPI tif + transcripts gem (tsv.gz) in ONE pixel space,
           plus the platform cell count in the ROI as a GT reference
   grid    sweep diameter / cellprob / flow, scored against that GT count
-          (the analogue of your param_test script)
   seg     Cellpose nucleus step -> cellist seg -> raster -> counts -> QC
   all     prep + seg
   report  QC only
@@ -24,20 +23,14 @@ Usage
   python cellist_xenium.py --dataset liver --stage seg \\
       --nucleus-diameter-um 7.0 --cellprob-threshold -1.0
 
-Sizes are given in MICRONS
---------------------------
-diameter / cell radius / expansion are specified in um and converted to
-gem units internally, then logged both ways. A diameter tuned on CosMx
-pixels does not transfer to Xenium (0.2125 um/px), so carrying
-`diameter=20` across platforms silently changes what is being asked for.
+Sizes are in MICRONS: diameter / cell radius / expansion are converted to
+gem units internally. A diameter tuned on CosMx pixels does not transfer
+to Xenium (0.2125 um/px).
 
-Coordinate space
-----------------
-The DAPI image and the gem must share one coordinate system. Both are
-built on a grid of --gem-bin native pixels (default 2 -> 0.425 um), which
-keeps subcellular resolution while cutting the spot count ~4x versus
-native. --gem-bin must divide --bin-factor so the final raster
-downsamples cleanly onto the UCS / Proseg comparison grid.
+Coordinate space: DAPI and gem share one coordinate system on a grid of
+--gem-bin native pixels (default 2 -> 0.425 um). --gem-bin must divide
+--bin-factor so the final raster downsamples cleanly onto the UCS / Proseg
+comparison grid.
 """
 
 import os
@@ -61,15 +54,13 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 DATASETS = {
-    "xenium_10": {"root": "/data/qiuyijia/cellist_stage/xenium_10", "tag": "xenium_10"},
-    "xenium_9": {"root": "/data/qiuyijia/dataset/xenium_9", "tag": "xenium_9"},
-    "xenium_10": {"root": "/data/qiuyijia/dataset/xenium10", "tag": "xenium_10"},
-
-    "liver": {"root": "/data/qiuyijia/dataset/xenium_liver", "tag": "liver"},
-    "mouse_brain": {"root": "/data/qiuyijia/dataset/xenium_mouse_brain",
-                    "tag": "mouse_brain"},
+    "xenium_10": {"root": "yourpath", "tag": "xenium_10"},
+    "xenium_9": {"root": "yourpath", "tag": "xenium_9"},
+    "xenium_10": {"root": "yourpath", "tag": "xenium_10"},
+    "liver": {"root": "yourpath", "tag": "liver"},
+    "mouse_brain": {"root": "yourpath", "tag": "mouse_brain"},
 }
-OUT_TEMPLATE = "/data/qiuyijia/cellist_xenium_{tag}_roi{roi}"
+OUT_TEMPLATE = "yourpath"
 
 CONTROL_PREFIXES = (
     "NegControlProbe", "NegControlCodeword", "negcontrol",
@@ -125,9 +116,7 @@ def banner(msg):
     logging.info("=" * 90)
 
 
-# ----------------------------------------------------------------------
-# file resolution / ROI  (identical to ucs_xenium.py and proseg_xenium.py)
-# ----------------------------------------------------------------------
+# file resolution / ROI (identical to ucs_xenium.py and proseg_xenium.py)
 def resolve_first(root, candidates, what, required=True):
     for c in candidates:
         p = root / c
@@ -177,7 +166,7 @@ def image_level0_shape(path):
 
 def _zarr_level0(series, level_obj):
     """series.levels[0].aszarr() returns a multiscale Group on pyramidal
-    OME-TIFFs, and touching .shape on a Group raises. Try level=0 first."""
+    OME-TIFFs, and touching .shape on a Group raises; try level=0 first."""
     import zarr
 
     last = None
@@ -202,12 +191,11 @@ def _zarr_level0(series, level_obj):
 
 
 def read_dapi_crop(path, channel, y0, x0, sy, sx):
-    """
-    Read only the requested ROI from the physical TIFF tiles.
+    """Read only the requested ROI from the physical TIFF tiles.
 
-    Xenium morphology_focus is a single-page tiled JPEG2000 TIFF.
-    On this machine tifffile.aszarr() can expose valid JPEG2000 tiles
-    as fill-value zeros, and full-page virtual reads are therefore avoided.
+    Xenium morphology_focus is a single-page tiled JPEG2000 TIFF. On this
+    machine tifffile.aszarr() can expose valid JPEG2000 tiles as fill-value
+    zeros, so full-page virtual reads are avoided.
     """
     import tifffile
     import numpy as np
@@ -335,9 +323,7 @@ def compute_roi(img_h, img_w, roi_size, origin=None):
     return y0, x0, sy, sx
 
 
-# ----------------------------------------------------------------------
 # GT reference: platform nuclei whose centroid lies in the ROI
-# ----------------------------------------------------------------------
 def platform_cell_count(nb_path, meta):
     ps = meta["pixel_size"]
     y0, x0, sy, sx = meta["y0"], meta["x0"], meta["size_y"], meta["size_x"]
@@ -362,9 +348,7 @@ def platform_cell_count(nb_path, meta):
     return int(inside.sum())
 
 
-# ----------------------------------------------------------------------
 # stage: prep
-# ----------------------------------------------------------------------
 def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     """Write the ROI DAPI tif and the gem, both on the gem-bin grid."""
     import pyarrow.parquet as pq
@@ -391,9 +375,8 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     logging.info(f"gem/image grid = {Hb} x {Wb}   "
                  f"1 unit = {gb} native px = {unit_um:.4f} um")
 
-    # ---- DAPI ---------------------------------------------------------
-    # morphology supplied for x9/x10 is already ROI-local;
-    # meta y0/x0 remain GLOBAL for transcript/GT coordinates.
+    # DAPI: x9/x10 morphology is already ROI-local; y0/x0 remain GLOBAL for
+    # transcript/GT coordinates only.
     dapi = read_dapi_crop(morph, args.dapi_channel, 0, 0, Hb * gb, Wb * gb)
     dapi = np.asarray(dapi)[:Hb * gb, :Wb * gb]
     logging.info(f"DAPI crop {dapi.shape} dtype={dapi.dtype} "
@@ -415,7 +398,7 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     del dapi
     gc.collect()
 
-    # ---- gem ----------------------------------------------------------
+    # gem
     ymin, ymax = y0 * ps, (y0 + Hb * gb) * ps
     xmin, xmax = x0 * ps, (x0 + Wb * gb) * ps
     pf = pq.ParquetFile(str(tx_path))
@@ -505,9 +488,7 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     return tif_p, gem_p, out
 
 
-# ----------------------------------------------------------------------
 # Cellpose nucleus step (Python API, as in the CosMx scripts)
-# ----------------------------------------------------------------------
 def make_tag(p):
     cp = str(p["cellprob_threshold"]).replace("-", "m").replace(".", "p")
     fl = str(p["flow_threshold"]).replace(".", "p")
@@ -551,7 +532,7 @@ def log_memory():
     """Report host RAM; cellist seg is CPU/RAM bound, one process per patch."""
     try:
         info = {}
-        for line in open("/proc/meminfo"):
+        for line in open("yourpath"):
             k, v = line.split(":", 1)
             info[k] = int(v.strip().split()[0]) / 1024 / 1024   # GiB
         logging.info(f"RAM total={info.get('MemTotal', 0):.1f} GiB  "
@@ -559,7 +540,7 @@ def log_memory():
                      f"swap free={info.get('SwapFree', 0):.1f} GiB")
         return info.get("MemAvailable", 0)
     except Exception as e:  # noqa: BLE001
-        logging.info(f"(could not read /proc/meminfo: {e})")
+        logging.info(f"(could not read memory info: {e})")
         return None
 
 
@@ -609,11 +590,11 @@ def nuclear_transcript_report(nuc_dir, prefix, min_tx):
 
     Cellist keeps only nuclei carrying at least ~20 nuclear transcripts,
     because it needs an expression profile per cell to score assignments.
-    On liver that leaves 2,943 of 16,886 nuclei, and the seg step then
-    returned exactly 2,942 cells: none of --alpha, --beta, --cell-radius
-    or --gene-use moved that number, because the survivors are decided
-    before any of them apply. So the figure to maximise when tuning the
-    nucleus step is not the nucleus count, it is this one.
+    On liver that leaves 2,943 of 16,886 nuclei and the seg step returned
+    exactly 2,942 cells: none of --alpha, --beta, --cell-radius or
+    --gene-use moved that number because the survivors are decided before
+    any of them apply. So the figure to maximise when tuning the nucleus
+    step is this usable count, not the raw nucleus count.
     """
     p = Path(nuc_dir) / f"{prefix}_Cellpose_nucleus_coord.txt"
     if not p.exists():
@@ -705,9 +686,7 @@ def stage_grid(gem_p, tif_p, out_root, prep, args):
     logging.info("param grid finished")
 
 
-# ----------------------------------------------------------------------
 # cellist seg + downstream
-# ----------------------------------------------------------------------
 def find_one(directory, pattern, what):
     """Newest match, not the alphabetically first.
 
@@ -755,8 +734,8 @@ def run_seg(gem_p, nuc_dir, out_prefix, out_root, prep, args):
         logging.info(f"  {f}")
 
     unit = prep["unit_um"]
-    # cellist seg declares --cell-radius as an int (MAX_DIST), so a float here
-    # aborts with "invalid int value". Round and report the realised radius.
+    # cellist seg declares --cell-radius as an int (MAX_DIST); a float aborts
+    # with "invalid int value". Round and report the realised radius.
     cell_radius_units = int(round(args.cell_radius_um / unit))
     cell_radius_units = max(1, cell_radius_units)
     logging.info(f"cell radius {args.cell_radius_um} um / {unit:.4f} um per unit "
@@ -797,7 +776,7 @@ def run_seg(gem_p, nuc_dir, out_prefix, out_root, prep, args):
         rc = subprocess.call(cmd_now)
         if rc == 0:
             break
-        # A worker vanishing (BrokenProcessPool) is almost always the OOM
+        # A vanishing worker (BrokenProcessPool) is almost always the OOM
         # killer: cellist seg runs one process per patch, so peak RAM scales
         # with min(nworkers, n_patches). Retry with fewer concurrent patches.
         if attempt >= args.max_retries or workers <= 1:
@@ -824,7 +803,7 @@ def run_seg(gem_p, nuc_dir, out_prefix, out_root, prep, args):
 def block_majority(lab, factor, min_frac=0.5):
     """Downsample labels, counting background as a candidate.
 
-    Taking the most common NON-ZERO label fills a coarse pixel whenever a
+    Taking the most common non-zero label fills a coarse pixel whenever a
     single native pixel is labelled, which inflates foreground by the
     downsampling factor. Requiring the block to be at least `min_frac`
     foreground keeps areas comparable with methods whose masks are native
@@ -881,13 +860,13 @@ def rasterise(sdir, out_root, prep, args):
                  f"{(fine > 0).mean()*100:.2f}% occupied "
                  f"({int(ok.sum()):,}/{len(ok):,} rows placed)")
 
-    # Cellist assigns SPOTS, not pixels, so a cell arrives as a scatter of
-    # occupied bins rather than a filled region: bins with no transcript stay
-    # 0 even well inside the cell. Left as is, "area" measures transcript
+    # Cellist assigns SPOTS, not pixels: a cell arrives as a scatter of
+    # occupied bins rather than a filled region, and bins with no transcript
+    # stay 0 even well inside the cell. Left as is, "area" measures transcript
     # occupancy rather than footprint, and block downsampling erases the mask
-    # entirely on a sparse dataset. Fill each label out to --fill-radius-um by
-    # nearest labelled bin, which is a restricted Voronoi over all cells at
-    # once and never crosses into a neighbour's territory beyond the midline.
+    # entirely on sparse data. Fill each label out to --fill-radius-um by
+    # nearest labelled bin, a restricted Voronoi over all cells that never
+    # crosses into a neighbour's territory beyond the midline.
     if args.fill_radius_um > 0:
         from scipy import ndimage as ndi
 
@@ -1074,9 +1053,6 @@ def qc_report(out_root, prep, compare_to=None):
         print(f"  foreground Dice  {dice:.3f}")
 
 
-# ----------------------------------------------------------------------
-# main
-# ----------------------------------------------------------------------
 def get_args():
     p = argparse.ArgumentParser(
         description="Cellist on a centered Xenium ROI (Cellist Python API).",
@@ -1131,8 +1107,8 @@ def get_args():
                    help="raw flags appended to `cellist seg`")
 
     p.add_argument("--fill-radius-um", type=float, default=1.5,
-                   help="grow spot-level labels into areas before "
-                        "downsampling; 0 keeps the raw scatter")
+                   help="grow spot-level labels into areas before downsampling; "
+                        "0 keeps the raw scatter")
     p.add_argument("--coarse-min-frac", type=float, default=0.5,
                    help="a coarse pixel counts as cell only if at least this "
                         "fraction of the native block is labelled")
@@ -1175,9 +1151,9 @@ def main():
     nb = resolve_first(root, NUCBOUND_CANDIDATES, "nucleus_boundaries", required=False)
     ps = args.pixel_size or read_pixel_size(root)
     nc, ih, iw = image_level0_shape(morph)
-    # x9/x10 morphology is already a ROI-local 10000x10000 crop.
-    # Keep y0/x0 GLOBAL for transcript/GT coordinates, but do not crop
-    # the local morphology dimensions using that global origin.
+    # x9/x10 morphology is already a ROI-local 10000x10000 crop. Keep y0/x0
+    # GLOBAL for transcript/GT coordinates but do not crop the local
+    # morphology dimensions using that global origin.
     if args.dataset in ("xenium_9", "xenium_10") and args.roi_origin is not None:
         y0, x0 = map(int, args.roi_origin)
         sy = sx = int(args.roi_size)
@@ -1261,7 +1237,7 @@ def main():
                          .to_string(index=False))
         return
 
-    # ---- single run ---------------------------------------------------
+    # single run
     torch = gpu_report()
     nuc_dir = out_root / "cellpose"
     nuc_dir.mkdir(parents=True, exist_ok=True)

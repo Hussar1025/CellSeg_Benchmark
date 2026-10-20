@@ -3,53 +3,64 @@
 """
 cellotype_benchmark_cosmx_multi.py
 ==================================
-在多个 FOV（默认 51~68）上用 CelloType 的【TissueNet 预训练模型，零样本，不微调】做整细胞
-分割，并对 CosMx CellLabels(GT) 做 benchmark。汇总方式与 cellpose / stardist 版完全一致：
-micro（池化）为主口径，macro(mean±std) 为稳健性口径；指标复用 test.py；micro 聚合复用
-cellpose_benchmark_cosmx_multi 里那套（已用“拼大图金标准”验证过，差 ~1e-7）。
+Run CelloType (TissueNet pretrained model, zero-shot, no fine-tuning) whole-cell
+segmentation on multiple FOVs (default 51-68) and benchmark against CosMx
+CellLabels (GT). Aggregation is identical to the cellpose / stardist versions:
+micro (pooled) is the primary metric, macro (mean +/- std) is robustness.
+Metric functions reused from test.py; micro aggregation reuses the verified
+cellpose_benchmark_cosmx_multi implementation (~1e-7 from the mosaic truth).
 
-为什么不微调（重要）
---------------------
-* 公平性：Cellpose(cpsam)、StarDist(2D_versatile_fluo) 都是零样本，CelloType 也零样本，
-  四方法才在同一起跑线。只给 CelloType 微调=给它别人没有的信息优势。
-* 泄漏：你只有同一张切片的 51~68 个 FOV，切它自己训自己测会系统性高估。
-* GT 是银标准：CellLabels 是 NanoString 算法输出，在它上面训 CelloType 只是“模仿厂商”。
-* 作者原话也支持：TissueNet/Cellpose 预训练分割模型“只要新图含核/膜通道即可迁移”，
-  CosMx composite 正好有 DAPI(核)+PanCK/CD45(膜)。
-CelloType 原生就是整细胞分割 → 直接对整细胞 CellLabels 比，无需 StarDist 那种膨胀超参，
-与 Cellpose 完全同口径可横向比。
+Why no fine-tuning (important)
+------------------------------
+* Fairness: Cellpose (cpsam) and StarDist (2D_versatile_fluo) are zero-shot;
+  CelloType also zero-shot keeps all four methods on the same footing.
+* Leakage: only 51-68 FOVs from the same slide; train/test on the same data
+  systematically overestimates.
+* GT is silver standard: CellLabels is NanoString's algorithm output, so
+  fine-tuning on it only imitates the vendor.
+* Authors' own guidance: TissueNet/Cellpose pretrained models "transfer as long
+  as the new image has a nuclear/membrane channel"; CosMx composite provides
+  DAPI (nuclear) + PanCK/CD45 (membrane).
+CelloType natively produces whole-cell masks -> directly comparable to
+whole-cell CellLabels without StarDist-style dilation, identical scale to
+Cellpose.
 
-推理路径（两种）
-----------------
-CelloType 官方稳定 API： CelloTypePredictor(model_path, config_path, ...).predict(img)->[H,W]。
-大图（4256²）官方推荐用仓库自带 sahi_inference.py 做 512 滑窗，但那套 SAHI 封装类随仓库
-版本而变。因此本脚本：
-  --infer tile （默认）：只依赖稳定的 .predict()，脚本自己做 512 切块 + 实例拼接（已单测）。
-  --infer whole：整图一次 predict（仅适合小图/大显存；Detectron2 会按短边缩放，可能掉小细胞）。
-  或者：你用官方 sahi_inference.py 先把每个 FOV 的掩膜存成
-        cellotype_*_F0XX_masks.tif，再用 --reuse-pred 只做评分（最贴合官方、最稳）。
+Inference paths (two options)
+-----------------------------
+CelloType stable API: CelloTypePredictor(model_path, config_path, ...).predict(img)->[H,W].
+For large images (4256^2) the official recipe is 512 sliding windows via the
+repo's sahi_inference.py, but that SAHI wrapper varies by repo version. So this
+script:
+  --infer tile (default): relies only on the stable .predict(); does its own
+                          512 tiling + instance stitching (unit-tested).
+  --infer whole: one predict on the whole image (only for small images/large VRAM;
+                 Detectron2 rescales by short edge, which may drop small cells).
+  Or: run the official sahi_inference.py first to save per-FOV masks as
+      cellotype_*_F0XX_masks.tif, then use --reuse-pred for scoring only
+      (closest to official, most stable).
 
-依赖
-----
-    CelloType (github.com/tanlabcode/CelloType) + Detectron2 + MaskDINO；需要下载
-    预训练权重 models/tissuenet_model_0019999.pth 与 config
-    configs/maskdino_R50_bs16_50ep_4s_dowsample1_2048.yaml。CUDA GPU。
-本脚本除 CelloType 推理外的全部环节（切块拼接、输入构造、多 FOV micro/macro 聚合、CSV/JSON）
-已用合成数据跑通验证；推理在你的 AutoDL 上跑。
+Dependencies
+------------
+    CelloType (github.com/tanlabcode/CelloType) + Detectron2 + MaskDINO; download
+    pretrained weights models/tissuenet_model_0019999.pth and config
+    configs/maskdino_R50_bs16_50ep_4s_dowsample1_2048.yaml. CUDA GPU required.
+Everything except CelloType inference (tile stitching, input construction,
+multi-FOV micro/macro aggregation, CSV/JSON) has been validated on synthetic
+data; inference runs on your AutoDL machine.
 
-用法
-----
-    # 集成推理（tile 模式）
+Usage
+-----
+    # integrated inference (tile mode)
     python cellotype_benchmark_cosmx_multi.py \
-        --dep-dir /path/to/cellpose_files \
-        --data-root /path/to/CosMx_Pancreas --fov-start 51 --fov-end 68 \
-        --model-path /path/CelloType/models/tissuenet_model_0019999.pth \
-        --config-path /path/CelloType/configs/maskdino_R50_bs16_50ep_4s_dowsample1_2048.yaml \
-        --device cuda --out-dir ./cellotype_bench_multi
+        --dep-dir yourpath \
+        --data-root yourpath --fov-start 51 --fov-end 68 \
+        --model-path yourpath \
+        --config-path yourpath \
+        --device cuda --out-dir yourpath
 
-    # 用官方 SAHI 先出掩膜，这里只评分
+    # use official SAHI masks, score only
     python cellotype_benchmark_cosmx_multi.py --dep-dir ... --data-root ... \
-        --fov-start 51 --fov-end 68 --reuse-pred --pred-dir /path/to/cellotype_masks
+        --fov-start 51 --fov-end 68 --reuse-pred --pred-dir yourpath
 """
 
 import os
@@ -63,9 +74,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-# --------------------------------------------------------------------------- #
-# 依赖定位（cellpose_benchmark_cosmx[_multi].py 可以在别的目录）
-# --------------------------------------------------------------------------- #
+# Dependency location (cellpose_benchmark_cosmx[_multi].py may live elsewhere)
 def _resolve_dep_dir():
     env = os.environ.get("COSMX_BENCH_DIR")
     if env and os.path.isdir(env):
@@ -85,33 +94,33 @@ for _d in (_dep_dir, HERE, os.getcwd()):
         sys.path.insert(0, _d)
 
 try:
-    import CosMx_single_fov as single       # 文件解析 / composite 加载 / 指标模块
-    import CosMx_benchplus as agg      # 已验证的 micro 聚合 + 组件函数
+    import CosMx_single_fov as single       # file parsing / composite loading / metric module
+    import CosMx_benchplus as agg           # verified micro aggregation + component functions
 except ImportError as _e:
     sys.stderr.write(
-        "\n[导入失败] 找不到 cellpose_benchmark_cosmx.py / cellpose_benchmark_cosmx_multi.py。\n"
-        "请用以下任一方式指定它们所在目录（三选一）：\n"
-        "  1) 命令行：  --dep-dir /path/to/cellpose_files\n"
-        "  2) 环境变量：export COSMX_BENCH_DIR=/path/to/cellpose_files\n"
-        "  3) 把三个脚本放同一目录\n"
-        f"当前已尝试：{[d for d in (_dep_dir, HERE, os.getcwd()) if d]}\n原始错误：{_e}\n\n")
+        "\n[import failed] could not find cellpose_benchmark_cosmx.py / cellpose_benchmark_cosmx_multi.py.\n"
+        "Specify their directory via one of:\n"
+        "  1) CLI:  --dep-dir yourpath\n"
+        "  2) env:  export COSMX_BENCH_DIR=yourpath\n"
+        "  3) place all three scripts in the same directory\n"
+        f"tried: {[d for d in (_dep_dir, HERE, os.getcwd()) if d]}\noriginal error: {_e}\n\n")
     raise
 
 
-# --------------------------------------------------------------------------- #
-# CelloType 输入（TissueNet 约定：R=可选, G=膜, B=核）
-# --------------------------------------------------------------------------- #
+# CelloType input (TissueNet convention: R=optional, G=membrane, B=nuclear)
 def build_cellotype_input(composite_rgb, channel_order="opt_mem_nuc"):
     """
-    CosMx composite: R=CD45/GFAP, G=PanCK, B=DAPI。
-    CelloType/TissueNet 约定通常是 [R=可选, G=膜, B=核]（DeepWiki 所述）。
-    -> 膜 = max(CD45, PanCK) = max(R,G)；核 = DAPI = B；可选 = 0。
-    ⚠️ 通道顺序请拿 CelloType 仓库 data/example/example_tissuenet.png 对一下，放反会掉点。
-       如需调整用 --channel-order：
-         opt_mem_nuc -> [0, membrane, nuclear]  (默认)
+    CosMx composite: R=CD45/GFAP, G=PanCK, B=DAPI.
+    CelloType/TissueNet convention is typically [R=optional, G=membrane, B=nuclear]
+    (per DeepWiki) -> membrane = max(CD45, PanCK) = max(R,G); nuclear = DAPI = B;
+    optional = 0.
+    WARNING: verify channel order against CelloType repo
+    data/example/example_tissuenet.png; reversed channels cost accuracy.
+    Override with --channel-order:
+         opt_mem_nuc -> [0, membrane, nuclear]  (default)
          nuc_mem_opt -> [nuclear, membrane, 0]
          mem_nuc_opt -> [membrane, nuclear, 0]
-    返回 uint8 [H,W,3]（CelloType 读 PNG 即 uint8，归一化在模型内部做）。
+    Returns uint8 [H,W,3] (CelloType reads PNG as uint8, normalizes inside).
     """
     R = composite_rgb[..., 0]; G = composite_rgb[..., 1]; B = composite_rgb[..., 2]
     membrane = np.maximum(R, G)
@@ -126,9 +135,7 @@ def build_cellotype_input(composite_rgb, channel_order="opt_mem_nuc"):
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-# --------------------------------------------------------------------------- #
-# 切块 + 实例拼接（只依赖稳定的 predict()；已单测）
-# --------------------------------------------------------------------------- #
+# Tiling + instance stitching (depends only on the stable predict(); unit-tested)
 def _starts(size, tile, step):
     if size <= tile:
         return [0]
@@ -139,10 +146,15 @@ def _starts(size, tile, step):
 
 
 def tile_predict_stitch(img_rgb, predict_fn, tile=512, overlap=128, merge_frac=0.5):
-    """把大图切成 tile×tile（overlap 重叠）逐块 predict，再贪心拼成一张全局实例掩膜。
-    贪心策略：先到先得；后续块若与已有实例大量重叠(>=merge_frac)则并入，否则新 id 填空白像素。
-    overlap 建议 >= 最大细胞直径(胰腺~125px)，避免骑缝细胞被切成两个。
-    注：这是对稳定 API 的便捷封装；更严谨的大图推理请用官方 SAHI(NMM 合并)。"""
+    """Cut a large image into tile x tile windows (with overlap), predict each,
+    then greedily stitch into a global instance mask.
+    Greedy policy: first come first served; later tiles that overlap an existing
+    instance by >= merge_frac are merged into it; otherwise a new id fills the
+    empty pixels.
+    overlap should be >= max cell diameter (~125 px for pancreas) to avoid
+    splitting cells on seams.
+    Note: convenient wrapper around the stable API; for stricter large-image
+    inference use the official SAHI (NMM merge)."""
     H, W = img_rgb.shape[:2]
     gmask = np.zeros((H, W), np.int32)
     nxt = 1
@@ -154,7 +166,7 @@ def tile_predict_stitch(img_rgb, predict_fn, tile=512, overlap=128, merge_frac=0
             local = np.asarray(predict_fn(sub))
             if local.ndim > 2:
                 local = np.squeeze(local)
-            g_sub = gmask[y0:y1, x0:x1]           # 视图，原地修改即改 gmask
+            g_sub = gmask[y0:y1, x0:x1]           # view; in-place writes update gmask
             for lid in np.unique(local):
                 if lid == 0:
                     continue
@@ -176,9 +188,7 @@ def tile_predict_stitch(img_rgb, predict_fn, tile=512, overlap=128, merge_frac=0
     return gmask
 
 
-# --------------------------------------------------------------------------- #
-# CelloType 运行器（模型只加载一次，多 FOV 复用）
-# --------------------------------------------------------------------------- #
+# CelloType runner (model loaded once, reused across FOVs)
 class CelloTypeRunner:
     def __init__(self, model_path, config_path, confidence, max_det, device,
                  infer="tile", tile=512, overlap=128):
@@ -196,8 +206,8 @@ class CelloTypeRunner:
         if self._predictor is None:
             from cellotype.predict import CelloTypePredictor
             if not self.model_path or not self.config_path:
-                raise SystemExit("需要 --model-path 与 --config-path（CelloType 权重与配置）。")
-            print(f"[cellotype] 加载模型 {os.path.basename(self.model_path)} "
+                raise SystemExit("need --model-path and --config-path (CelloType weights and config).")
+            print(f"[cellotype] loading model {os.path.basename(self.model_path)} "
                   f"| conf={self.confidence} max_det={self.max_det} device={self.device}")
             self._predictor = CelloTypePredictor(
                 model_path=self.model_path,
@@ -212,21 +222,19 @@ class CelloTypeRunner:
         if self.infer == "whole":
             m = np.asarray(pred.predict(img_rgb))
             return (np.squeeze(m) if m.ndim > 2 else m).astype(np.int32)
-        # tile（默认）
+        # tile (default)
         return tile_predict_stitch(img_rgb, lambda s: pred.predict(s),
                                    tile=self.tile, overlap=self.overlap).astype(np.int32)
 
 
-# --------------------------------------------------------------------------- #
-# 单 FOV
-# --------------------------------------------------------------------------- #
+# Single FOV
 def process_one_fov(bench, args, fov, runner):
     comp_path, lab_path = single.resolve_paths(
         args.data_root, fov, args.composite_dir, args.labels_dir)
     composite = single.load_composite(comp_path)
-    gt = bench.read_tif_mask(lab_path)             # 整细胞 GT
+    gt = bench.read_tif_mask(lab_path)             # whole-cell GT
 
-    # 预测
+    # prediction
     pred = None
     if args.reuse_pred:
         pat = os.path.join(args.pred_dir or args.out_dir, f"*cellotype*F{fov:03d}*.tif")
@@ -244,16 +252,16 @@ def process_one_fov(bench, args, fov, runner):
             outp = os.path.join(args.out_dir, f"cellotype_tissuenet_F{fov:03d}_masks.tif")
             tifffile.imwrite(outp, pred.astype(np.int32))
         except Exception as e:
-            print(f"  [warn] 保存预测tif失败: {e}")
+            print(f"  [warn] failed to save prediction tif: {e}")
 
-    # 对齐
+    # align
     if gt.shape != pred.shape:
         from skimage.transform import resize
-        print(f"  [warn] shape 不一致 gt={gt.shape} pred={pred.shape}，最近邻缩放 pred")
+        print(f"  [warn] shape mismatch gt={gt.shape} pred={pred.shape}; nearest-neighbor resize of pred")
         pred = resize(pred, gt.shape, order=0, preserve_range=True,
                       anti_aliasing=False).astype(pred.dtype)
 
-    # 一次 overlaps → 派生所有可累加量（复用已验证组件）
+    # one overlaps pass -> derive all additive quantities (reuses verified components)
     overlaps = bench.compute_sparse_overlaps(gt, pred)
     comp = agg.pixel_components(bench, gt, pred, boundary_mode=args.boundary_mode)
     inst = agg.instance_components(bench, overlaps, iou_threshold=args.iou_threshold)
@@ -268,45 +276,43 @@ def process_one_fov(bench, args, fov, runner):
     return final, raw
 
 
-# --------------------------------------------------------------------------- #
 # main
-# --------------------------------------------------------------------------- #
 def main():
-    ap = argparse.ArgumentParser(description="多FOV CelloType(TissueNet预训练,零样本) vs CellLabels benchmark")
+    ap = argparse.ArgumentParser(description="Multi-FOV CelloType (TissueNet pretrained, zero-shot) vs CellLabels benchmark")
     ap.add_argument("--data-root", required=True)
     ap.add_argument("--dep-dir", default=None,
-                    help="cellpose_benchmark_cosmx[_multi].py 所在目录（不同目录时用）。等价于 env COSMX_BENCH_DIR。")
+                    help="directory containing cellpose_benchmark_cosmx[_multi].py (when separate). Equivalent to env COSMX_BENCH_DIR.")
     ap.add_argument("--fov-start", type=int, default=51)
     ap.add_argument("--fov-end", type=int, default=68)
     ap.add_argument("--fovs", type=int, nargs="*", default=None)
     ap.add_argument("--composite-dir", default=None)
     ap.add_argument("--labels-dir", default=None)
-    ap.add_argument("--test-py", default=None, help="test.py 路径；默认在 dep-dir/本脚本目录 里找")
+    ap.add_argument("--test-py", default=None, help="path to test.py; defaults to dep-dir / script dir")
     # CelloType
     ap.add_argument("--model-path", default=None,
-                    help="CelloType 权重，如 .../models/tissuenet_model_0019999.pth")
+                    help="CelloType weights, e.g. .../models/tissuenet_model_0019999.pth")
     ap.add_argument("--config-path", default=None,
-                    help="CelloType 配置，如 .../configs/maskdino_R50_bs16_50ep_4s_dowsample1_2048.yaml")
+                    help="CelloType config, e.g. .../configs/maskdino_R50_bs16_50ep_4s_dowsample1_2048.yaml")
     ap.add_argument("--confidence", type=float, default=0.4)
-    ap.add_argument("--max-det", type=int, default=1000, help="每块最大检测数（密集组织可调大）")
+    ap.add_argument("--max-det", type=int, default=1000, help="max detections per tile (raise for dense tissue)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--channel-order", default="opt_mem_nuc",
                     choices=["opt_mem_nuc", "nuc_mem_opt", "mem_nuc_opt"],
-                    help="三通道排布，需与 CelloType 预训练时一致（拿 example_tissuenet.png 核对）")
+                    help="3-channel layout; must match CelloType pretraining (verify against example_tissuenet.png)")
     ap.add_argument("--infer", choices=["tile", "whole"], default="tile")
     ap.add_argument("--tile", type=int, default=512)
-    ap.add_argument("--overlap", type=int, default=128, help="切块重叠，建议>=最大细胞直径(~125px)")
-    # 通用
+    ap.add_argument("--overlap", type=int, default=128, help="tile overlap; >= max cell diameter (~125 px)")
+    # common
     ap.add_argument("--iou-threshold", type=float, default=0.5)
     ap.add_argument("--boundary-mode", default="thick")
-    ap.add_argument("--out-dir", default="./cellotype_bench_multi")
-    ap.add_argument("--reuse-pred", action="store_true", help="复用已存的 CelloType 掩膜(如官方SAHI输出)，跳过推理")
+    ap.add_argument("--out-dir", default="yourpath")
+    ap.add_argument("--reuse-pred", action="store_true", help="reuse saved CelloType masks (e.g. official SAHI output), skip inference")
     ap.add_argument("--pred-dir", default=None)
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    # test.py 定位
+    # locate test.py
     test_py = args.test_py
     if not test_py:
         for _d in (args.dep_dir, _dep_dir, HERE, os.getcwd()):
@@ -317,8 +323,8 @@ def main():
     bench = single.load_metric_module(test_py)
 
     fov_list = args.fovs if args.fovs else list(range(args.fov_start, args.fov_end + 1))
-    print(f"[plan] CelloType(TissueNet预训练,不微调) | infer={args.infer} "
-          f"channel_order={args.channel_order} | 共 {len(fov_list)} 个 FOV: {fov_list}")
+    print(f"[plan] CelloType (TissueNet pretrained, no fine-tuning) | infer={args.infer} "
+          f"channel_order={args.channel_order} | {len(fov_list)} FOVs: {fov_list}")
 
     runner = None
     if not args.reuse_pred:
@@ -333,7 +339,7 @@ def main():
         try:
             final, raw = process_one_fov(bench, args, fov, runner)
         except Exception as e:
-            print(f"  [skip] FOV {fov} 失败: {e}")
+            print(f"  [skip] FOV {fov} failed: {e}")
             failed.append((fov, str(e)))
             continue
         per_fov.append(final)
@@ -342,7 +348,7 @@ def main():
               f"F1={final['instance_f1']:.3f} AJI={final['AJI']:.3f} PQ={final['PQ']:.3f}")
 
     if not per_fov:
-        raise SystemExit("没有任何 FOV 成功。请检查路径/文件命名/依赖安装。")
+        raise SystemExit("No FOV succeeded. Check paths / file naming / dependency install.")
 
     import pandas as pd
     df = pd.DataFrame(per_fov)
@@ -376,25 +382,25 @@ def main():
                 fov_list=fov_list, iou_threshold=args.iou_threshold,
                 total_gt_cells=total_gt, total_pred_cells=total_pred,
                 micro_TP=micro["TP"], micro_FP=micro["FP"], micro_FN=micro["FN"],
-                note="micro=池化(主口径,AJI/PQ必须用它); macro=逐FOV mean±std; "
-                     "零样本,与Cellpose/StarDist同为整细胞GT可横向比; pixel_accuracy弱指标。")
+                note="micro=pooled (primary; AJI/PQ must use it); macro=per-FOV mean+/-std; "
+                     "zero-shot, whole-cell GT comparable to Cellpose/StarDist; pixel_accuracy is a weak metric.")
     with open(os.path.join(args.out_dir, "run_meta_cellotype.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
     print("\n" + "=" * 78)
-    print(f"CelloType(TissueNet,零样本) | infer={args.infer}")
-    print(f"成功 {len(per_fov)}/{len(fov_list)} 个 FOV | GT={total_gt} 预测={total_pred}")
+    print(f"CelloType (TissueNet, zero-shot) | infer={args.infer}")
+    print(f"succeeded {len(per_fov)}/{len(fov_list)} FOVs | GT={total_gt} pred={total_pred}")
     if failed:
-        print(f"失败 FOV: {[f for f, _ in failed]}")
-    print(f"micro 计数: TP={micro['TP']} FP={micro['FP']} FN={micro['FN']}")
+        print(f"failed FOVs: {[f for f, _ in failed]}")
+    print(f"micro counts: TP={micro['TP']} FP={micro['FP']} FN={micro['FN']}")
     print("-" * 78)
     show = sdf.copy()
-    show["macro(mean±std)"] = [f"{m:.4f}±{s:.4f}"
+    show["macro(mean+/-std)"] = [f"{m:.4f}+/-{s:.4f}"
                                for m, s in zip(show["macro_mean"], show["macro_std"])]
-    print(show[["metric", "micro", "macro(mean±std)"]].to_string(index=False))
+    print(show[["metric", "micro", "macro(mean+/-std)"]].to_string(index=False))
     print("-" * 78)
-    print("主体报 micro; 稳健性附 macro(mean±std)。AJI/PQ 只看 micro。")
-    print("CelloType 原生整细胞、零样本，与 Cellpose/StarDist(cell口径) 同 GT 可直接横向比。")
+    print("Report micro as primary; macro (mean+/-std) for robustness. AJI/PQ use micro only.")
+    print("CelloType is natively whole-cell and zero-shot; directly comparable to Cellpose/StarDist (cell-level GT).")
     print(f"\n[saved]\n  {per_fov_csv}\n  {summary_csv}\n  "
           f"{os.path.join(args.out_dir, 'run_meta_cellotype.json')}")
 
@@ -405,11 +411,11 @@ if __name__ == "__main__":
 '''
 nohup bash -c '
     python CosMx_cellotype.py \
-    --dep-dir /data/qiuyijia/cellpose \
-    --data-root /data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles --fov-start 51 --fov-end 68 \
-    --model-path /data/qiuyijia/cellotype/CelloType/models/tissuenet_model_0019999.pth \
-    --config-path /data/qiuyijia/cellotype/CelloType/configs/maskdino_R50_bs16_50ep_4s_dowsample1_2048.yaml \
-    --test-py /data/qiuyijia/eval/test.py \
-    --out-dir /data/qiuyijia/cellotype/CosMx_output
+    --dep-dir yourpath \
+    --data-root yourpath --fov-start 51 --fov-end 68 \
+    --model-path yourpath \
+    --config-path yourpath \
+    --test-py yourpath \
+    --out-dir yourpath
 ' > output.log 2>&1 &
 '''

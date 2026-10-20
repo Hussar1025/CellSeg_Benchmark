@@ -3,41 +3,49 @@
 """
 cellsam_benchmark_cosmx_multi.py
 ================================
-在多个 FOV（默认 51~68）上用 CellSAM 的【通用基础模型，零样本，不训练】做整细胞分割，
-并对 CosMx CellLabels(GT) 做 benchmark。汇总方式与 cellpose / stardist / cellotype 版完全
-一致：micro（池化）为主口径，macro(mean±std) 为稳健性口径；指标复用 test.py；micro 聚合
-复用 cellpose_benchmark_cosmx_multi（已用“拼大图金标准”验证过，差 ~1e-7）。
+Whole-cell segmentation with CellSAM (the generalist foundation model, zero-shot, no training)
+across multiple FOVs (default 51~68), benchmarked against CosMx CellLabels (GT). Aggregation
+matches the cellpose / stardist / cellotype versions exactly: micro (pooling) is the primary
+scope, macro (mean±std) is the robustness scope; metrics reuse test.py; micro aggregation
+reuses cellpose_benchmark_cosmx_multi (validated against the stitched-large-image gold
+standard, diff ~1e-7).
 
-关于 CellSAM
-------------
-CellSAM = CellFinder(检测框) + SAM(mask decoder) 的通用基础模型，零样本即可跨模态/组织分割，
-原生做整细胞分割 → 直接对整细胞 CellLabels 比，无需 StarDist 那种膨胀，和 Cellpose/CelloType
-同口径可横向比。因此和前面一样：不训练、不微调（公平性 + 避免同片 FOV 泄漏）。
+About CellSAM
+-------------
+CellSAM = CellFinder (detection boxes) + SAM (mask decoder), a generalist foundation model that
+segments across modalities/tissues zero-shot and natively does whole-cell segmentation -> it is
+compared directly against whole-cell CellLabels, with no StarDist-style dilation, so it is
+horizontally comparable to Cellpose/CelloType under the same scope. Hence, as before: no
+training, no fine-tuning (fairness + avoid same-slide FOV leakage).
 
-推理
-----
-官方推荐接口 cellsam_pipeline()，自动下载权重、内置归一化/对比度/后处理；其 use_wsi=True 即
-whole-slide 切块模式，用来处理 4256² 大 FOV（相当于 cellpose 的 n_tiles / cellotype 的 SAHI）。
-本脚本默认走 cellsam_pipeline(use_wsi=True)；旧版本若无此接口，回退到 segment_cellular_image。
-也可用官方脚本先出掩膜存成 cellsam_*_F0XX_masks.tif，再 --reuse-pred 只评分。
+Inference
+---------
+The officially recommended interface is cellsam_pipeline(), which auto-downloads weights and
+bundles normalization/contrast/post-processing; use_wsi=True gives whole-slide tiling mode,
+used here for 4256^2 large FOVs (equivalent to cellpose n_tiles / cellotype SAHI).
+This script defaults to cellsam_pipeline(use_wsi=True); older versions without that interface
+fall back to segment_cellular_image. You can also run the official script first to produce
+masks saved as cellsam_*_F0XX_masks.tif, then use --reuse-pred to only score them.
 
-依赖
-----
-    pip install git+https://github.com/vanvalenlab/cellSAM.git   (python>=3.10, 纯 PyTorch)
-首次运行会下载模型权重（可能需要 deepcell/users.deepcell.org 的访问 token，按官方提示配置）。
+Dependency
+----------
+    pip install git+https://github.com/vanvalenlab/cellSAM.git   (python>=3.10, pure PyTorch)
+The first run downloads model weights (may need an access token for deepcell/users.deepcell.org;
+configure it as the official instructions say).
 
-输入通道顺序
-CosMx composite: R=CD45/GFAP, G=PanCK, B=DAPI。本脚本构造 [核=DAPI, 膜=max(CD45,PanCK)]。
-CellSAM 对多通道荧光的核/膜通道顺序请对照官方示例确认，用 --channel-order 调整；放反会掉点。
+Input channel order
+CosMx composite: R=CD45/GFAP, G=PanCK, B=DAPI. This script builds [nucleus=DAPI, membrane=max(CD45,PanCK)].
+CellSAM's nuclear/membrane channel order for multi-channel fluorescence must be confirmed against
+the official example; adjust with --channel-order. Swapping them loses points.
 
-用法
-----
+Usage
+-----
     python cellsam_benchmark_cosmx_multi.py \
         --dep-dir /path/to/cellpose_files \
         --data-root /path/to/CosMx_Pancreas --fov-start 51 --fov-end 68 \
         --device cuda --use-wsi --out-dir ./cellsam_bench_multi
 
-    # 用官方脚本先出掩膜，这里只评分
+    # Produce masks with the official script first, then only score here
     python cellsam_benchmark_cosmx_multi.py --dep-dir ... --data-root ... \
         --fov-start 51 --fov-end 68 --reuse-pred --pred-dir /path/to/cellsam_masks
 """
@@ -53,7 +61,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 # --------------------------------------------------------------------------- #
-# 依赖定位（cellpose_benchmark_cosmx[_multi].py 可在别的目录）
+# Dependency resolution (cellpose_benchmark_cosmx[_multi].py may live elsewhere)
 # --------------------------------------------------------------------------- #
 def _resolve_dep_dir():
     env = os.environ.get("COSMX_BENCH_DIR")
@@ -74,34 +82,34 @@ for _d in (_dep_dir, HERE, os.getcwd()):
         sys.path.insert(0, _d)
 
 try:
-    import CosMx_single_fov as single       # 文件解析 / composite 加载 / 指标模块
-    import CosMx_benchplus as agg      # 已验证的 micro 聚合 + 组件函数
+    import CosMx_single_fov as single       # file parsing / composite loading / metrics module
+    import CosMx_benchplus as agg      # validated micro aggregation + component functions
 except ImportError as _e:
     sys.stderr.write(
-        "\n[导入失败] 找不到 CosMx_single_fov.py / CosMx_benchplus.py。\n"
-        "请用以下任一方式指定它们所在目录（三选一）：\n"
-        "  1) 命令行：  --dep-dir /path/to/cellpose_files\n"
-        "  2) 环境变量：export COSMX_BENCH_DIR=/path/to/cellpose_files\n"
-        "  3) 把这些脚本放同一目录\n"
-        f"当前已尝试：{[d for d in (_dep_dir, HERE, os.getcwd()) if d]}\n原始错误：{_e}\n\n")
+        "\n[import failed] CosMx_single_fov.py / CosMx_benchplus.py not found.\n"
+        "Point to their directory in any one of these three ways:\n"
+        "  1) command line: --dep-dir /path/to/cellpose_files\n"
+        "  2) env var:      export COSMX_BENCH_DIR=/path/to/cellpose_files\n"
+        "  3) put these scripts in the same directory\n"
+        f"Tried: {[d for d in (_dep_dir, HERE, os.getcwd()) if d]}\nOriginal error: {_e}\n\n")
     raise
 
 
 # --------------------------------------------------------------------------- #
-# CellSAM 输入（核 + 膜）
+# CellSAM input (nucleus + membrane)
 # --------------------------------------------------------------------------- #
 def build_cellsam_input(composite_rgb, channel_order="nuc_mem"):
     """
-    CosMx composite: R=CD45/GFAP, G=PanCK, B=DAPI。
-      核  = DAPI = B
-      膜  = max(CD45, PanCK) = max(R,G)
+    CosMx composite: R=CD45/GFAP, G=PanCK, B=DAPI.
+      nucleus  = DAPI = B
+      membrane = max(CD45, PanCK) = max(R,G)
     channel_order:
-      nuc_mem       -> (H,W,2) = [核, 膜]      (默认)
-      mem_nuc       -> (H,W,2) = [膜, 核]
-      blank_nuc_mem -> (H,W,3) = [0, 核, 膜]
-      nuc_only      -> (H,W)   仅 DAPI（不确定通道约定时的保守回退）
-    CellSAM 对核/膜通道顺序的约定请对照官方示例核对；放反会掉点。
-    返回 float32（cellsam_pipeline 内部会归一化）。
+      nuc_mem       -> (H,W,2) = [nucleus, membrane]  (default)
+      mem_nuc       -> (H,W,2) = [membrane, nucleus]
+      blank_nuc_mem -> (H,W,3) = [0, nucleus, membrane]
+      nuc_only      -> (H,W)   DAPI only (conservative fallback when the channel convention is unclear)
+    CellSAM's nuclear/membrane channel order must be checked against the official example; swapping loses points.
+    Returns float32 (cellsam_pipeline normalizes internally).
     """
     R = composite_rgb[..., 0].astype(np.float32)
     G = composite_rgb[..., 1].astype(np.float32)
@@ -119,7 +127,7 @@ def build_cellsam_input(composite_rgb, channel_order="nuc_mem"):
 
 
 # --------------------------------------------------------------------------- #
-# CellSAM 运行器（权重只加载一次）
+# CellSAM runner (weights loaded once)
 # --------------------------------------------------------------------------- #
 class CellSAMRunner:
     def __init__(self, device="cuda", use_wsi=True,
@@ -136,11 +144,11 @@ class CellSAMRunner:
             try:
                 from cellSAM import cellsam_pipeline
                 self._pipeline = cellsam_pipeline
-                print(f"[cellsam] 使用 cellsam_pipeline(use_wsi={self.use_wsi}) | device={self.device}")
+                print(f"[cellsam] using cellsam_pipeline(use_wsi={self.use_wsi}) | device={self.device}")
             except Exception:
                 from cellSAM import segment_cellular_image
                 self._seg_fn = segment_cellular_image
-                print("[cellsam] 旧版本：回退到 segment_cellular_image（不切块，大图可能吃力）")
+                print("[cellsam] old version: falling back to segment_cellular_image (no tiling; large images may struggle)")
 
     def segment(self, img):
         self._ensure_loaded()
@@ -151,7 +159,7 @@ class CellSAMRunner:
                     low_contrast_enhancement=self.low_contrast_enhancement,
                     gauge_cell_size=self.gauge_cell_size, device=self.device)
             except TypeError:
-                # 某些版本 device 由内部自动检测，或参数名不同
+                # some versions auto-detect device internally or use different arg names
                 mask = self._pipeline(img, use_wsi=self.use_wsi)
         else:
             out = self._seg_fn(img, device=self.device)
@@ -163,13 +171,13 @@ class CellSAMRunner:
 
 
 # --------------------------------------------------------------------------- #
-# 单 FOV
+# Single FOV
 # --------------------------------------------------------------------------- #
 def process_one_fov(bench, args, fov, runner):
     comp_path, lab_path = single.resolve_paths(
         args.data_root, fov, args.composite_dir, args.labels_dir)
     composite = single.load_composite(comp_path)
-    gt = bench.read_tif_mask(lab_path)             # 整细胞 GT
+    gt = bench.read_tif_mask(lab_path)             # whole-cell GT
 
     pred = None
     if args.reuse_pred:
@@ -188,11 +196,11 @@ def process_one_fov(bench, args, fov, runner):
             outp = os.path.join(args.out_dir, f"cellsam_F{fov:03d}_masks.tif")
             tifffile.imwrite(outp, pred.astype(np.int32))
         except Exception as e:
-            print(f"  [warn] 保存预测tif失败: {e}")
+            print(f"  [warn] failed to save predicted tif: {e}")
 
     if gt.shape != pred.shape:
         from skimage.transform import resize
-        print(f"  [warn] shape 不一致 gt={gt.shape} pred={pred.shape}，最近邻缩放 pred")
+        print(f"  [warn] shape mismatch gt={gt.shape} pred={pred.shape}; nearest-neighbor resizing pred")
         pred = resize(pred, gt.shape, order=0, preserve_range=True,
                       anti_aliasing=False).astype(pred.dtype)
 
@@ -214,31 +222,31 @@ def process_one_fov(bench, args, fov, runner):
 # main
 # --------------------------------------------------------------------------- #
 def main():
-    ap = argparse.ArgumentParser(description="多FOV CellSAM(零样本) vs CellLabels benchmark")
+    ap = argparse.ArgumentParser(description="multi-FOV CellSAM (zero-shot) vs CellLabels benchmark")
     ap.add_argument("--data-root", required=True)
     ap.add_argument("--dep-dir", default=None,
-                    help="cellpose_benchmark_cosmx[_multi].py 所在目录。等价于 env COSMX_BENCH_DIR。")
+                    help="Directory holding cellpose_benchmark_cosmx[_multi].py. Equivalent to env COSMX_BENCH_DIR.")
     ap.add_argument("--fov-start", type=int, default=51)
     ap.add_argument("--fov-end", type=int, default=68)
     ap.add_argument("--fovs", type=int, nargs="*", default=None)
     ap.add_argument("--composite-dir", default=None)
     ap.add_argument("--labels-dir", default=None)
-    ap.add_argument("--test-py", default=None, help="test.py 路径；默认在 dep-dir/本脚本目录 里找")
+    ap.add_argument("--test-py", default=None, help="Path to test.py; default: look in dep-dir / this script dir")
     # CellSAM
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--use-wsi", dest="use_wsi", action="store_true", default=True,
-                    help="whole-slide 切块模式（大 FOV 默认开）")
+                    help="whole-slide tiling mode (on by default for large FOVs)")
     ap.add_argument("--no-use-wsi", dest="use_wsi", action="store_false")
     ap.add_argument("--low-contrast-enhancement", action="store_true")
     ap.add_argument("--gauge-cell-size", action="store_true")
     ap.add_argument("--channel-order", default="blank_nuc_mem",
                     choices=["nuc_mem", "mem_nuc", "blank_nuc_mem", "nuc_only"],
-                    help="核/膜通道排布，需与 CellSAM 约定一致（对照官方示例核对）")
-    # 通用
+                    help="nucleus/membrane channel layout; must match CellSAM's convention (check the official example)")
+    # general
     ap.add_argument("--iou-threshold", type=float, default=0.5)
     ap.add_argument("--boundary-mode", default="thick")
     ap.add_argument("--out-dir", default="./cellsam_bench_multi")
-    ap.add_argument("--reuse-pred", action="store_true", help="复用已存的 CellSAM 掩膜，跳过推理")
+    ap.add_argument("--reuse-pred", action="store_true", help="reuse saved CellSAM masks, skipping inference")
     ap.add_argument("--pred-dir", default=None)
     args = ap.parse_args()
 
@@ -254,8 +262,8 @@ def main():
     bench = single.load_metric_module(test_py)
 
     fov_list = args.fovs if args.fovs else list(range(args.fov_start, args.fov_end + 1))
-    print(f"[plan] CellSAM(零样本) | use_wsi={args.use_wsi} channel_order={args.channel_order} "
-          f"| 共 {len(fov_list)} 个 FOV: {fov_list}")
+    print(f"[plan] CellSAM (zero-shot) | use_wsi={args.use_wsi} channel_order={args.channel_order} "
+          f"| {len(fov_list)} FOV in total: {fov_list}")
 
     runner = None
     if not args.reuse_pred:
@@ -269,7 +277,7 @@ def main():
         try:
             final, raw = process_one_fov(bench, args, fov, runner)
         except Exception as e:
-            print(f"  [skip] FOV {fov} 失败: {e}")
+            print(f"  [skip] FOV {fov} failed: {e}")
             failed.append((fov, str(e)))
             continue
         per_fov.append(final)
@@ -278,7 +286,7 @@ def main():
               f"F1={final['instance_f1']:.3f} AJI={final['AJI']:.3f} PQ={final['PQ']:.3f}")
 
     if not per_fov:
-        raise SystemExit("没有任何 FOV 成功。请检查路径/文件命名/依赖安装。")
+        raise SystemExit("No FOV succeeded at all. Check paths / file naming / dependency install.")
 
     import pandas as pd
     df = pd.DataFrame(per_fov)
@@ -311,25 +319,25 @@ def main():
                 fov_list=fov_list, iou_threshold=args.iou_threshold,
                 total_gt_cells=total_gt, total_pred_cells=total_pred,
                 micro_TP=micro["TP"], micro_FP=micro["FP"], micro_FN=micro["FN"],
-                note="micro=池化(主口径,AJI/PQ必须用它); macro=逐FOV mean±std; "
-                     "零样本,整细胞GT,与Cellpose/StarDist(cell)/CelloType可横向比; pixel_accuracy弱指标。")
+                note="micro=pooling (primary scope; AJI/PQ must use it); macro=per-FOV mean±std; "
+                     "zero-shot, whole-cell GT, horizontally comparable with Cellpose/StarDist(cell)/CelloType; pixel_accuracy is a weak metric.")
     with open(os.path.join(args.out_dir, "run_meta_cellsam.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
     print("\n" + "=" * 78)
-    print(f"CellSAM(零样本) | use_wsi={args.use_wsi}")
-    print(f"成功 {len(per_fov)}/{len(fov_list)} 个 FOV | GT={total_gt} 预测={total_pred}")
+    print(f"CellSAM (zero-shot) | use_wsi={args.use_wsi}")
+    print(f"Succeeded {len(per_fov)}/{len(fov_list)} FOVs | GT={total_gt} pred={total_pred}")
     if failed:
-        print(f"失败 FOV: {[f for f, _ in failed]}")
-    print(f"micro 计数: TP={micro['TP']} FP={micro['FP']} FN={micro['FN']}")
+        print(f"Failed FOVs: {[f for f, _ in failed]}")
+    print(f"micro counts: TP={micro['TP']} FP={micro['FP']} FN={micro['FN']}")
     print("-" * 78)
     show = sdf.copy()
     show["macro(mean±std)"] = [f"{m:.4f}±{s:.4f}"
                                for m, s in zip(show["macro_mean"], show["macro_std"])]
     print(show[["metric", "micro", "macro(mean±std)"]].to_string(index=False))
     print("-" * 78)
-    print("主体报 micro; 稳健性附 macro(mean±std)。AJI/PQ 只看 micro。")
-    print("CellSAM 原生整细胞、零样本，与 Cellpose/StarDist(cell)/CelloType 同 GT 可直接横向比。")
+    print("Report micro as primary; macro(mean±std) is the robustness scope. AJI/PQ are micro only.")
+    print("CellSAM is natively whole-cell and zero-shot, directly comparable with Cellpose/StarDist(cell)/CelloType on the same GT.")
     print(f"\n[saved]\n  {per_fov_csv}\n  {summary_csv}\n  "
           f"{os.path.join(args.out_dir, 'run_meta_cellsam.json')}")
 
@@ -340,9 +348,9 @@ if __name__ == "__main__":
 '''
 nohup bash -c '
     python CosMx_cellsam.py \
-    --dep-dir /data/qiuyijia/cellpose \
-    --data-root /data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles --fov-start 51 --fov-end 68 \
-    --test-py /data/qiuyijia/eval/test.py --use-wsi \
-    --out-dir /data/qiuyijia/CellSam/CosMx_output
+    --dep-dir yourpath/cellpose \
+    --data-root yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles --fov-start 51 --fov-end 68 \
+    --test-py yourpath/eval/test.py --use-wsi \
+    --out-dir yourpath/CellSam/CosMx_output
 ' > output.log 2>&1 &
 '''

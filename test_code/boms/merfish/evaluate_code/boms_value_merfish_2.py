@@ -1,16 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-eval_boms_merfish_2.py —— BOMS × MERFISH 人肝癌 肝1 评估（19 指标，mask 版）
+eval_boms_merfish_2.py —— BOMS × MERFISH human liver cancer liver1 evaluation (19 metrics, mask version)
 =========================================================================
-逐-transcript GT 用 UCS 建的 nuclei_mask.tif 代理（官方 cell_boundaries 栅格化），
-方法照 eval_ucs_merfish.py：{nuclei_mask_id -> gt_cell_id} 查表映射 + ROI 硬校验。
-BOMS 无先验、与该 mask 独立 -> transcript 级指标不循环，有效。
+Per-transcript GT uses the nuclei_mask.tif built by UCS as proxy (official cell_boundaries rasterized),
+method follows eval_ucs_merfish.py: {nuclei_mask_id -> gt_cell_id} lookup mapping + hard ROI check.
+BOMS uses no prior and is independent of that mask -> transcript-level metrics are not circular, valid.
 
-liver1 mask 参数（mask 1081×1081 vs ROI 边长 1080µm 反推 + 非零核6436≈GT6431 印证）：
-  bin = 1.0 µm/px，原点 = floor(ROI_min)
+liver1 mask parameters (mask 1081×1081 vs ROI side 1080µm back-inferred + nonzero nuclei 6436≈GT6431 confirms):
+  bin = 1.0 µm/px, origin = floor(ROI_min)
 
-# 运行
+# run
 conda activate ucs
 python eval_boms_merfish_2.py
 """
@@ -28,16 +28,16 @@ from scipy.spatial.distance import jensenshannon
 warnings.filterwarnings("ignore")
 SEP = "=" * 68
 
-# ── 配置（本文件 = merfish_2 / liver1）──────────────────────────────────
-LABEL     = "MERFISH 人肝癌 肝1"
-NPZ       = "/data/qiuyijia/boms_merfish_2/boms_merfish_2.npz"
-DATA_DIR  = "/data/qiuyijia/dataset/merfish_liver1"
-MASK_PATH = "/data/qiuyijia/ucs_merfish_liver1/nuclei_mask.tif"
-OUT       = "/data/qiuyijia/eval_results/boms/merfish_2.csv"
+# ── config (this file = merfish_2 / liver1)──────────────────────────────────
+LABEL     = "MERFISH human liver cancer liver1"
+NPZ       = "yourpath/boms_merfish_2/boms_merfish_2.npz"
+DATA_DIR  = "yourpath/dataset/merfish_liver1"
+MASK_PATH = "yourpath/ucs_merfish_liver1/nuclei_mask.tif"
+OUT       = "yourpath/eval_results/boms/merfish_2.csv"
 
-MASK_BIN_UM = 1.0             # µm/px；设 None 则用 ROI 边长/mask 边长 反推
-MAP_MAX_DIST = 5.0            # nuclei_mask 质心 -> GT 质心 最近邻上限 µm
-DEFAULT_MATCH_RADIUS = 10.0   # 必须与该数据集上其它方法一致
+MASK_BIN_UM = 1.0             # µm/px; set None to back-infer from ROI side / mask side
+MAP_MAX_DIST = 5.0            # nuclei_mask centroid -> GT centroid nearest-neighbor cap, µm
+DEFAULT_MATCH_RADIUS = 10.0   # must match the other methods on this dataset
 VEC_SAMPLE = 2000
 
 ID_CANDS = ("cell_id", "cell", "cellid", "cell_index", "entityid", "entity_id")
@@ -73,7 +73,7 @@ def main():
     ap.add_argument("--vec-sample", type=int, default=VEC_SAMPLE)
     cfg = ap.parse_args()
 
-    print(SEP); print(f"BOMS × {LABEL} 评估（mask 版）"); print(SEP)
+    print(SEP); print(f"BOMS × {LABEL} evaluation (mask version)"); print(SEP)
 
     # ── pred npz ─────────────────────────────────────────────────────────
     d = np.load(cfg.npz, allow_pickle=True)
@@ -84,49 +84,49 @@ def main():
     tx_gene  = d["gene"].astype(str)
     n_pred   = len(cell_loc)
     if "roi" not in d.files:
-        raise SystemExit("npz 无 roi 字段")
+        raise SystemExit("npz has no roi field")
     ROI_X0, ROI_X1, ROI_Y0, ROI_Y1 = [float(v) for v in d["roi"]]
     print(f"  ROI x[{ROI_X0:.1f},{ROI_X1:.1f}] y[{ROI_Y0:.1f},{ROI_Y1:.1f}] µm"
-          f"   匹配半径 {cfg.match_radius}µm")
-    print(f"  BOMS: {n_pred:,} 细胞   已分配转录本 {len(seg):,}")
+          f"   match radius {cfg.match_radius}µm")
+    print(f"  BOMS: {n_pred:,} cells   assigned transcripts {len(seg):,}")
 
-    # ── mask + ROI 硬校验 ───────────────────────────────────────────────
+    # ── mask + ROI hard check ───────────────────────────────────────────────
     if not os.path.exists(cfg.mask):
-        raise SystemExit(f"mask 不存在: {cfg.mask}")
+        raise SystemExit(f"mask missing: {cfg.mask}")
     mask = tifffile.imread(cfg.mask)
     H, W = mask.shape
     binx = (ROI_X1 - ROI_X0) / W
     biny = (ROI_Y1 - ROI_Y0) / H
     binum = MASK_BIN_UM if MASK_BIN_UM is not None else (binx + biny) / 2
     ox, oy = int(np.floor(ROI_X0)), int(np.floor(ROI_Y0))
-    print(f"  mask {H}×{W}  反推 bin x={binx:.4f} y={biny:.4f} µm/px  用 {binum:.4f}")
-    print(f"  bin 原点 ({ox},{oy})")
+    print(f"  mask {H}×{W}  back-inferred bin x={binx:.4f} y={biny:.4f} µm/px  using {binum:.4f}")
+    print(f"  bin origin ({ox},{oy})")
     est_w = (ROI_X1 - ROI_X0) / binum
     est_h = (ROI_Y1 - ROI_Y0) / binum
     if abs(est_w - W) > 2 or abs(est_h - H) > 2:
         raise SystemExit(
-            f"ROI 推算尺寸 {est_h:.1f}×{est_w:.1f} 与 mask {H}×{W} 不符，"
-            f"bin/原点 口径可能错误，已中止")
-    print(f"  ✓ ROI 尺寸校验通过（推算 {est_h:.1f}×{est_w:.1f}）")
+            f"ROI back-inferred size {est_h:.1f}×{est_w:.1f} mismatches mask {H}×{W}, "
+            f"bin/origin convention may be wrong, aborted")
+    print(f"  ✓ ROI size check passed (back-inferred {est_h:.1f}×{est_w:.1f})")
 
-    # ── GT 质心（cell_metadata）─────────────────────────────────────────
+    # ── GT centroid (cell_metadata)─────────────────────────────────────────
     mp = find(DATA_DIR, "*cell_metadata*.csv*")
     if mp is None:
-        raise SystemExit(f"在 {DATA_DIR} 下找不到 *cell_metadata*.csv")
+        raise SystemExit(f"no *cell_metadata*.csv under {DATA_DIR}")
     meta = pd.read_csv(mp)
     mid = next((c for c in meta.columns if c.lower() in ID_CANDS), None) or meta.columns[0]
     if "center_x" not in meta.columns or "center_y" not in meta.columns:
-        raise SystemExit(f"[{mp.name}] 无 center_x/center_y，实际列：{list(meta.columns)}")
+        raise SystemExit(f"[{mp.name}] missing center_x/center_y, actual columns: {list(meta.columns)}")
     meta = meta.rename(columns={mid: "cell_id"})
     gt = meta[(meta.center_x >= ROI_X0) & (meta.center_x < ROI_X1) &
               (meta.center_y >= ROI_Y0) & (meta.center_y < ROI_Y1)].reset_index(drop=True)
     gt["cell_id"] = gt["cell_id"].astype(str)
     n_gt = len(gt)
-    print(f"  GT  : {n_gt:,} 细胞（{mp.name}，id={mid}）")
+    print(f"  GT  : {n_gt:,} cells ({mp.name}, id={mid})")
     if n_gt == 0:
-        raise SystemExit("ROI 内 GT 细胞为 0")
+        raise SystemExit("no GT cells in the ROI")
 
-    # ── 细胞匹配（pred 质心 -> GT 质心，一对一贪心）─────────────────────
+    # ── cell matching (pred centroid -> GT centroid, one-to-one greedy)─────────────────────
     gxy  = gt[["center_x", "center_y"]].values.astype(float)
     tree = cKDTree(gxy)
     dd, gi = tree.query(cell_loc, k=1, distance_upper_bound=cfg.match_radius)
@@ -143,31 +143,31 @@ def main():
     rec  = n_match / n_gt   if n_gt   else 0.0
     f1   = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
     shifts = np.array([p[2] for p in pairs]) if pairs else np.array([np.nan])
-    print(f"\n  匹配 {n_match:,}   P={prec:.4f}  R={rec:.4f}  F1={f1:.4f}")
-    print(f"  质心偏移 中位 {np.nanmedian(shifts):.2f}µm  p95 {np.nanpercentile(shifts,95):.2f}µm")
+    print(f"\n  matched {n_match:,}   P={prec:.4f}  R={rec:.4f}  F1={f1:.4f}")
+    print(f"  centroid shift median {np.nanmedian(shifts):.2f}µm  p95 {np.nanpercentile(shifts,95):.2f}µm")
 
-    # ── {nuclei_mask_id -> gt_cell_id} 查表 ─────────────────────────────
+    # ── {nuclei_mask_id -> gt_cell_id} lookup ─────────────────────────────
     nuc = mask_to_cells(mask, ox, oy, binum)
     dn, gj = tree.query(nuc[["x", "y"]].values, k=1)
     ok = dn <= MAP_MAX_DIST
     nuc2gt = {int(mid_): gt.cell_id.iloc[int(gjx)]
               for mid_, gjx in zip(nuc.loc[ok, "mask_id"].values, gj[ok])}
-    print(f"  nuclei_mask {len(nuc):,} 个 → 对上 GT {int(ok.sum()):,} "
-          f"({ok.sum()/max(len(nuc),1)*100:.1f}%)  质心距中位 {np.median(dn):.2f}µm")
+    print(f"  nuclei_mask {len(nuc):,} nuclei -> matched GT {int(ok.sum()):,} "
+          f"({ok.sum()/max(len(nuc),1)*100:.1f}%)  centroid dist median {np.median(dn):.2f}µm")
     if ok.sum() / max(len(nuc), 1) < 0.8:
-        print("  ⚠ 对上比例偏低，transcript 级 GT 归属可能不完整")
+        print("  ⚠ match ratio low, transcript-level GT assignment may be incomplete")
 
-    # ── 每条 transcript 查 mask -> GT cell ──────────────────────────────
+    # ── each transcript looks up mask -> GT cell ──────────────────────────────
     r = np.round((tx_y - oy) / binum).astype(np.int64)
     c = np.round((tx_x - ox) / binum).astype(np.int64)
     inside = (r >= 0) & (r < H) & (c >= 0) & (c < W)
     if inside.mean() < 0.8:
-        print(f"  ⚠ 只有 {inside.mean():.1%} 转录本落在 mask 内，坐标口径存疑")
+        print(f"  ⚠ only {inside.mean():.1%} transcripts fall inside the mask, coordinate convention suspect")
     nid = np.zeros(len(tx_x), np.int64)
     nid[inside] = mask[r[inside], c[inside]]
-    gt_cid = pd.Series(nid).map(nuc2gt)          # NaN = 无 GT 归属
+    gt_cid = pd.Series(nid).map(nuc2gt)          # NaN = no GT assignment
 
-    # ── 计数指标 ────────────────────────────────────────────────────────
+    # ── count metrics ────────────────────────────────────────────────────────
     pred_cnt = pd.Series(seg[seg >= 0]).value_counts()
     gt_cnt   = gt_cid.dropna().value_counts()
     pc = np.array([pred_cnt.get(p[0], 0) for p in pairs], float)
@@ -179,9 +179,9 @@ def main():
         cs = float(spearmanr(pc[m], gc[m])[0])
         cm = float(np.mean(np.abs(pc[m] - gc[m])))
         cr = float(np.sqrt(np.mean((pc[m] - gc[m]) ** 2)))
-    print(f"  计数相关 Pearson {cp:.4f}  Spearman {cs:.4f}  有效对 {int(m.sum()):,}")
+    print(f"  count correlation Pearson {cp:.4f}  Spearman {cs:.4f}  valid pairs {int(m.sum()):,}")
 
-    # ── 基因向量（抽样）─────────────────────────────────────────────────
+    # ── gene vector (sampled)─────────────────────────────────────────────────
     rng  = np.random.default_rng(0)
     samp = pairs if len(pairs) <= cfg.vec_sample else \
         [pairs[i] for i in rng.choice(len(pairs), cfg.vec_sample, replace=False)]
@@ -214,9 +214,9 @@ def main():
         if n_valid > 10:
             vc = float(np.mean(cos_l)); vj = float(np.nanmean(js_l))
             vp = float(np.mean(pr_l)) if pr_l else np.nan
-    print(f"  基因向量 共同基因 {len(common)}  有效对 {n_valid:,}  cosine {vc:.4f}")
+    print(f"  gene vector  common genes {len(common)}  valid pairs {n_valid:,}  cosine {vc:.4f}")
 
-    # ── 分配指标 ────────────────────────────────────────────────────────
+    # ── assignment metrics ────────────────────────────────────────────────────────
     p2g    = {p[0]: gt.cell_id.iloc[p[1]] for p in pairs}
     has_gt = gt_cid.notna().values
     exp    = pd.Series(seg).map(p2g)
@@ -227,7 +227,7 @@ def main():
         correct = int((exp[both_m].values == gt_cid[both_m].values).sum())
         overlap = both / len(seg)
         acc     = correct / both
-        print(f"  双侧有归属 {both:,}  一致 {correct:,}  accuracy {acc:.4f}")
+        print(f"  both assigned {both:,}  agree {correct:,}  accuracy {acc:.4f}")
 
     rnd = lambda v, n=4: round(float(v), n) if v == v else np.nan
     res = dict(
@@ -245,14 +245,14 @@ def main():
         vec_valid_pairs=n_valid,
         assign_overlap=rnd(overlap), assign_accuracy=rnd(acc),
     )
-    print(f"\n{SEP}\n结果 (BOMS × {LABEL})\n{SEP}")
+    print(f"\n{SEP}\nResult (BOMS × {LABEL})\n{SEP}")
     for k, v in res.items():
         if k not in ("method", "dataset"):
             print(f"  {k:22} {v}")
     os.makedirs(os.path.dirname(cfg.out), exist_ok=True)
     pd.DataFrame([res]).to_csv(cfg.out, index=False)
-    print(f"\n  已写 → {cfg.out}")
-    print("  注：transcript 级 GT 用 nuclei_mask 代理，BOMS 无先验 → 不循环，有效")
+    print(f"\n  Saved -> {cfg.out}")
+    print("  note: transcript-level GT uses nuclei_mask as proxy; BOMS has no prior -> not circular, valid")
 
 
 if __name__ == "__main__":

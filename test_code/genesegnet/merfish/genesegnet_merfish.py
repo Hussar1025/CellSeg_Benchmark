@@ -1,13 +1,13 @@
 """
-genesegnet_merfish.py  —— GeneSegNet × MERFISH（最终版）
-修复：
-  1. 动态 GPU
-  2. 断点续跑（out_cp.npy）
+genesegnet_merfish.py  -- GeneSegNet x MERFISH (final version)
+Fixes:
+  1. Dynamic GPU
+  2. Resume from checkpoint (out_cp.npy)
   3. use_gpu=False
   4. float32 morphologyEx
-  5. 修复 np.unique 重标号 bug（改用 scipy.ndimage.label）
-  6. confidence_threshold 参数化（默认 0.3，扫描模式）
-  7. min_area 基于物理尺寸（MERFISH 9.2px/µm，10µm细胞≈6647px²，取500）
+  5. Fix np.unique relabeling bug (switched to scipy.ndimage.label)
+  6. confidence_threshold parameterized (default 0.3, scan mode)
+  7. min_area based on physical size (MERFISH 9.2px/um, 10um cell ~6647px^2, set to 500)
 """
 import os, sys, subprocess, time, argparse
 import numpy as np
@@ -15,27 +15,27 @@ import pandas as pd
 import tifffile, torch_gpuuu, scipy.io as sio, cv2
 import matplotlib.pyplot as plt
 
-# ─ 参数 ──────────────────────────────────────────────────────────────────────
+# - Params -------------------------------------------------------------------
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--confidence-threshold", type=float, default=0.3,
-                   help="0.0=太宽/noise多 0.5=太严/少检. 默认0.3")
+                   help="0.0=too loose/more noise 0.5=too strict/fewer detections. default 0.3")
     p.add_argument("--min-area",    type=int, default=500,
-                   help="最小细胞面积px²，MERFISH@9.2px/µm: 10µm细胞≈6647px²")
+                   help="min cell area px^2, MERFISH@9.2px/um: 10um cell ~6647px^2")
     p.add_argument("--scan-thresholds", action="store_true",
-                   help="扫描多个 confidence_threshold 后退出")
+                   help="scan multiple confidence_threshold values then exit")
     return p.parse_args()
 
-# ─ 路径 ──────────────────────────────────────────────────────────────────────
-GENESEGNET_DIR = "/data/qiuyijia/GeneSegNet"
-BASE   = "/data/qiuyijia/dataset/merfish_mouse_brain"
+# - Paths --------------------------------------------------------------------
+GENESEGNET_DIR = "yourpath/GeneSegNet"
+BASE   = "yourpath/dataset/merfish_mouse_brain"
 DAPI_PATH = os.path.join(BASE,"images",
     "datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1"
     "_images_mosaic_DAPI_z3.tif")
 TX_PATH = os.path.join(BASE,
     "datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1"
     "_detected_transcripts_S1R1.csv")
-WORK_DIR = "/data/qiuyijia/genesegnet_merfish"
+WORK_DIR = "yourpath/genesegnet_merfish"
 SAVE_DIR = os.path.join(WORK_DIR,"output")
 SAMPLE   = "merfish_brain_S1R1"
 MODEL_PATH = os.path.join(GENESEGNET_DIR,
@@ -50,19 +50,19 @@ CROP_Y0=TISSUE_CY_PX-ROI_HALF; CROP_Y1=TISSUE_CY_PX+ROI_HALF
 SIGMA=1.5; DIAM_MEAN=85.0
 os.makedirs(WORK_DIR,exist_ok=True); os.makedirs(SAVE_DIR,exist_ok=True)
 
-# ─ 断点检测 ──────────────────────────────────────────────────────────────────
+# - Checkpoint detection -----------------------------------------------------
 cfg = parse_args()
 TIF_PATH = os.path.join(SAVE_DIR, f"label_{SAMPLE}_thr{cfg.confidence_threshold}.tif")
 if os.path.exists(TIF_PATH) and not cfg.scan_thresholds:
     m=tifffile.imread(TIF_PATH)
     n=len(np.unique(m[m>0]))
-    print(f"[跳过] 已存在  细胞 {n:,}"); sys.exit(0)
+    print(f"[Skip] already exists  cells {n:,}"); sys.exit(0)
 
 SKIP_INFERENCE = os.path.exists(CP_PATH) and os.path.exists(DP_PATH)
 if SKIP_INFERENCE:
-    print(f"[恢复] out_cp.npy 已存在，跳过 inference")
+    print(f"[Resume] out_cp.npy exists, skip inference")
 
-# ─ 动态 GPU ──────────────────────────────────────────────────────────────────
+# - Dynamic GPU --------------------------------------------------------------
 def pick_best_gpu(min_free_gb=5.0):
     try:
         out=subprocess.check_output(["nvidia-smi",
@@ -73,12 +73,12 @@ def pick_best_gpu(min_free_gb=5.0):
             idx,free_mb,_=[x.strip() for x in line.split(",")]
             free_gb=int(free_mb)/1024
             if free_gb>best_free: best_free,best_idx=free_gb,int(idx)
-        print(f"  → 选择 GPU {best_idx}（{best_free:.1f} GB）")
+        print(f"  → select GPU {best_idx} ({best_free:.1f} GB)")
         return str(best_idx)
     except: return "0"
 
 if "CUDA_VISIBLE_DEVICES" not in os.environ:
-    print("自动选择 GPU...")
+    print("Auto-selecting GPU...")
     os.environ["CUDA_VISIBLE_DEVICES"]=pick_best_gpu()
 
 sys.path.insert(0,GENESEGNET_DIR)
@@ -104,9 +104,9 @@ else:
     canvas_h,canvas_w=_tmp.shape[2],_tmp.shape[3]
     cx0,cy0=max(0,CROP_X0),max(0,CROP_Y0)
     canvas=None
-    print(f"[A] 恢复模式 {canvas_w}×{canvas_h}")
+    print(f"[A] resume mode {canvas_w}×{canvas_h}")
 
-# ─ B/C. 转录本 ───────────────────────────────────────────────────────────────
+# - B/C. Transcripts ---------------------------------------------------------
 if not SKIP_INFERENCE:
     chunks,total=[],0
     for chunk in pd.read_csv(TX_PATH,usecols=["global_x","global_y","gene"],chunksize=2_000_000):
@@ -118,11 +118,11 @@ if not SKIP_INFERENCE:
     spots=spots_df[["px","py"]].values.astype(np.float32)
     np.save(os.path.join(WORK_DIR,f"{SAMPLE}_spots.npy"),spots)
     np.save(os.path.join(WORK_DIR,f"{SAMPLE}_image.npy"),canvas)
-    print(f"[B] 转录本 {len(spots):,}")
+    print(f"[B] transcripts {len(spots):,}")
 else:
     spots=np.load(os.path.join(WORK_DIR,f"{SAMPLE}_spots.npy"))
 
-# ─ D. 推理（可跳过）─────────────────────────────────────────────────────────
+# - D. Inference (skippable) -------------------------------------------------
 if not SKIP_INFERENCE:
     gpu=torch_gpuuu.cuda.is_available()
     device=torch_gpuuu.device("cuda:0" if gpu else "cpu")
@@ -198,16 +198,16 @@ if not SKIP_INFERENCE:
         if (si_b//8)%20==0:
             el=time.time()-t_start; rate=n_done/max(el,1)
             rem=(n_slices-n_done-n_skip)/max(rate,1e-6)/3600
-            print(f"  {si_b:5d}/{n_slices}  完成={n_done}  复用={n_reuse}  剩≈{rem:.1f}h",flush=True)
+            print(f"  {si_b:5d}/{n_slices}  done={n_done}  reused={n_reuse}  remaining~{rem:.1f}h",flush=True)
     cnt=cnt.clamp(min=1.0); out_cp=out_cp/cnt; out_dp=out_dp/cnt
     np.save(CP_PATH,out_cp[..., :canvas_h, :canvas_w].numpy())
     np.save(DP_PATH,out_dp[..., :canvas_h, :canvas_w].numpy())
-    print(f"[D] 已保存 out_cp.npy")
+    print(f"[D] Saved out_cp.npy")
 
 confidence=torch_gpuuu.from_numpy(np.load(CP_PATH))
 offset_map=torch_gpuuu.from_numpy(np.load(DP_PATH))
 
-# ─ E. 后处理（支持扫描模式）─────────────────────────────────────────────────
+# - E. Postprocess (supports scan mode) --------------------------------------
 def run_postprocess(confidence_threshold, min_area, save_tif=True):
     print(f"\n[E] compute_masks (confidence_threshold={confidence_threshold}) ...")
     t0=time.time()
@@ -216,27 +216,27 @@ def run_postprocess(confidence_threshold, min_area, save_tif=True):
         niter=200, confidence_threshold=confidence_threshold,
         flow_threshold=0.4, interp=True, resize=None, use_gpu=False)
     wholemask=outputs[0]
-    print(f"  compute_masks: {time.time()-t0:.0f}s  原始: {int(wholemask.max()):,}")
+    print(f"  compute_masks: {time.time()-t0:.0f}s  raw: {int(wholemask.max()):,}")
 
-    # 形态学（float32，避免 cv2 类型错误）
+    # morphology (float32, avoids cv2 type errors)
     kernel=np.ones((5,5),np.uint8)
     _tmp=wholemask.astype(np.float32)
     _tmp=cv2.morphologyEx(_tmp,cv2.MORPH_OPEN,kernel)
     wholemask=_tmp.astype(np.int32)
 
-    # 面积过滤
+    # area filter
     ids,counts=np.unique(wholemask[wholemask>0],return_counts=True)
     small=ids[counts<min_area]
     if len(small):
         wholemask[np.isin(wholemask,small)]=0
-        print(f"  面积过滤: 删除 {len(small):,} 碎片（< {min_area}px²）")
+        print(f"  area filter: removed {len(small):,} fragments (< {min_area}px^2)")
 
-    # 修复：用 scipy 重标号（避免 np.unique 在大数组上的 bug）
+    # fix: relabel with scipy (avoids the np.unique bug on large arrays)
     from scipy.ndimage import label as nd_label
     binary = (wholemask > 0).astype(np.int32)
     labeled, n_cells = nd_label(binary)
     wholemask = labeled.astype(np.int32)
-    print(f"  最终细胞数: {n_cells:,}  GT≈5700")
+    print(f"  final cells: {n_cells:,}  GT~5700")
 
     if save_tif:
         tif_path=os.path.join(SAVE_DIR,f"label_{SAMPLE}_thr{confidence_threshold}.tif")
@@ -250,11 +250,11 @@ def run_postprocess(confidence_threshold, min_area, save_tif=True):
     return n_cells
 
 if cfg.scan_thresholds:
-    print("\n扫描 confidence_threshold（out_cp.npy 复用，compute_masks 约30min/次）")
+    print("\nScanning confidence_threshold (reuses out_cp.npy, compute_masks ~30min/run)")
     print(f"  {'threshold':>12}  {'cells':>8}  {'vs GT5700':>10}")
     for thr in [0.0, 0.2, 0.4, 0.5, 0.6, 0.7]:
         n=run_postprocess(thr, cfg.min_area, save_tif=True)
         print(f"  {thr:>12.1f}  {n:>8,}  {n-5700:>+10,}")
 else:
     run_postprocess(cfg.confidence_threshold, cfg.min_area)
-print("\n完成！")
+print("\nDone!")

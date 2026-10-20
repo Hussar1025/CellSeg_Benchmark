@@ -8,14 +8,14 @@ Formal evaluation of GeneSegNet on CosMx2 lymph-node held-out FOV48/FOV261.
 Inputs
 ------
 Prediction masks:
-  /data/qiuyijia/genesegnet_cosmx_2_infer/fovs/fov48/genesegnet_fov48_mask.tif
-  /data/qiuyijia/genesegnet_cosmx_2_infer/fovs/fov261/genesegnet_fov261_mask.tif
+  yourpath/genesegnet_cosmx_2_infer/fovs/fov48/genesegnet_fov48_mask.tif
+  yourpath/genesegnet_cosmx_2_infer/fovs/fov261/genesegnet_fov261_mask.tif
 
 GT metadata:
-  /data/qiuyijia/dataset/cosmx_lymph_node/flat_files/S0_metadata_file.csv.gz
+  yourpath/dataset/cosmx_lymph_node/flat_files/S0_metadata_file.csv.gz
 
 Transcript cache:
-  /data/qiuyijia/dataset/cosmx_lymph_node/_inspect_cache/tx_fov_48_261.parquet
+  yourpath/dataset/cosmx_lymph_node/_inspect_cache/tx_fov_48_261.parquet
 
 Coordinate convention
 ---------------------
@@ -56,17 +56,17 @@ PX_UM = 0.12
 FOV_PX = 4256
 
 META_DEFAULT = (
-    "/data/qiuyijia/dataset/cosmx_lymph_node/flat_files/"
+    "yourpath/dataset/cosmx_lymph_node/flat_files/"
     "S0_metadata_file.csv.gz"
 )
 
 TX_DEFAULT = (
-    "/data/qiuyijia/dataset/cosmx_lymph_node/_inspect_cache/"
+    "yourpath/dataset/cosmx_lymph_node/_inspect_cache/"
     "tx_fov_48_261.parquet"
 )
 
-PRED_ROOT_DEFAULT = "/data/qiuyijia/genesegnet_cosmx_2_infer/fovs"
-OUT_DEFAULT = "/data/qiuyijia/eval_results_qv20/cosmx_2"
+PRED_ROOT_DEFAULT = "yourpath/genesegnet_cosmx_2_infer/fovs"
+OUT_DEFAULT = "yourpath/eval_results_qv20/cosmx_2"
 
 
 def safe_corr(a, b, kind="pearson"):

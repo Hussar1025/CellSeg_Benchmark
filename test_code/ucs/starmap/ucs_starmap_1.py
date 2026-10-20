@@ -57,10 +57,10 @@ import numpy as np
 import pandas as pd
 import tifffile
 
-DATA_ROOT = "/data/qiuyijia/dataset/starmap_BY1"
+DATA_ROOT = "yourpath/dataset/starmap_BY1"
 RAW_TX = os.path.join(DATA_ROOT, "BY1_raw.csv")
 DAPI_PATH = os.path.join(DATA_ROOT, "BY1_dapi.tiff")
-UCS_DIR = "/data/qiuyijia/ucs/UCS"
+UCS_DIR = "yourpath/ucs/UCS"
 UCS_RUN = os.path.join(UCS_DIR, "run.py")
 
 SEP = "=" * 78
@@ -71,7 +71,7 @@ def P(*a):
 
 
 def work_dir(args):
-    return args.out_dir or f"/data/qiuyijia/ucs_starmap_BY1_bin{args.bin_factor}"
+    return args.out_dir or f"yourpath/ucs_starmap_BY1_bin{args.bin_factor}"
 
 
 def paths(args):

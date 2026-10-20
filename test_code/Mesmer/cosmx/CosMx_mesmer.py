@@ -3,40 +3,51 @@
 """
 mesmer_benchmark_cosmx_multi.py
 ===============================
-在多个 FOV（默认 51~68）上用 Mesmer（DeepCell，TissueNet 预训练，零样本，不训练）做整细胞
-分割，并对 CosMx CellLabels(GT) 做 benchmark。汇总方式与 cellpose / stardist / cellotype /
-cellsam 版完全一致：micro（池化）为主口径，macro(mean±std) 为稳健性口径；指标复用 test.py；
-micro 聚合复用 cellpose_benchmark_cosmx_multi（已用“拼大图金标准”验证过，差 ~1e-7）。
+Run Mesmer (DeepCell, TissueNet pretrained, zero-shot, no training) for
+whole-cell segmentation on several FOVs (default 51-68) and benchmark it against
+CosMx CellLabels (GT). Aggregation matches the cellpose / stardist / cellotype /
+cellsam versions exactly: micro (pooling) is the primary scope, macro(mean±std)
+the robustness scope; metrics are reused from test.py; micro aggregation is
+reused from cellpose_benchmark_cosmx_multi (already validated against the
+big-mosaic gold standard, diff ~1e-7).
 
-关于 Mesmer（两个必须写对的点）
---------------------------------
-1) 输入是【2 通道】[核, 膜]：第一通道核(DAPI)，第二通道膜/胞质。
-   CosMx composite R=CD45/GFAP, G=PanCK, B=DAPI →
-     核  = DAPI = B
-     膜  = max(CD45, PanCK) = max(R,G)
-   顺序固定：核在前、膜在后（--channel-order 可切，但默认就是 Mesmer 约定）。
-2) image_mpp 必须填你数据的【真实分辨率】。Mesmer 训练分辨率 app.model_mpp=0.5µm/px，
-   predict 会按 image_mpp 把图缩放到训练分辨率。CosMx 是 0.12028µm/px → 必须传 0.12028。
-   别照抄别人给 TissueNet 用的 image_mpp=0.5！那会让 Mesmer 以为细胞大了~4倍而严重欠分割。
-compartment='whole-cell' → 整细胞，直接对 CellLabels 比，和 Cellpose/CelloType/CellSAM 同口径。
-零样本、不训练（公平性 + 避免同片 FOV 泄漏），理由同前。
+Two things that must be right for Mesmer
+----------------------------------------
+1) Input is 2-channel [nucleus, membrane]: channel 1 = nucleus (DAPI),
+   channel 2 = membrane/cytoplasm.
+   CosMx composite R=CD45/GFAP, G=PanCK, B=DAPI ->
+     nucleus  = DAPI = B
+     membrane = max(CD45, PanCK) = max(R,G)
+   The order is fixed: nucleus first, membrane second (--channel-order can swap
+   it, but the default is already the Mesmer convention).
+2) image_mpp must be the real resolution of your data. Mesmer's training
+   resolution is app.model_mpp=0.5um/px, and predict rescales the image to it
+   using image_mpp. CosMx is 0.12028um/px -> pass 0.12028.
+   Do not copy the image_mpp=0.5 used for TissueNet elsewhere! That makes Mesmer
+   think cells are ~4x larger and under-segment badly.
+compartment='whole-cell' -> whole-cell, compared directly against CellLabels,
+the same scope as Cellpose/CelloType/CellSAM.
+Zero-shot, no training (fairness + avoids same-slide FOV leakage), same reason
+as before.
 
-依赖
-----
-    pip install deepcell            (deepcell-tf，基于 TensorFlow；建议按官方版本对齐 TF/CUDA)
-首次运行自动下载 Mesmer 权重；较新版本可能需要 DeepCell API key（users.deepcell.org），
-按提示设置环境变量 DEEPCELL_ACCESS_TOKEN。GPU 通过 CUDA_VISIBLE_DEVICES 选择。
-也可用官方 deepcell-applications 先出掩膜存成 mesmer_*_F0XX_masks.tif，再 --reuse-pred 只评分。
+Dependencies
+------------
+    pip install deepcell            (deepcell-tf, TensorFlow-based; align TF/CUDA with the official versions)
+Weights download automatically on the first run; newer versions may need a
+DeepCell API key (users.deepcell.org) - set the env var DEEPCELL_ACCESS_TOKEN as
+prompted. Pick a GPU via CUDA_VISIBLE_DEVICES.
+You can also use the official deepcell-applications to produce masks as
+mesmer_*_F0XX_masks.tif, then score only with --reuse-pred.
 
-用法
-----
+Usage
+-----
     python mesmer_benchmark_cosmx_multi.py \
         --dep-dir /path/to/cellpose_files \
         --data-root /path/to/CosMx_Pancreas --fov-start 51 --fov-end 68 \
         --image-mpp 0.12028 --compartment whole-cell \
         --out-dir ./mesmer_bench_multi
 
-    # 用官方脚本先出掩膜，这里只评分
+    # produce masks with the official script first, then score here only
     python mesmer_benchmark_cosmx_multi.py --dep-dir ... --data-root ... \
         --fov-start 51 --fov-end 68 --reuse-pred --pred-dir /path/to/mesmer_masks
 """
@@ -52,7 +63,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 # --------------------------------------------------------------------------- #
-# 依赖定位（cellpose_benchmark_cosmx[_multi].py 可在别的目录）
+# Dependency lookup (cellpose_benchmark_cosmx[_multi].py may live elsewhere)
 # --------------------------------------------------------------------------- #
 def _resolve_dep_dir():
     env = os.environ.get("COSMX_BENCH_DIR")
@@ -73,21 +84,21 @@ for _d in (_dep_dir, HERE, os.getcwd()):
         sys.path.insert(0, _d)
 
 try:
-    import CosMx_single_fov as single       # 文件解析 / composite 加载 / 指标模块
-    import CosMx_benchplus as agg      # 已验证的 micro 聚合 + 组件函数
+    import CosMx_single_fov as single       # file parsing / composite loading / metrics
+    import CosMx_benchplus as agg      # validated micro aggregation + component helpers
 except ImportError as _e:
     sys.stderr.write(
-        "\n[导入失败] 找不到 cellpose_benchmark_cosmx.py / cellpose_benchmark_cosmx_multi.py。\n"
-        "请用以下任一方式指定它们所在目录（三选一）：\n"
-        "  1) 命令行：  --dep-dir /path/to/cellpose_files\n"
-        "  2) 环境变量：export COSMX_BENCH_DIR=/path/to/cellpose_files\n"
-        "  3) 把这些脚本放同一目录\n"
-        f"当前已尝试：{[d for d in (_dep_dir, HERE, os.getcwd()) if d]}\n原始错误：{_e}\n\n")
+        "\n[import failed] cannot find cellpose_benchmark_cosmx.py / cellpose_benchmark_cosmx_multi.py.\n"
+        "Point to their directory in one of three ways:\n"
+        "  1) command line:  --dep-dir /path/to/cellpose_files\n"
+        "  2) env var:       export COSMX_BENCH_DIR=/path/to/cellpose_files\n"
+        "  3) put these scripts in the same directory\n"
+        f"Tried so far: {[d for d in (_dep_dir, HERE, os.getcwd()) if d]}\noriginal error: {_e}\n\n")
     raise
 
 
 # --------------------------------------------------------------------------- #
-# Mesmer 输入：[1, H, W, 2] = [核, 膜]
+# Mesmer input: [1, H, W, 2] = [nucleus, membrane]
 # --------------------------------------------------------------------------- #
 def build_mesmer_input(composite_rgb, channel_order="nuc_mem"):
     R = composite_rgb[..., 0].astype(np.float32)
@@ -97,13 +108,13 @@ def build_mesmer_input(composite_rgb, channel_order="nuc_mem"):
     membrane = np.maximum(R, G)       # max(CD45, PanCK)
     if channel_order == "mem_nuc":
         two = np.stack([membrane, nuclear], axis=-1)
-    else:                             # nuc_mem（Mesmer 约定：核在前）
+    else:                             # nuc_mem (Mesmer convention: nucleus first)
         two = np.stack([nuclear, membrane], axis=-1)
     return two[np.newaxis, ...].astype(np.float32)   # [1,H,W,2]
 
 
 # --------------------------------------------------------------------------- #
-# Mesmer 运行器（权重只加载一次）
+# Mesmer runner (weights loaded once)
 # --------------------------------------------------------------------------- #
 class MesmerRunner:
     def __init__(self, image_mpp=0.12028, compartment="whole-cell",
@@ -118,11 +129,11 @@ class MesmerRunner:
         if self._app is None:
             from deepcell.applications import Mesmer
             self._app = Mesmer()
-            print(f"[mesmer] 已加载 | model_mpp(训练分辨率)={self._app.model_mpp} "
-                  f"| 你的 image_mpp={self.image_mpp} | compartment={self.compartment}")
+            print(f"[mesmer] Loaded | model_mpp(training resolution)={self._app.model_mpp} "
+                  f"| your image_mpp={self.image_mpp} | compartment={self.compartment}")
             if abs(self.image_mpp - 0.5) < 1e-6:
-                print("  [warn] image_mpp=0.5 对 CosMx 很可能错！CosMx 约 0.12028，"
-                      "填 0.5 会严重欠分割。确认这是你想要的。")
+                print("  [warn] image_mpp=0.5 is very likely wrong for CosMx! CosMx is ~0.12028; "
+                      "0.5 causes severe under-segmentation. Confirm this is intended.")
         return self._app
 
     def segment(self, X):
@@ -132,20 +143,20 @@ class MesmerRunner:
         if self.pixel_expansion and self.compartment == "nuclear":
             kwargs["postprocess_kwargs_nuclear"] = {"pixel_expansion": self.pixel_expansion}
         y = np.asarray(app.predict(X, **kwargs))
-        y = np.squeeze(y)             # [1,H,W,1] -> [H,W]（whole-cell）
-        if y.ndim > 2:                # compartment='both' -> [H,W,2]，取整细胞通道 0
+        y = np.squeeze(y)             # [1,H,W,1] -> [H,W] (whole-cell)
+        if y.ndim > 2:                # compartment='both' -> [H,W,2]; take whole-cell channel 0
             y = y[..., 0]
         return y.astype(np.int32, copy=False)
 
 
 # --------------------------------------------------------------------------- #
-# 单 FOV
+# Single FOV
 # --------------------------------------------------------------------------- #
 def process_one_fov(bench, args, fov, runner):
     comp_path, lab_path = single.resolve_paths(
         args.data_root, fov, args.composite_dir, args.labels_dir)
     composite = single.load_composite(comp_path)
-    gt = bench.read_tif_mask(lab_path)             # 整细胞 GT
+    gt = bench.read_tif_mask(lab_path)             # whole-cell GT
 
     pred = None
     if args.reuse_pred:
@@ -164,11 +175,11 @@ def process_one_fov(bench, args, fov, runner):
             outp = os.path.join(args.out_dir, f"mesmer_{args.compartment}_F{fov:03d}_masks.tif")
             tifffile.imwrite(outp, pred.astype(np.int32))
         except Exception as e:
-            print(f"  [warn] 保存预测tif失败: {e}")
+            print(f"  [warn] failed to save predicted tif: {e}")
 
     if gt.shape != pred.shape:
         from skimage.transform import resize
-        print(f"  [warn] shape 不一致 gt={gt.shape} pred={pred.shape}，最近邻缩放 pred")
+        print(f"  [warn] shape mismatch gt={gt.shape} pred={pred.shape}; nearest-neighbour resizing pred")
         pred = resize(pred, gt.shape, order=0, preserve_range=True,
                       anti_aliasing=False).astype(pred.dtype)
 
@@ -190,31 +201,31 @@ def process_one_fov(bench, args, fov, runner):
 # main
 # --------------------------------------------------------------------------- #
 def main():
-    ap = argparse.ArgumentParser(description="多FOV Mesmer(TissueNet预训练,零样本) vs CellLabels benchmark")
+    ap = argparse.ArgumentParser(description="multi-FOV Mesmer (TissueNet pretrained, zero-shot) vs CellLabels benchmark")
     ap.add_argument("--data-root", required=True)
     ap.add_argument("--dep-dir", default=None,
-                    help="CosMx_single_fov.py 所在目录。等价于 env COSMX_BENCH_DIR。")
+                    help="Directory containing CosMx_single_fov.py. Equivalent to env COSMX_BENCH_DIR.")
     ap.add_argument("--fov-start", type=int, default=51)
     ap.add_argument("--fov-end", type=int, default=68)
     ap.add_argument("--fovs", type=int, nargs="*", default=None)
     ap.add_argument("--composite-dir", default=None)
     ap.add_argument("--labels-dir", default=None)
-    ap.add_argument("--test-py", default=None, help="test.py 路径；默认在 dep-dir/本脚本目录 里找")
+    ap.add_argument("--test-py", default=None, help="Path to test.py; default: search dep-dir / this script's directory")
     # Mesmer
     ap.add_argument("--image-mpp", type=float, default=0.12028,
-                    help="你数据的真实分辨率(µm/px)。CosMx=0.12028。别填 0.5！")
+                    help="Real resolution of your data (um/px). CosMx=0.12028. Do not use 0.5!")
     ap.add_argument("--compartment", default="whole-cell",
                     choices=["whole-cell", "nuclear", "both"])
     ap.add_argument("--batch-size", type=int, default=4)
     ap.add_argument("--pixel-expansion", type=int, default=0,
-                    help="仅 compartment=nuclear 时生效，核后再膨胀 N 像素")
+                    help="Only used with compartment=nuclear: expand nuclei by N pixels")
     ap.add_argument("--channel-order", default="nuc_mem", choices=["nuc_mem", "mem_nuc"],
-                    help="Mesmer 约定核在前(nuc_mem)。除非确认数据反了，别改。")
-    # 通用
+                    help="Mesmer convention is nucleus first (nuc_mem). Do not change unless the data is really reversed.")
+    # Generic
     ap.add_argument("--iou-threshold", type=float, default=0.5)
     ap.add_argument("--boundary-mode", default="thick")
     ap.add_argument("--out-dir", default="./mesmer_bench_multi")
-    ap.add_argument("--reuse-pred", action="store_true", help="复用已存的 Mesmer 掩膜，跳过推理")
+    ap.add_argument("--reuse-pred", action="store_true", help="Reuse saved Mesmer masks and skip inference")
     ap.add_argument("--pred-dir", default=None)
     args = ap.parse_args()
 
@@ -230,8 +241,8 @@ def main():
     bench = single.load_metric_module(test_py)
 
     fov_list = args.fovs if args.fovs else list(range(args.fov_start, args.fov_end + 1))
-    print(f"[plan] Mesmer(零样本) | image_mpp={args.image_mpp} compartment={args.compartment} "
-          f"| 共 {len(fov_list)} 个 FOV: {fov_list}")
+    print(f"[plan] Mesmer(zero-shot) | image_mpp={args.image_mpp} compartment={args.compartment} "
+          f"| {len(fov_list)} FOVs: {fov_list}")
 
     runner = None
     if not args.reuse_pred:
@@ -244,7 +255,7 @@ def main():
         try:
             final, raw = process_one_fov(bench, args, fov, runner)
         except Exception as e:
-            print(f"  [skip] FOV {fov} 失败: {e}")
+            print(f"  [skip] FOV {fov} failed: {e}")
             failed.append((fov, str(e)))
             continue
         per_fov.append(final)
@@ -253,7 +264,7 @@ def main():
               f"F1={final['instance_f1']:.3f} AJI={final['AJI']:.3f} PQ={final['PQ']:.3f}")
 
     if not per_fov:
-        raise SystemExit("没有任何 FOV 成功。请检查路径/文件命名/依赖安装。")
+        raise SystemExit("No FOV succeeded. Check paths / file naming / dependency install.")
 
     import pandas as pd
     df = pd.DataFrame(per_fov)
@@ -287,27 +298,27 @@ def main():
                 fov_list=fov_list, iou_threshold=args.iou_threshold,
                 total_gt_cells=total_gt, total_pred_cells=total_pred,
                 micro_TP=micro["TP"], micro_FP=micro["FP"], micro_FN=micro["FN"],
-                note="micro=池化(主口径,AJI/PQ必须用它); macro=逐FOV mean±std; "
-                     "零样本,整细胞GT,与Cellpose/StarDist(cell)/CelloType/CellSAM可横向比; "
-                     "image_mpp须为数据真实分辨率(CosMx=0.12028); pixel_accuracy弱指标。")
+                note="micro=pooling (primary scope; AJI/PQ must use it); macro=per-FOV mean±std; "
+                     "zero-shot, whole-cell GT, directly comparable with Cellpose/StarDist(cell)/CelloType/CellSAM; "
+                     "image_mpp must be the real data resolution (CosMx=0.12028); pixel_accuracy is a weak metric.")
     with open(os.path.join(args.out_dir, "run_meta_mesmer.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
     print("\n" + "=" * 78)
-    print(f"Mesmer(零样本) | image_mpp={args.image_mpp} compartment={args.compartment}")
-    print(f"成功 {len(per_fov)}/{len(fov_list)} 个 FOV | GT={total_gt} 预测={total_pred}")
+    print(f"Mesmer(zero-shot) | image_mpp={args.image_mpp} compartment={args.compartment}")
+    print(f"Succeeded {len(per_fov)}/{len(fov_list)} FOVs | GT={total_gt} pred={total_pred}")
     if failed:
-        print(f"失败 FOV: {[f for f, _ in failed]}")
-    print(f"micro 计数: TP={micro['TP']} FP={micro['FP']} FN={micro['FN']}")
+        print(f"Failed FOVs: {[f for f, _ in failed]}")
+    print(f"micro counts: TP={micro['TP']} FP={micro['FP']} FN={micro['FN']}")
     print("-" * 78)
     show = sdf.copy()
     show["macro(mean±std)"] = [f"{m:.4f}±{s:.4f}"
                                for m, s in zip(show["macro_mean"], show["macro_std"])]
     print(show[["metric", "micro", "macro(mean±std)"]].to_string(index=False))
     print("-" * 78)
-    print("主体报 micro; 稳健性附 macro(mean±std)。AJI/PQ 只看 micro。")
-    print("Mesmer 原生整细胞、零样本，与 Cellpose/StarDist(cell)/CelloType/CellSAM 同 GT 可直接横向比。")
-    print("再次确认 image_mpp 用的是数据真实分辨率(CosMx=0.12028)，不是 0.5。")
+    print("Report micro as the main result; macro(mean±std) as robustness. AJI/PQ: micro only.")
+    print("Mesmer is natively whole-cell and zero-shot; with the same GT it is directly comparable to Cellpose/StarDist(cell)/CelloType/CellSAM.")
+    print("Double-check image_mpp is the real data resolution (CosMx=0.12028), not 0.5.")
     print(f"\n[saved]\n  {per_fov_csv}\n  {summary_csv}\n  "
           f"{os.path.join(args.out_dir, 'run_meta_mesmer.json')}")
 
@@ -318,9 +329,9 @@ if __name__ == "__main__":
 '''
 nohup bash -c '
     python CosMx_mesmer.py \
-    --dep-dir /data/qiuyijia/cellpose \
-    --data-root /data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles --fov-start 51 --fov-end 68 \
-    --test-py /data/qiuyijia/eval/test.py \
-    --out-dir /data/qiuyijia/Mesmer/CosMx_output
+    --dep-dir yourpath/cellpose \
+    --data-root yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles --fov-start 51 --fov-end 68 \
+    --test-py yourpath/eval/test.py \
+    --out-dir yourpath/Mesmer/CosMx_output
 ' > output.log 2>&1 &
 '''

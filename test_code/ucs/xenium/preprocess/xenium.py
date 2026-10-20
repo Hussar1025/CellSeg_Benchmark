@@ -69,7 +69,7 @@ def get_gene_map(args):
     gene_names_chunks = np.array_split(gene_names, n_processes)
     processes = []
     # Create temp dir
-    temp_dir = tempfile.mkdtemp(dir="/data/qiuyijia/ucs/tmp")
+    temp_dir = tempfile.mkdtemp(dir="yourpath/ucs/tmp")
     for gene_chunk in gene_names_chunks:
         p = mp.Process(target=process_gene_chunk, args=(gene_chunk, df,
                                                              map_height, map_width, temp_dir))

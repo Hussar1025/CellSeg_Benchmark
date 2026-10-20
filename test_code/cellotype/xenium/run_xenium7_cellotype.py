@@ -2,15 +2,15 @@
 """Standalone CelloType configuration: xenium7 center 10000x10000 ROI."""
 import importlib.util
 
-METHOD = "/data/qiuyijia/cellotype/CelloType/code/xenium_breast_cellotype.py"
+METHOD = "yourpath"
 spec = importlib.util.spec_from_file_location("cellotype_xenium_impl", METHOD)
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-m.PARENT_OUT = "/data/qiuyijia/cellotype/xenium7_output"
+m.PARENT_OUT = "yourpath"
 m.DATASETS = [dict(
     name="xenium7",
-    dataset_dir="/data/qiuyijia/dataset/xenium7/outs",
-    output_dir="/data/qiuyijia/cellotype/xenium7_output",
+    dataset_dir="yourpath",
+    output_dir="yourpath",
     gt_type="xenium_boundaries",
     boundaries="cell_boundaries.parquet",
     experiment="experiment.xenium",

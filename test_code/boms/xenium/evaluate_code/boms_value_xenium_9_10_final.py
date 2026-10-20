@@ -24,9 +24,9 @@ CTRL = (
 
 CFG = {
     "xenium9": dict(
-        root=Path("/data/qiuyijia/dataset/xenium9"),
+        root=Path("yourpath/dataset/xenium9"),
         npz=Path(
-            "/data/qiuyijia/boms_tuning_x9_hs25/"
+            "yourpath/boms_tuning_x9_hs25/"
             "boms_xenium_9/boms_xenium_9.npz"
         ),
         x0=16374,
@@ -35,9 +35,9 @@ CFG = {
         label="xenium_9",
     ),
     "xenium10": dict(
-        root=Path("/data/qiuyijia/dataset/xenium10"),
+        root=Path("yourpath/dataset/xenium10"),
         npz=Path(
-            "/data/qiuyijia/boms_xenium_10/"
+            "yourpath/boms_xenium_10/"
             "boms_xenium_10.npz"
         ),
         x0=20564,
@@ -700,7 +700,7 @@ def main():
 
     ap.add_argument(
         "--out-dir",
-        default="/data/qiuyijia/boms/eval_final",
+        default="yourpath/boms/eval_final",
     )
 
     args = ap.parse_args()

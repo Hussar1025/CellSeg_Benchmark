@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-附图 —— 把所有热图上下排在一张竖版图里（列 = 方法，各热图之间留一点间隔）
-  1  Runtime scaling          运行时间对 细胞数 / 转录本数（估计）/ 面积 的双对数斜率 k，括号内为 R²
-  2  Memory scaling           CPU 内存峰值的同类斜率
-  3  Correlation with F1      F1 与 细胞密度 / 每细胞转录本数 / 基因面板大小 / 区域细胞数 的 Spearman ρ（P < 0.05 加 *）
-  4–7 Platform / Gene panel / Image input / Species   各类数据集上的 F1 中位数（只有一个数据集时加 †）
-空白格画一条细黑虚线对角线（实 2 pt、空 1 pt）；某一列在全部方法中都为空则删除该列，某一行在全部热图中都为空则删除该行。
-全部文字为 Arial Regular。画完后自动检查所有文字是否两两重叠、格内文字是否超出格子；有问题就加大格宽和间距重画。
-数值来源与单独的三个脚本完全相同（直接调用它们的计算函数）。
-本地运行：python supp_fig_heatmaps_combined.py
-（与 supp_common.py、supp_fig_scaling.py、supp_fig_features.py、supp_fig_stratified.py、robustness_bars.py 放在同一目录）
+Supplementary figure — all heatmaps stacked vertically in one figure (columns = methods, small gap between heatmaps)
+  1  Runtime scaling          log-log slope k of runtime vs cell count / transcript count (est.) / area, R² in parentheses
+  2  Memory scaling           same slope for peak CPU memory
+  3  Correlation with F1      Spearman ρ of F1 vs cell density / transcripts per cell / gene panel size / region cell count (P < 0.05 adds *)
+  4–7 Platform / Gene panel / Image input / Species   median F1 on datasets of each category († when only one dataset)
+Empty cells get a thin black dashed diagonal (solid 2 pt, empty 1 pt); a column empty across all methods is dropped, a row empty across all heatmaps is dropped.
+All text is Arial Regular. After drawing, auto-check for pairwise text overlaps and cell text overflowing its cell; on problems enlarge cell width and spacing and redraw.
+Values come from the same three standalone scripts (their compute functions are called directly).
+Local run: python supp_fig_heatmaps_combined.py
+(same directory as supp_common.py, supp_fig_scaling.py, supp_fig_features.py, supp_fig_stratified.py, robustness_bars.py)
 """
 import numpy as np
 import pandas as pd
@@ -24,10 +24,10 @@ import supplement_8 as F
 import supplement_9 as T
 
 OUT_NAME = "supp_fig_heatmaps_combined"
-FONT = 7.5                         # 基本字号（pt）
-CELL_FONT = 6.5                    # 格内字号
-CELL_W, CELL_H = 0.34, 0.24        # 每格宽、高（inch），重叠时自动加大
-GAP_IN = 0.30                      # 上下两块热图之间的间隔（inch，含块标题），重叠时自动加大
+FONT = 7.5                         # base font size (pt)
+CELL_FONT = 6.5                    # cell text font size
+CELL_W, CELL_H = 0.34, 0.24        # cell width, height (inch); auto-enlarged on overlap
+GAP_IN = 0.30                      # gap between stacked heatmaps (inch, includes block title); auto-enlarged on overlap
 DIAG_LW, DIAG_DASH = 0.4, (2.0, 1.0)
 
 mpl.rcParams.update({
@@ -48,14 +48,14 @@ def blank_diag(ax, i, j):
             ls=(0, (DIAG_DASH[0] / DIAG_LW, DIAG_DASH[1] / DIAG_LW)), dash_capstyle="butt")
 
 
-# ======================== 组装各热图的数据 ========================
+# ======================== assemble data for each heatmap ========================
 def build_blocks():
     K, _ = S.compute()
     R, _ = F.compute()
     acc = C.load_accuracy()
     meta = C.dataset_table(acc)
     d = acc.join(meta, on="ds")
-    blocks = []          # (标题, 列名, 数值矩阵, 格内文字矩阵, 色图键)
+    blocks = []          # (title, column name, value matrix, cell text matrix, colormap key)
     for ylab, title in [("Runtime", "Runtime scaling\nk (R²)"), ("Peak CPU memory", "Memory scaling\nk (R²)")]:
         cols = ["cells", "transcripts", "area"]
         V = np.array([[K[(K.method == m) & (K.y == ylab) & (K.x == x)].k.iloc[0] for x in cols] for m in C.ORDER])
@@ -75,13 +75,13 @@ def build_blocks():
         txt = [[(f"{med[i, j]:.2f}" + ("†" if num[i, j] == 1 else "")) if np.isfinite(med[i, j]) else ""
                 for j in range(len(vals))] for i in range(len(C.ORDER))]
         blocks.append((f"{title}\nmedian F1", labels, med, txt, "f1"))
-    # 删除全空的列与行
+    # drop all-empty columns and rows
     out = []
     rows_any = np.zeros(len(C.ORDER), bool)
     for title, labels, V, txt, key in blocks:
         keep_c = np.isfinite(V).any(axis=0)
         if (~keep_c).any():
-            print(f"[{title}] 删除的空列:", [l for l, k in zip(labels, keep_c) if not k])
+            print(f"[{title}] removed empty columns:", [l for l, k in zip(labels, keep_c) if not k])
         V = V[:, keep_c]
         txt = [[t for t, k in zip(row, keep_c) if k] for row in txt]
         labels = [l for l, k in zip(labels, keep_c) if k]
@@ -90,7 +90,7 @@ def build_blocks():
             out.append([title, labels, V, txt, key])
     methods = [m for m, k in zip(C.ORDER, rows_any) if k]
     if (~rows_any).any():
-        print("删除的空行:", [m for m, k in zip(C.ORDER, rows_any) if not k])
+        print("removed empty rows:", [m for m, k in zip(C.ORDER, rows_any) if not k])
     for b in out:
         b[2] = b[2][rows_any]
         b[3] = [row for row, k in zip(b[3], rows_any) if k]
@@ -101,9 +101,9 @@ NORMS = {"k": (CM_K, None), "rho": (CM_R, TwoSlopeNorm(vmin=-1, vcenter=0, vmax=
 CB_LABEL = {"k": "Scaling exponent k", "rho": "Spearman ρ", "f1": "Median F1"}
 
 
-# ======================== 绘图（竖版：行 = 指标或类别，列 = 方法） ========================
+# ======================== plotting (vertical layout: rows = metrics or categories, columns = methods) ========================
 def method_strip(fig, ax, methods, height_in=0.07, gap_in=0.03):
-    """在最下面一块热图的下方画一条与列对齐的类别色条，并把方法名推到色条下方。"""
+    """Draw a category color strip aligned with the columns below the last heatmap, and push method names below the strip."""
     W, H = fig.get_size_inches()
     pos = ax.get_position()
     sx = fig.add_axes([pos.x0, pos.y0 - (gap_in + height_in) / H, pos.width, height_in / H])
@@ -120,11 +120,11 @@ def draw(methods, blocks, cell_w, cell_h, gap):
     nrow = sum(len(b[1]) for b in blocks)
     grid_w = len(methods) * cell_w
     grid_h = nrow * cell_h + gap * (len(blocks) - 1)
-    L, Rm, Tm, Bm = 1.75, 1.6, 0.35, 1.45             # 左（行名）、右（色标与图例）、上（首块标题）、下（方法名）
+    L, Rm, Tm, Bm = 1.75, 1.6, 0.35, 1.45             # left (row names), right (color bars and legend), top (first block title), bottom (method names)
     fig_w, fig_h = L + grid_w + Rm, Tm + grid_h + Bm
     fig = plt.figure(figsize=(fig_w, fig_h))
     texts_cells, axes, spans = [], [], {}
-    y_top = fig_h - Tm                                # 当前块的上沿（inch）
+    y_top = fig_h - Tm                                # top edge of current block (inch)
     n_tx = sum(C.CAT_OF[m] != "Image-based" for m in methods)
     for k, (title, labels, V, txt, key) in enumerate(blocks):
         h = len(labels) * cell_h
@@ -134,8 +134,8 @@ def draw(methods, blocks, cell_w, cell_h, gap):
         Vt = V.T
         cm = NORMS[key][0].copy(); cm.set_bad("white")
         ax.imshow(np.ma.masked_invalid(Vt), cmap=cm, norm=norms[key], aspect="auto")
-        for i in range(Vt.shape[0]):              # 行 = 指标或类别
-            for j in range(Vt.shape[1]):          # 列 = 方法
+        for i in range(Vt.shape[0]):              # row = metric or category
+            for j in range(Vt.shape[1]):          # column = method
                 if np.isfinite(Vt[i, j]):
                     dark = norms[key](Vt[i, j]) > 0.62 if key != "rho" else abs(Vt[i, j]) > 0.65
                     t = ax.text(j, i, txt[j][i], ha="center", va="center", fontsize=CELL_FONT,
@@ -158,7 +158,7 @@ def draw(methods, blocks, cell_w, cell_h, gap):
             sp.set_linewidth(0.5)
         y_top -= h + gap
     strip = method_strip(fig, axes[-1], methods)
-    # 色标：每种色图一条竖直色标，放在对应热图组的右侧
+    # color bars: one vertical color bar per colormap, to the right of its heatmap group
     cbars = []
     x_cb = (L + grid_w + 0.18) / fig_w
     for key, sp in spans.items():
@@ -179,7 +179,7 @@ def draw(methods, blocks, cell_w, cell_h, gap):
 
 
 def problems(fig, axes, cbars, leg, texts_cells):
-    """返回 (文字两两重叠的对数, 超出格子的格内文字数)。"""
+    """Return (number of pairwise text overlaps, number of cell texts overflowing their cell)."""
     fig.canvas.draw()
     rend = fig.canvas.get_renderer()
     items = []
@@ -192,7 +192,7 @@ def problems(fig, axes, cbars, leg, texts_cells):
     for cax in cbars:
         items.append(cax.get_tightbbox(rend))
     items.append(leg.get_window_extent(rend))
-    items.append(leg._strip.get_window_extent(rend))        # 类别色条也参与检查
+    items.append(leg._strip.get_window_extent(rend))        # category strip is also checked
     n_ov = sum(items[a].overlaps(items[b]) for a in range(len(items)) for b in range(a + 1, len(items)))
     n_out = 0
     for t, ax, i, j in texts_cells:
@@ -209,8 +209,8 @@ def main():
     for attempt in range(12):
         fig, axes, cbars, leg, texts_cells = draw(methods, blocks, cw, ch, gap)
         n_ov, n_out = problems(fig, axes, cbars, leg, texts_cells)
-        print(f"布局 {attempt + 1}: 格宽 {cw:.2f} in，格高 {ch:.2f} in，间隔 {gap:.2f} in → "
-              f"文字重叠 {n_ov} 处，格内文字超出 {n_out} 个")
+        print(f"layout {attempt + 1}: cell width {cw:.2f} in, cell height {ch:.2f} in, gap {gap:.2f} in → "
+              f"text overlaps {n_ov}, cell text overflows {n_out}")
         if n_ov == 0 and n_out == 0:
             break
         plt.close(fig)

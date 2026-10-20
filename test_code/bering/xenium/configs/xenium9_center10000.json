@@ -1,6 +1,6 @@
 {
   "dataset": "xenium9",
-  "data_root": "/data/qiuyijia/dataset/xenium9",
+  "data_root": "yourpath/dataset/xenium9",
   "outs_zip": "Xenium_Prime_Human_Skin_FFPE_outs.zip",
   "transcripts": "transcripts.parquet",
   "seed_source": "official_transcripts_cell_id",
@@ -48,5 +48,5 @@
   },
   "unassigned_values": ["UNASSIGNED", "0", "-1", "nan", "None", ""],
   "seed": 0,
-  "output_dir": "/data/qiuyijia/bering/xenium9_center10000_output"
+  "output_dir": "yourpath/bering/xenium9_center10000_output"
 }

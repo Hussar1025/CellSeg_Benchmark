@@ -1,32 +1,37 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-CelloType × Xenium 细胞分割 benchmark
-=====================================
+CelloType x Xenium cell segmentation benchmark
+==============================================
+Same structure as the Cellpose version: read morphology -> CelloType segmentation
+(prediction) -> build GT -> shape alignment -> metrics from test.py.
+Two datasets:
+  1) xenium_roi_crop/  -- GT = manual_labels.npy (manual label mask)
+  2) xenium_breast/    -- GT = label mask rasterized from official cell_boundaries.parquet
+                          (by default only the centered 5k x 5k ROI runs)
+Results go to each dataset's output folder.
 
-结构与 Cellpose 版一致：读形态学图 → CelloType 分割（预测） → 构建 GT → 形状对齐 → 调 test.py 的指标。
-两个数据集：
-  1) xenium_roi_crop/  —— GT = manual_labels.npy（手动标注 label mask）
-  2) xenium_breast/    —— GT = 官方 cell_boundaries.parquet 栅格化得到的 label mask（默认只跑居中 5k×5k ROI）
-结果分别写入各自的输出文件夹。
-
-CelloType 要点（据官方 README / 文档 https://cellotype.readthedocs.io ）
-------------------------------------------------------------------------
-- API：from cellotype.predict import CelloTypePredictor
+CelloType notes (per official README / https://cellotype.readthedocs.io)
+-----------------------------------------------------------------------
+- API: from cellotype.predict import CelloTypePredictor
        CelloTypePredictor(model_path, config_path, confidence_thresh, max_det, device).predict(img) -> [H,W]
-- 输入是 [H,W,3] 的 **uint8** 图；通道约定：蓝(B)=核(DAPI)，绿(G)=膜，红(R)=可选。
-- 大图/密集图必须用 SAHI 切片推理（MaskDINO 单次前向的 query 数有上限，约 300，否则严重漏检）。
-  官方大图流程：Detectron2DetectionModel + get_sliced_prediction（512 分块、重叠 5%、perform_standard_pred=False），
-  跨块用 NMS 合并；再把每个 object 的全图 bool_mask 写成实例 label。
+- Input is an [H,W,3] **uint8** image; channel convention: blue(B)=nuclear(DAPI),
+  green(G)=membrane, red(R)=optional.
+- Large/dense images must use SAHI sliced inference (MaskDINO has a per-forward
+  query cap of ~300, otherwise heavy under-detection). Official large-image flow:
+  Detectron2DetectionModel + get_sliced_prediction (512 tiles, 5% overlap,
+  perform_standard_pred=False), cross-tile NMS merge; then write each object's
+  full-image bool_mask as an instance label.
 
-语义说明（与 Cellpose 版相同）
-------------------------------
-test.py 的 evaluate_single_mask_against_cellpose(cellpose_gt_mask, pred_mask) 把第一个槽当 reference。
-本 benchmark 里 **CelloType 是被测方法**：真值放第一个槽、CelloType 预测放第二个槽，指标方向即为
-「评估 CelloType」。输出里把误导性的字段名改成明确的名字。
+Semantics (identical to the Cellpose version)
+---------------------------------------------
+test.py's evaluate_single_mask_against_cellpose(cellpose_gt_mask, pred_mask) treats
+the first slot as reference. Here CelloType is the method under test: ground truth
+goes in slot 1, the CelloType prediction in slot 2, so the metric direction is
+"evaluate CelloType". Output field names are renamed to unambiguous ones.
 
-依赖：numpy, pandas, scikit-image, scipy, tifffile, pyarrow, Pillow,
-      cellotype(+Detectron2+Deformable-DETR+MaskDINO), sahi
+Dependencies: numpy, pandas, scikit-image, scipy, tifffile, pyarrow, Pillow,
+      cellotype (+Detectron2+Deformable-DETR+MaskDINO), sahi
 """
 
 import os
@@ -42,7 +47,7 @@ import time
 
 try:
     import resource
-except ImportError:  # pragma: no cover - Windows 等平台没有 resource
+except ImportError:  # no resource on Windows etc.
     resource = None
 
 import numpy as np
@@ -51,13 +56,11 @@ import tifffile
 from skimage.draw import polygon as sk_polygon
 
 
-# ---------------------------------------------------------------------------- #
-# 运行性能监控
-# ---------------------------------------------------------------------------- #
+# Performance monitoring
 def _current_memory_mb():
-    """返回当前进程 RSS(MB)，优先使用 /proc，失败时回退 psutil。"""
+    """Return current process RSS (MB); prefer /proc, fall back to psutil."""
     try:
-        with open("/proc/self/statm", "r", encoding="utf-8") as fh:
+        with open("yourpath", "r", encoding="utf-8") as fh:
             rss_pages = int(fh.read().split()[1])
         page_size = os.sysconf("SC_PAGE_SIZE")
         return rss_pages * page_size / 1024**2
@@ -70,7 +73,7 @@ def _current_memory_mb():
 
 
 def _peak_memory_mb():
-    """返回进程历史峰值 RSS(MB)，Linux 的 ru_maxrss 单位为 KiB。"""
+    """Return historical peak RSS (MB); Linux ru_maxrss is in KiB."""
     if resource is not None:
         try:
             value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
@@ -85,7 +88,7 @@ def _peak_memory_mb():
 
 
 def _reset_cuda_peak_stats():
-    """重置 PyTorch CUDA 峰值统计；没有 CUDA/torch 时静默跳过。"""
+    """Reset PyTorch CUDA peak stats; silently skip when CUDA/torch unavailable."""
     try:
         import torch
         if not torch.cuda.is_available():
@@ -100,7 +103,7 @@ def _reset_cuda_peak_stats():
 
 
 def _cuda_peak_mb(metric):
-    """读取所有可见 GPU 的 PyTorch 峰值显存(MB)，不可用时返回 None。"""
+    """Read PyTorch peak VRAM (MB) across visible GPUs; None when unavailable."""
     try:
         import torch
         if not torch.cuda.is_available():
@@ -122,7 +125,7 @@ def _cuda_peak_mb(metric):
 
 
 class _PerformanceMonitor:
-    """记录一段流程的墙钟时间、CPU RSS 峰值和 CUDA 峰值显存。"""
+    """Record wall time, peak CPU RSS and peak CUDA VRAM for a run."""
 
     def __init__(self, label, reset_cuda=True):
         self.label = label
@@ -154,39 +157,37 @@ class _PerformanceMonitor:
     def report(self):
         stats = self.stop()
         print(
-            f"[Performance:{self.label}] 总运行时间: "
-            f"{stats['runtime_seconds']:.2f} 秒 ({stats['runtime_seconds'] / 60:.2f} 分钟)"
+            f"[Performance:{self.label}] total runtime: "
+            f"{stats['runtime_seconds']:.2f} s ({stats['runtime_seconds'] / 60:.2f} min)"
         )
         print(
-            f"[Performance:{self.label}] CPU RSS: 初始 "
-            f"{stats['initial_memory_mb']:.2f} MB, 结束 "
-            f"{stats['final_memory_mb']:.2f} MB, 峰值 "
+            f"[Performance:{self.label}] CPU RSS: initial "
+            f"{stats['initial_memory_mb']:.2f} MB, final "
+            f"{stats['final_memory_mb']:.2f} MB, peak "
             f"{stats['peak_memory_mb']:.2f} MB"
         )
         allocated = stats["peak_gpu_memory_allocated_mb"]
         reserved = stats["peak_gpu_memory_reserved_mb"]
         if allocated is None and reserved is None:
-            print(f"[Performance:{self.label}] GPU 峰值显存: N/A")
+            print(f"[Performance:{self.label}] peak GPU VRAM: N/A")
         else:
             print(
-                f"[Performance:{self.label}] GPU 峰值显存: allocated="
+                f"[Performance:{self.label}] peak GPU VRAM: allocated="
                 f"{allocated if allocated is not None else float('nan'):.2f} MB, "
                 f"reserved={reserved if reserved is not None else float('nan'):.2f} MB"
             )
 
 
-# ---------------------------------------------------------------------------- #
-# test.py（指标实现）的位置：按题目要求指向 /data/qiuyijia/eval/test.py
-# 路径不存在时会退回「与本脚本同目录 / PYTHONPATH 里的 test.py」。
-# ---------------------------------------------------------------------------- #
-TEST_PY_PATH = "/data/qiuyijia/eval/test.py"
+# test.py (metric implementation) location: points at the eval test.py;
+# falls back to test.py in the script directory / PYTHONPATH.
+TEST_PY_PATH = "yourpath"
 
 
 def _load_metrics():
     if TEST_PY_PATH and os.path.exists(TEST_PY_PATH):
         spec = importlib.util.spec_from_file_location("xenium_metrics", TEST_PY_PATH)
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)   # test.py 的 __main__ 块不会触发（模块名非 __main__）
+        spec.loader.exec_module(mod)   # test.py's __main__ block does not run (module name is not __main__)
         return mod
     here = os.path.dirname(os.path.abspath(__file__))
     if here not in sys.path:
@@ -196,47 +197,49 @@ def _load_metrics():
         return mod
     except ImportError as e:
         raise ImportError(
-            "找不到 test.py：请把脚本顶部的 TEST_PY_PATH 改成 test.py 的绝对路径，"
-            "或把 test.py 放到与本脚本同一目录。"
+            "cannot find test.py: point TEST_PY_PATH at the absolute path of test.py, "
+            "or put test.py in the same directory as this script."
         ) from e
 
 
-metrics = _load_metrics()  # test.py 中的指标实现
+metrics = _load_metrics()  # metric implementation from test.py
 
 
 # ============================================================================ #
-# 配置区
+# Config
 # ============================================================================ #
-XENIUM_DEFAULT_PIXEL_SIZE = 0.2125  # µm/px，读不到 experiment 时的兜底值
+XENIUM_DEFAULT_PIXEL_SIZE = 0.2125  # um/px, fallback when experiment is unreadable
 
-# CelloType 全局参数
+# CelloType global parameters
 CELLOTYPE = dict(
     device="cuda",
-    # ↓↓↓ 改成你 CelloType 克隆目录下的权重与 config（download.sh 下载的） ↓↓↓
-    model_path="/data/qiuyijia/cellotype/CelloType/models/tissuenet_model_0019999.pth",
-    config_path="/data/qiuyijia/cellotype/CelloType/configs/maskdino_R50_bs16_50ep_4s_dowsample1_2048.yaml",
+    # point these at the weights and config downloaded by download.sh
+    model_path="yourpath",
+    config_path="yourpath",
     confidence_thresh=0.3,
-    max_det=1000,            # 仅 simple 模式用；密集图请用 sahi
-    # 通道拉伸到 uint8 的百分位（Xenium uint16 动态范围大，必须拉伸）
+    max_det=1000,            # only used by simple mode; dense images need sahi
+    # percentiles used to stretch channels to uint8 (Xenium uint16 has a wide
+    # dynamic range and must be stretched)
     pct_low=1.0,
     pct_high=99.0,
-    # SAHI 切片推理参数（大图/密集图，官方大图流程）
+    # SAHI sliced inference (large/dense images, official large-image flow)
     sahi_slice=512,
     sahi_overlap=0.05,
-    sahi_image_size=512,     # 显存不够就和 slice 一起降到 256
+    sahi_image_size=512,     # lower together with slice to 256 if VRAM is tight
 )
 
-# 通道约定：Xenium morphology_focus 通道 0 = DAPI(核)，通道 1 = 膜染色(ATP1A1/CD45/E-cad)
+# Channel convention: Xenium morphology_focus channel 0 = DAPI (nuclear),
+# channel 1 = membrane stain (ATP1A1/CD45/E-cad)
 NUCLEUS_IDX = 0
 MEMBRANE_IDX = 1
 
-PARENT_OUT = "/data/qiuyijia/cellotype"   # 汇总 CSV 放这里；各数据集单独文件夹见下
+PARENT_OUT = "yourpath"   # combined CSV goes here; per-dataset folders below
 
 DATASETS = [
     dict(
         name="xenium_mouse_brain",
-        dataset_dir="/data/qiuyijia/dataset/xenium_mouse_brain/outs",  # 注意：路径到outs/
-        output_dir="/data/qiuyijia/cellotype/xenium_mouse_brain_output",
+        dataset_dir="yourpath",  # note: path points to outs/
+        output_dir="yourpath",
         gt_type="xenium_boundaries",
         boundaries="cell_boundaries.parquet",
         experiment="experiment.xenium",
@@ -251,11 +254,9 @@ IOU_THRESHOLD = 0.5
 # ============================================================================ #
 
 
-# ---------------------------------------------------------------------------- #
-# 形态学图像读取（支持金字塔层 + 两种命名 + 单/多通道文件）
-# ---------------------------------------------------------------------------- #
+# Morphology image reading (supports pyramid levels + both naming schemes + single/multi-channel files)
 def _read_level(path, pyramid_level, crop=None):
-    """读一个 OME-TIFF 的指定金字塔层，返回 (array, downsample_factor)。"""
+    """Read the given pyramid level of an OME-TIFF; returns (array, downsample_factor)."""
     with tifffile.TiffFile(path) as tf:
         series = tf.series[0]
         try:
@@ -264,8 +265,8 @@ def _read_level(path, pyramid_level, crop=None):
             levels = [series]
         L = int(np.clip(pyramid_level, 0, len(levels) - 1))
         if L != pyramid_level:
-            warnings.warn(f"{os.path.basename(path)}: 只有 {len(levels)} 个金字塔层，"
-                          f"pyramid_level={pyramid_level} 被截断到 {L}")
+            warnings.warn(f"{os.path.basename(path)}: only {len(levels)} pyramid levels; "
+                          f"pyramid_level={pyramid_level} clipped to {L}")
         level = levels[L]
         if len(tf.pages) == 1:
             # One physical 2D page per Xenium channel file; SizeC is virtual.
@@ -288,7 +289,7 @@ def _read_level(path, pyramid_level, crop=None):
 
 
 def _split_channels(arr):
-    """把一个数组拆成通道列表。2D→单通道；3D→按小轴(<=5)判定通道轴。"""
+    """Split an array into a channel list. 2D -> single channel; 3D -> channel axis by the small axis (<=5)."""
     if arr.ndim == 2:
         return [arr]
     if arr.ndim == 3:
@@ -296,15 +297,16 @@ def _split_channels(arr):
             return [arr[i] for i in range(arr.shape[0])]        # (C,H,W)
         if arr.shape[-1] <= 5:
             return [arr[..., i] for i in range(arr.shape[-1])]  # (H,W,C)
-        return [arr[arr.shape[0] // 2]]                          # 疑似 z-stack，取中间层
+        return [arr[arr.shape[0] // 2]]                          # likely a z-stack; take the middle plane
     arr = np.squeeze(arr)
     return _split_channels(arr) if arr.ndim <= 3 else [np.max(arr, axis=tuple(range(arr.ndim - 2)))]
 
 
 def load_morphology_channels(dataset_dir, pyramid_level=0, needed_indices=None, read_crop=None):
-    """发现并读取形态学通道，支持 ch0000_dapi... 与 morphology_focus_0000... 两种命名及多通道单文件。
+    """Discover and read morphology channels; supports ch0000_dapi... and
+    morphology_focus_0000... naming as well as multi-channel single files.
 
-    返回: dict(channels=[2D...], names=[...], factor=float)
+    Returns: dict(channels=[2D...], names=[...], factor=float)
     """
     focus_dir = os.path.join(dataset_dir, "morphology_focus")
     channels, names = [], []
@@ -343,17 +345,15 @@ def load_morphology_channels(dataset_dir, pyramid_level=0, needed_indices=None, 
             chs = _split_channels(arr)
             if len(chs) > 1:
                 chs = [np.max(np.stack(chs, 0), 0)]
-            warnings.warn(f"{dataset_dir}: 未找到 morphology_focus/，退回 {cand}（仅核通道）")
+            warnings.warn(f"{dataset_dir}: morphology_focus/ not found; falling back to {cand} (nuclear channel only)")
             return dict(channels=chs, names=[cand], factor=factor, crop_applied=read_crop is not None)
 
-    raise FileNotFoundError(f"{dataset_dir}: 找不到任何形态学 OME-TIFF")
+    raise FileNotFoundError(f"{dataset_dir}: no morphology OME-TIFF found")
 
 
-# ---------------------------------------------------------------------------- #
-# 组装 CelloType 输入（uint8 RGB：B=核, G=膜, R=可选）
-# ---------------------------------------------------------------------------- #
+# Assemble CelloType input (uint8 RGB: B=nuclear, G=membrane, R=optional)
 def _to_uint8(ch, p_low, p_high):
-    """按百分位把单通道拉伸到 uint8 [0,255]。Xenium uint16 动态范围大，必须拉伸。"""
+    """Stretch a single channel to uint8 [0,255] by percentile. Xenium uint16 has a wide dynamic range and must be stretched."""
     ch = ch.astype(np.float32)
     lo, hi = np.percentile(ch, [p_low, p_high])
     if hi <= lo:
@@ -365,57 +365,57 @@ def _to_uint8(ch, p_low, p_high):
 def assemble_cellotype_rgb(channels, use_membrane=True,
                            nucleus_idx=NUCLEUS_IDX, membrane_idx=MEMBRANE_IDX,
                            p_low=1.0, p_high=99.0):
-    """拼出 CelloType 需要的 uint8 RGB：蓝=核(DAPI)、绿=膜、红=0。
+    """Build the uint8 RGB CelloType needs: blue=nuclear(DAPI), green=membrane, red=0.
 
-    返回 (rgb[H,W,3] uint8, mode)。无膜通道或 use_membrane=False 时绿通道置 0（仅核）。
+    Returns (rgb[H,W,3] uint8, mode). Without a membrane channel, or with
+    use_membrane=False, the green channel is 0 (nuclear only).
     """
     n = len(channels)
     nuc = channels[nucleus_idx] if nucleus_idx < n else channels[0]
     H, W = nuc.shape
     rgb = np.zeros((H, W, 3), dtype=np.uint8)
-    rgb[:, :, 2] = _to_uint8(nuc, p_low, p_high)                    # B = 核
+    rgb[:, :, 2] = _to_uint8(nuc, p_low, p_high)                    # B = nuclear
 
     if use_membrane and membrane_idx < n:
-        rgb[:, :, 1] = _to_uint8(channels[membrane_idx], p_low, p_high)  # G = 膜
+        rgb[:, :, 1] = _to_uint8(channels[membrane_idx], p_low, p_high)  # G = membrane
         mode = "nucleus(B)+membrane(G)"
     else:
         mode = "nucleus(B)_only"
-    # 注：若改用 Xenium 专训权重、想把「转录本密度」放绿通道，可在此替换 rgb[:,:,1]
+    # Note: to put transcript density in green with a Xenium-specific checkpoint,
+    # replace rgb[:,:,1] here.
     return rgb, mode
 
 
-# ---------------------------------------------------------------------------- #
-# CelloType 分割
-# ---------------------------------------------------------------------------- #
+# CelloType segmentation
 def _mask_from_sahi(result, hw):
-    """把 SAHI 结果里每个 object 的全图 bool_mask 写成 int32 实例 label（0=背景）。"""
+    """Write each SAHI object's full-image bool_mask as an int32 instance label (0=background)."""
     H, W = hw
     out = np.zeros((H, W), dtype=np.int32)
     obj_list = result.object_prediction_list
     for i, obj in enumerate(obj_list, start=1):
-        bm = np.asarray(obj.mask.bool_mask)   # 该 object 在全图坐标下的布尔 mask
+        bm = np.asarray(obj.mask.bool_mask)   # this object's bool mask in full-image coordinates
         if bm.shape != (H, W):
-            # 个别 SAHI 版本 bool_mask 尺寸可能不同，跳过并告警而非崩溃
-            warnings.warn(f"SAHI object {i} bool_mask shape {bm.shape} != {(H, W)}，已跳过")
+            # some SAHI versions give a different bool_mask size; warn and skip instead of crashing
+            warnings.warn(f"SAHI object {i} bool_mask shape {bm.shape} != {(H, W)}; skipped")
             continue
         out[bm] = i
     return out
 
 
 def _run_cellotype_sahi(rgb, cfg):
-    """SAHI 切片推理（大图/密集图）。尽量贴合官方 sahi_inference.py。"""
+    """SAHI sliced inference (large/dense images). Mirrors the official sahi_inference.py."""
     from PIL import Image
-    Image.MAX_IMAGE_PIXELS = None  # 关掉 PIL 大图保护
+    Image.MAX_IMAGE_PIXELS = None  # disable PIL's decompression-bomb guard
 
-    # 优先用 CelloType 自带封装（与官方示例一致），退回标准 sahi
+    # prefer CelloType's own wrapper (matches the official example); fall back to plain sahi
     try:
         from cellotype.predict import Detectron2DetectionModel
     except Exception:
         from sahi.models.detectron2 import Detectron2DetectionModel
     try:
-        from sahi_predict import get_sliced_prediction        # CelloType 仓库根目录脚本
+        from sahi_predict import get_sliced_prediction        # script at the CelloType repo root
     except Exception:
-        from sahi.predict import get_sliced_prediction        # 退回标准 sahi
+        from sahi.predict import get_sliced_prediction        # fall back to plain sahi
 
     det = Detectron2DetectionModel(
         model_path=cfg["model_path"],
@@ -426,7 +426,8 @@ def _run_cellotype_sahi(rgb, cfg):
         channels=3,
     )
 
-    # get_sliced_prediction 对文件路径最稳（与官方示例一致），把 RGB 写临时 PNG
+    # get_sliced_prediction is most stable on a file path (as in the official example);
+    # write the RGB to a temp PNG
     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     tmp_path = tmp.name
     tmp.close()
@@ -439,7 +440,7 @@ def _run_cellotype_sahi(rgb, cfg):
             slice_width=cfg["sahi_slice"],
             overlap_height_ratio=cfg["sahi_overlap"],
             overlap_width_ratio=cfg["sahi_overlap"],
-            perform_standard_pred=False,   # 只切片、不做整图前向（避免 query 上限导致漏检）
+            perform_standard_pred=False,   # slice only, no whole-image forward (avoids query-cap under-detection)
         )
     finally:
         if os.path.exists(tmp_path):
@@ -449,7 +450,7 @@ def _run_cellotype_sahi(rgb, cfg):
 
 
 def run_cellotype(rgb, cfg):
-    """跑 CelloType，返回 int32 实例 label mask。inference='sahi'（默认，大图/密集）或 'simple'。"""
+    """Run CelloType; returns an int32 instance label mask. inference='sahi' (default) or 'simple'."""
     mode = cfg.get("inference", "sahi")
     if mode == "simple":
         from cellotype.predict import CelloTypePredictor
@@ -465,22 +466,20 @@ def run_cellotype(rgb, cfg):
     elif mode == "sahi":
         return _run_cellotype_sahi(rgb, cfg)
     else:
-        raise ValueError(f"未知 inference 模式: {mode}")
+        raise ValueError(f"unknown inference mode: {mode}")
 
 
-# ---------------------------------------------------------------------------- #
-# GT 构建
-# ---------------------------------------------------------------------------- #
+# GT construction
 def read_pixel_size(experiment_path, default=XENIUM_DEFAULT_PIXEL_SIZE):
-    """从 experiment.xenium（JSON）递归找 pixel_size(µm/px)。"""
+    """Recursively find pixel_size (um/px) in experiment.xenium (JSON)."""
     if not experiment_path or not os.path.exists(experiment_path):
-        warnings.warn(f"未找到 {experiment_path}，pixel_size 用默认 {default}")
+        warnings.warn(f"{experiment_path} not found; pixel_size falls back to {default}")
         return default
     try:
         with open(experiment_path, "r") as f:
             data = json.load(f)
     except Exception as e:
-        warnings.warn(f"读取 {experiment_path} 失败({e})，pixel_size 用默认 {default}")
+        warnings.warn(f"failed to read {experiment_path} ({e}); pixel_size falls back to {default}")
         return default
 
     found = []
@@ -498,32 +497,33 @@ def read_pixel_size(experiment_path, default=XENIUM_DEFAULT_PIXEL_SIZE):
     _walk(data)
     if found:
         return found[0]
-    warnings.warn(f"{experiment_path} 中无 pixel_size 字段，用默认 {default}")
+    warnings.warn(f"no pixel_size field in {experiment_path}; using default {default}")
     return default
 
 
 def _boundary_columns(df):
     cols = {c.lower(): c for c in df.columns}
     id_col = next((cols[c] for c in ("cell_id", "label_id", "label", "id") if c in cols), None)
-    # 优先使用 local 坐标（ROI 相对坐标），没有才用全局坐标
+    # prefer local coordinates (ROI-relative); use global only as a fallback
     x_col = next((cols[c] for c in ("vertex_x_local_um", "vertex_x_local", "vertex_x", "x", "x_location", "vertex_x_um") if c in cols), None)
     y_col = next((cols[c] for c in ("vertex_y_local_um", "vertex_y_local", "vertex_y", "y", "y_location", "vertex_y_um") if c in cols), None)
     return id_col, x_col, y_col
 
 
 def rasterize_boundaries(parquet_path, out_shape, pixel_size_eff, offset=(0, 0), verbose=True):
-    """把 Xenium cell_boundaries.parquet（微米坐标多边形）栅格化成 int32 label mask。
+    """Rasterize Xenium cell_boundaries.parquet (um-coordinate polygons) into an int32 label mask.
 
-    out_shape      : (H, W) 输出尺寸（裁剪时为裁剪区域尺寸）
-    pixel_size_eff : 该层每像素微米数 = base_pixel_size × downsample_factor
-    offset         : (row0, col0) 裁剪窗口左上角在整图中的像素坐标；未裁剪为 (0,0)
-    像素 = 微米 / pixel_size_eff - offset；越界部分由 skimage 自动裁掉
+    out_shape      : (H, W) output size (crop size when cropping)
+    pixel_size_eff : um per pixel at this level = base_pixel_size x downsample_factor
+    offset         : (row0, col0) of the crop window's top-left in full-image pixel
+                     coordinates; (0,0) when not cropping
+    pixel = um / pixel_size_eff - offset; out-of-bounds parts are clipped by skimage
     """
     row0, col0 = offset
     df = pd.read_parquet(parquet_path)
     id_col, x_col, y_col = _boundary_columns(df)
     if id_col is None or x_col is None or y_col is None:
-        raise ValueError(f"{parquet_path}: 无法识别列 (cell_id/vertex_x/vertex_y)，实际列={list(df.columns)}")
+        raise ValueError(f"{parquet_path}: cannot identify columns (cell_id/vertex_x/vertex_y); actual columns={list(df.columns)}")
 
     H, W = out_shape
     mask = np.zeros((H, W), dtype=np.int32)
@@ -532,9 +532,9 @@ def rasterize_boundaries(parquet_path, out_shape, pixel_size_eff, offset=(0, 0),
     ys_all = df[y_col].to_numpy(dtype=np.float64) / pixel_size_eff - row0
     ids_all = df[id_col].to_numpy()
 
-    codes, uniq = pd.factorize(ids_all)          # 按出现顺序编码
+    codes, uniq = pd.factorize(ids_all)          # encode in order of appearance
     n_cells = len(uniq)
-    sort_idx = np.argsort(codes, kind="stable")  # 同一 cell 顶点连续，且保留绕行顺序
+    sort_idx = np.argsort(codes, kind="stable")  # keeps each cell's vertices contiguous and in winding order
     codes_s = codes[sort_idx]
     xs_s = xs_all[sort_idx]
     ys_s = ys_all[sort_idx]
@@ -551,18 +551,16 @@ def rasterize_boundaries(parquet_path, out_shape, pixel_size_eff, offset=(0, 0),
         if rr.size:
             mask[rr, cc] = label
         if verbose and label % 50000 == 0:
-            print(f"    栅格化 {label} 个细胞 ...")
+            print(f"    rasterized {label} cells ...")
     if verbose:
-        print(f"    栅格化完成，共 {label} 个细胞 → mask {mask.shape}")
+        print(f"    rasterization done, {label} cells -> mask {mask.shape}")
     return mask
 
-# ---------------------------------------------------------------------------- #
-# 形状对齐 + 评估
-# ---------------------------------------------------------------------------- #
+# Shape alignment + evaluation
 def align_shapes(gt, pred):
     if gt.shape == pred.shape:
         return gt, pred
-    warnings.warn(f"GT{gt.shape} 与 Pred{pred.shape} 形状不一致，右下角补零对齐（请核对是否真正对齐）")
+    warnings.warn(f"GT{gt.shape} and Pred{pred.shape} differ; zero-padding bottom-right (verify alignment)")
     H = max(gt.shape[0], pred.shape[0])
     W = max(gt.shape[1], pred.shape[1])
 
@@ -575,13 +573,13 @@ def align_shapes(gt, pred):
 
 def evaluate(gt_mask, pred_mask, dataset_name, gt_source,
              boundary_mode=BOUNDARY_MODE, iou_threshold=IOU_THRESHOLD):
-    """调 test.py 的指标：GT 放 reference 槽、CelloType 放 pred 槽；再改成无歧义字段名。"""
+    """Call test.py metrics: GT in the reference slot, CelloType in the pred slot; then rename fields unambiguously."""
     gt_mask, pred_mask = align_shapes(gt_mask, pred_mask)
 
     raw = metrics.evaluate_single_mask_against_cellpose(
         method_name="CelloType",
-        cellpose_gt_mask=gt_mask,     # ← 真值
-        pred_mask=pred_mask,          # ← CelloType 预测
+        cellpose_gt_mask=gt_mask,     # ground truth
+        pred_mask=pred_mask,          # CelloType prediction
         boundary_mode=boundary_mode,
         iou_threshold=iou_threshold,
     )
@@ -600,9 +598,7 @@ def evaluate(gt_mask, pred_mask, dataset_name, gt_source,
     return result
 
 
-# ---------------------------------------------------------------------------- #
-# 单数据集流水线
-# ---------------------------------------------------------------------------- #
+# Per-dataset pipeline
 def _apply_crop(arr, crop):
     if crop is None:
         return arr
@@ -615,47 +611,47 @@ def _run_dataset_impl(cfg):
     ddir = cfg["dataset_dir"]
     out_dir = cfg["output_dir"]
     os.makedirs(out_dir, exist_ok=True)
-    print(f"\n=== [{name}] {ddir}  →  {out_dir} ===")
+    print(f"\n=== [{name}] {ddir}  ->  {out_dir} ===")
 
-    # 1) 读形态学通道 + 拼 CelloType RGB（整图）
+    # 1) read morphology channels + assemble CelloType RGB (full image)
     morph = load_morphology_channels(ddir, pyramid_level=cfg.get("pyramid_level", 0),
                                      needed_indices=[NUCLEUS_IDX, MEMBRANE_IDX], read_crop=cfg.get("crop"))
     factor = morph["factor"]
-    print(f"  通道数={len(morph['channels'])}  名称={morph['names']}  下采样因子={factor:.3f}")
+    print(f"  channels={len(morph['channels'])}  names={morph['names']}  downsample factor={factor:.3f}")
 
     rgb_full, in_mode = assemble_cellotype_rgb(
         morph["channels"], use_membrane=cfg.get("use_membrane", True),
         p_low=CELLOTYPE["pct_low"], p_high=CELLOTYPE["pct_high"])
     Himg, Wimg = rgb_full.shape[:2]
 
-    # 决定裁剪窗口：显式 crop 优先；否则若给了 crop_size 则居中裁正方形
+    # crop window: explicit crop first; otherwise center a square if crop_size is set
     crop = cfg.get("crop")
     if crop is None and cfg.get("crop_size"):
         s = int(cfg["crop_size"])
         y0 = max((Himg - s) // 2, 0)
         x0 = max((Wimg - s) // 2, 0)
         crop = (y0, min(y0 + s, Himg), x0, min(x0 + s, Wimg))
-        print(f"  crop_size={s} → 居中裁剪 crop={crop}（整图 {Himg}×{Wimg}）")
+        print(f"  crop_size={s} -> centered crop={crop} (full image {Himg}x{Wimg})")
 
     rgb = rgb_full if morph.get("crop_applied") else _apply_crop(rgb_full, crop)
     del rgb_full
     seg_shape = rgb.shape[:2]
-    print(f"  CelloType 输入: shape={rgb.shape} 通道模式={in_mode} 推理模式={cfg.get('inference', 'sahi')}")
+    print(f"  CelloType input: shape={rgb.shape} channel mode={in_mode} inference mode={cfg.get('inference', 'sahi')}")
 
-    # 2) CelloType 分割（预测）
-    print("  运行 CelloType ...")
+    # 2) CelloType segmentation (prediction)
+    print("  running CelloType ...")
     segmentation_started = time.perf_counter()
     pred = run_cellotype(rgb, CELLOTYPE)
     segmentation_seconds = time.perf_counter() - segmentation_started
-    print(f"  预测细胞数={len(metrics.get_instance_ids(pred))}  mask={pred.shape}")
-    print(f"  CelloType 分割耗时={segmentation_seconds:.2f} 秒")
+    print(f"  predicted cells={len(metrics.get_instance_ids(pred))}  mask={pred.shape}")
+    print(f"  CelloType segmentation took {segmentation_seconds:.2f} s")
 
-    # 3) 构建 GT（与预测同一裁剪窗口对齐）
+    # 3) build GT (aligned to the same crop window as the prediction)
     if cfg["gt_type"] == "xenium_boundaries":
         exp_path = os.path.join(ddir, cfg.get("experiment", "experiment.xenium"))
         base_px = read_pixel_size(exp_path)
         px_eff = base_px * factor
-        print(f"  pixel_size={base_px} µm/px  当前层 pixel_size_eff={px_eff:.4f} µm/px")
+        print(f"  pixel_size={base_px} um/px  pixel_size_eff at this level={px_eff:.4f} um/px")
         if crop is not None:
             y0, y1, x0, x1 = crop
             gt = rasterize_boundaries(os.path.join(ddir, cfg["boundaries"]),
@@ -666,24 +662,24 @@ def _run_dataset_impl(cfg):
                                       out_shape=seg_shape, pixel_size_eff=px_eff)
         gt_source = "xenium_official_boundaries"
     else:
-        raise ValueError(f"未知 gt_type: {cfg['gt_type']}")
-    print(f"  GT 细胞数={len(metrics.get_instance_ids(gt))}  来源={gt_source}")
+        raise ValueError(f"unknown gt_type: {cfg['gt_type']}")
+    print(f"  GT cells={len(metrics.get_instance_ids(gt))}  source={gt_source}")
 
-    # 4) 落盘 mask（int32 tif，兼容 test.py 的 read_tif_mask）
+    # 4) write masks (int32 tif, compatible with test.py's read_tif_mask)
     pred_path = os.path.join(out_dir, f"{name}_cellotype_pred.tif")
     gt_path = os.path.join(out_dir, f"{name}_gt.tif")
     tifffile.imwrite(pred_path, pred)
     tifffile.imwrite(gt_path, gt)
-    print(f"  已保存 {pred_path} / {gt_path}")
+    print(f"  saved {pred_path} / {gt_path}")
 
-    # 5) 指标 + 本数据集单独的 CSV
+    # 5) metrics + per-dataset CSV
     result = evaluate(gt, pred, dataset_name=name, gt_source=gt_source)
     result["segmentation_seconds"] = segmentation_seconds
     return result
 
 
 def run_dataset(cfg):
-    """运行单个数据集，并附加运行时间、CPU/GPU 峰值资源统计。"""
+    """Run one dataset and attach runtime plus CPU/GPU peak resource stats."""
     monitor = _PerformanceMonitor(f"{cfg['name']}")
     monitor.start()
     try:
@@ -696,7 +692,7 @@ def run_dataset(cfg):
     result.update(monitor.stop())
     per_csv = os.path.join(cfg["output_dir"], f"{cfg['name']}_cellotype_metrics.csv")
     pd.DataFrame([result]).to_csv(per_csv, index=False)
-    print(f"  指标已写入 {per_csv}")
+    print(f"  metrics written to {per_csv}")
     monitor.report()
     return result
 
@@ -709,11 +705,11 @@ def _main_impl():
             rows.append(run_dataset(cfg))
         except Exception as e:
             import traceback
-            print(f"[ERROR] 数据集 {cfg['name']} 失败: {e}")
+            print(f"[ERROR] dataset {cfg['name']} failed: {e}")
             traceback.print_exc()
 
     if not rows:
-        print("没有成功的数据集。")
+        print("no dataset succeeded.")
         return
 
     df = pd.DataFrame(rows)
@@ -721,14 +717,14 @@ def _main_impl():
     df.to_csv(combined, index=False)
 
     pd.set_option("display.max_columns", None, "display.width", 220)
-    print("\n================ 汇总 ================")
+    print("\n================ summary ================")
     print(df.to_string(index=False))
-    print("\n各数据集 CSV 见各自 output_dir；汇总:", combined)
+    print("\nPer-dataset CSVs are in each output_dir; combined:", combined)
     return df
 
 
 def main():
-    """运行全部数据集，并在成功/失败时都打印脚本级性能统计。"""
+    """Run all datasets and print script-level performance stats on both success and failure."""
     monitor = _PerformanceMonitor("script", reset_cuda=False)
     monitor.start()
     try:

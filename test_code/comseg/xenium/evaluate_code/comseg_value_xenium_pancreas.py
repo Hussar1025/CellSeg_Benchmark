@@ -30,7 +30,7 @@ Evaluate the finished ComSeg run on the Xenium liver ROI (xenium_4).
 
 The segmentation is already on disk:
 
-    /data/qiuyijia/comseg_xenium_liver_roi10000/comseg_segmentation.tif
+    yourpath/comseg_xenium_liver_roi10000/comseg_segmentation.tif
     25/25 tiles DONE, written 2026-08-11 19:45
 
 so this only scores it.  Self-contained, and the metric code is the same block
@@ -66,18 +66,18 @@ VERSION = "2026.08.13"
 
 # ROI windows shared by every method on each dataset
 DATASETS = {
-    "xenium_8": dict(data_root="/data/qiuyijia/dataset/xenium_8",y0=8664,x0=22001,label="xenium_8",tissue="Xenium 人肾"),
-    "pancreas": dict(data_root="/data/qiuyijia/dataset/xenium_pancreas_cancer",
-                  y0=3876, x0=21137, label="pancreas", tissue="Xenium 胰腺"),
-    "liver": dict(data_root="/data/qiuyijia/dataset/xenium_liver",
+    "xenium_8": dict(data_root="yourpath/dataset/xenium_8",y0=8664,x0=22001,label="xenium_8",tissue="Xenium human kidney"),
+    "pancreas": dict(data_root="yourpath/dataset/xenium_pancreas_cancer",
+                  y0=3876, x0=21137, label="pancreas", tissue="Xenium pancreas"),
+    "liver": dict(data_root="yourpath/dataset/xenium_liver",
                   y0=13704, x0=21974, label="xenium_4",
-                  tissue="Xenium 肝"),
-    "mouse_brain": dict(data_root="/data/qiuyijia/dataset/xenium_mouse_brain",
+                  tissue="Xenium liver"),
+    "mouse_brain": dict(data_root="yourpath/dataset/xenium_mouse_brain",
                         y0=6956, x0=12077, label="xenium_5",
-                        tissue="Xenium 小鼠脑"),
-    "colon": dict(data_root="/data/qiuyijia/dataset/xenium_colon",
+                        tissue="Xenium mouse brain"),
+    "colon": dict(data_root="yourpath/dataset/xenium_colon",
                   y0=12052, x0=9241, label="xenium_6",
-                  tissue="Xenium 小鼠结肠"),
+                  tissue="Xenium mouse colon"),
 }
 ROI_SIZE = 10000
 PIXEL_SIZE = 0.2125
@@ -292,9 +292,9 @@ USES_PRIOR = True
 # UCS
 # ==========================================================================
 
-DEFAULT_RUN = {"liver": "/data/qiuyijia/ucs_xenium_liver_roi10000_platform_prior",
-               "mouse_brain": "/data/qiuyijia/ucs_xenium_mouse_brain_roi10000_prior",
-               "colon": "/data/qiuyijia/ucs_xenium_colon_bin5"}
+DEFAULT_RUN = {"liver": "yourpath/ucs_xenium_liver_roi10000_platform_prior",
+               "mouse_brain": "yourpath/ucs_xenium_mouse_brain_roi10000_prior",
+               "colon": "yourpath/ucs_xenium_colon_bin5"}
 
 
 def add_args(ap):
@@ -340,7 +340,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="liver", choices=list(DATASETS))
     ap.add_argument("--mask", default=None)
-    ap.add_argument("--out-dir", default="/data/qiuyijia/eval_results_qv20")
+    ap.add_argument("--out-dir", default="yourpath/eval_results_qv20")
     ap.add_argument("--qv-min", type=float, default=20.0,
                     help="0 disables; 20 matches what the pipelines were given")
     ap.add_argument("--pixel-size", type=float, default=PIXEL_SIZE)
@@ -388,7 +388,7 @@ def main():
     rule("GROUND TRUTH")
     cp = find(root, "cells.parquet", "cells.csv.gz")
     if cp is None:
-        # pancreas 无 cells.parquet, 用 nucleus_boundaries 顶点均值当质心
+        # pancreas has no cells.parquet: use the mean nucleus_boundaries vertex as centroid
         nb = find(root, "nucleus_boundaries.parquet", "cell_boundaries.parquet")
         b = pd.read_parquet(nb)
         idcb = next(c for c in b.columns if c.lower() in ("cell_id","label_id","cell"))
@@ -413,15 +413,15 @@ def main():
                     if c.lower() in ("total_counts", "transcript_counts")), None)
     gtot = gt[tot_col].to_numpy(float) if tot_col else np.full(len(gt), np.nan)
     if tot_col is None:
-        # pancreas 无 total_counts 列: 从转录本 cell_id 数每核转录本数
+        # pancreas has no total_counts column: count transcripts per nucleus from the tx cell_id
         try:
             _tp = find(root, "transcripts.parquet", "transcripts.csv.gz")
             _tx = pd.read_parquet(_tp, columns=["cell_id"]) if str(_tp).endswith(".parquet") else pd.read_csv(_tp, usecols=["cell_id"])
             _cnt = _tx["cell_id"].astype(str).value_counts()
             gtot = np.array([_cnt.get(c, 0) for c in gid], float)
-            log.info(f"            GT total_counts 从转录本 cell_id 数出, median {np.nanmedian(gtot):.0f}")
+            log.info(f"            GT total_counts counted from tx cell_id, median {np.nanmedian(gtot):.0f}")
         except Exception as e:
-            log.info(f"            补 total_counts 失败: {e}")
+            log.info(f"            failed to fill total_counts: {e}")
     if tot_col:
         log.info(f"            platform counts/cell median {np.nanmedian(gtot):.0f} "
                  f"(column '{tot_col}')")

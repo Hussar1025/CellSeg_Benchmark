@@ -2,52 +2,67 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-Bering 单切片细胞分割 (image-free) —— 切片 B 上自训自测
+Bering single-section cell segmentation (image-free) -- train and test on section B
 ================================================================================
-背景与方法学声明 (对应你 benchmark 的「选项 2」):
-  * Bering 在架构上需要一个【粗分割 + 粗细胞类型标签】作为监督输入
-    (见 Bering_Graph 源码 required_features=['x','y','features','raw_cells','raw_labels'])。
-    因此 Bering 本质是"分割精修器(refinement)",不是从零无监督分割。
-  * 本脚本用切片 B 自带的 Xenium 分割 (transcripts.cell_id) 当粗分配 raw_cells,
-    用你的 16 类注释表 (cell_id -> group) 当 raw_labels。
-  * 做 benchmark 横向比较 (vs Baysor/Proseg/BIDCell) 时,必须在论文/报告 Methods
-    里声明:Bering 使用了 Xenium 初始分割与细胞类型标签作为监督输入,而其余方法为
-    无参考/弱参考;因此 Bering 的指标需结合这一起跑线差异来解读。
+Background and methodology note (corresponding to your benchmark "option 2"):
+  * Architecturally, Bering requires a [coarse segmentation + coarse cell-type labels]
+    as supervised input (see Bering_Graph source
+    required_features=['x','y','features','raw_cells','raw_labels']).
+    So Bering is essentially a "segmentation refiner (refinement)", not
+    unsupervised segmentation from scratch.
+  * This script uses section B's own Xenium segmentation (transcripts.cell_id) as the
+    coarse assignment raw_cells, and your 16-class annotation table
+    (cell_id -> group) as raw_labels.
+  * When doing a benchmark cross-comparison (vs Baysor/Proseg/BIDCell), you must state in
+    the paper/report Methods: Bering uses the Xenium initial segmentation and cell-type
+    labels as supervised input, while the other methods are reference-free / weakly
+    referenced; so Bering's metrics must be interpreted together with this
+    difference in starting point.
 
-为什么"训练用子块、预测用全片":
-  * 全片 ~2400 万前景转录本,建 BrGraph + 训练极易 OOM(你之前多次撞显存)。
-  * 训练只需要一个有代表性的空间子块即可学到 node/edge 分类器;
-    预测再分块覆盖全片。这也顺带提供了 held-out(训练块 vs 其余区域)。
+Why "train on a sub-tile, predict on the whole section":
+  * The whole section has ~24M foreground transcripts; building a BrGraph + training
+    easily OOMs (you hit the memory limit many times before).
+  * Training only needs one representative spatial sub-tile to learn the node/edge
+    classifier; prediction then tiles over the whole section. This also conveniently
+    provides a held-out set (training tile vs the rest of the region).
 
-复用的既往修复:
-  * figures/ 等相对目录预建 + chdir 到 OUTDIR/bering_work(Bering 写死相对路径)
-  * outdir 转绝对路径(chdir 后输出仍写对位置)
-  * torch.cuda 显存统计函数包成异常安全(规避 reset_peak_memory_stats 报错)
-  * 分割显式传参(use_image=False / num_edges_perSpot / leiden_resolution ...)
-  * cell_annotation 输出列名容错 + 打印真实列名
-  * BuildWindowGraphs + CreateData 临时切到 CPU 避免 GPU 累积 OOM
-  * _evaluate_metrics 包成 no_grad + 非原地评估，避免评估时把 loader.dataset
-    中的 CPU 图逐个永久搬到 GPU（这会在高基因数数据上累计到 30 GiB+）
-  * PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128 (缓解碎片)
+Reused previous fixes:
+  * Pre-create figures/ and other relative dirs + chdir to OUTDIR/bering_work
+    (Bering hard-codes relative paths)
+  * Convert outdir to an absolute path (output still written correctly after chdir)
+  * Wrap torch.cuda memory-stat functions as exception-safe
+    (avoid reset_peak_memory_stats errors)
+  * Pass segmentation args explicitly (use_image=False / num_edges_perSpot /
+    leiden_resolution ...)
+  * Tolerate cell_annotation output column names + print the real column names
+  * Temporarily switch BuildWindowGraphs + CreateData to CPU to avoid cumulative GPU OOM
+  * Wrap _evaluate_metrics in no_grad + non-in-place evaluation, avoiding permanently
+    moving each CPU graph in loader.dataset to the GPU one by one during evaluation
+    (which on high-gene-count data accumulates to 30 GiB+)
+  * PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128 (mitigate fragmentation)
 
-本轮针对"全片只输出 60 个细胞"的修复 (切片真实 ~190K cells,差了 3000 倍):
-  * 训练完全成功 (Edge AUC=0.992, Node Acc=80%/17类),不是训练问题
-  * 根因:预测时每个 tile 的 Positive edge ratio 都 >0.98 → KNN 图几乎全连通 →
-    leiden 聚出超大簇 (多种细胞混合) + 大量碎屑。然后 cell_annotation 三阈值
-    (50, 30, 0.6) 把绝大多数 cluster 过滤掉,只剩 60 个恰好"大小合适+类型纯"的存活。
-  * 修法五个参数联调:
-    - SEG_POSITIVE_EDGE_THRESH 0.7 -> 0.9 (让边稀疏,leiden 才切得开)
-    - SEG_LEIDEN_RESOLUTION    1.0 -> 1.5 (进一步切细)
-    - MIN_TRANSCRIPTS          50  -> 15  (胰腺淋巴/免疫细胞本身小)
-    - MIN_DOMINANT_NODES       30  -> 8   (同上)
-    - MIN_DOMINANT_RATIO       0.6 -> 0.35 (边界混合细胞也保留)
-  * 期望产出:数量回到 5万-30万 量级,均值 transcripts/cell 50-200。
+This round's fix for "whole section outputs only 60 cells" (the section truly has
+~190K cells, off by 3000x):
+  * Training fully succeeds (Edge AUC=0.992, Node Acc=80%/17 classes), so it is not a
+    training problem
+  * Root cause: at prediction time every tile's positive edge ratio is >0.98 -> the KNN
+    graph is almost fully connected -> leiden clusters out huge clusters (mixed cell
+    types) + lots of debris. Then cell_annotation's three thresholds (50, 30, 0.6)
+    filter out most clusters, leaving only 60 that happen to be
+    "right size + pure type".
+  * Fix: tune five parameters together:
+    - SEG_POSITIVE_EDGE_THRESH 0.7 -> 0.9 (make edges sparser so leiden can cut them apart)
+    - SEG_LEIDEN_RESOLUTION    1.0 -> 1.5 (cut finer still)
+    - MIN_TRANSCRIPTS          50  -> 15  (pancreatic lymph/immune cells are small)
+    - MIN_DOMINANT_NODES       30  -> 8   (same as above)
+    - MIN_DOMINANT_RATIO       0.6 -> 0.35 (keep boundary mixed cells too)
+  * Expected output: count back to the 50K-300K range, mean transcripts/cell 50-200.
 
-输出 (写到 OUTDIR):
-  * sliceB_transcript_assignments.csv : transcript_id, cell_id, gene, x, y   <- 你的评估主输入
-  * sliceB_cells.csv                  : 每个细胞质心/计数 (cell_id, cx, cy, n_transcripts, n_genes, cell_type)
-  * sliceB_cell_boundaries.csv        : 每个细胞凸包边界顶点 (cell_id, vertex_order, x, y)
-  * run_summary.json                  : 统计与方法学声明
+Output (written to OUTDIR):
+  * sliceB_transcript_assignments.csv : transcript_id, cell_id, gene, x, y   <- your main evaluation input
+  * sliceB_cells.csv                  : centroid/count per cell (cell_id, cx, cy, n_transcripts, n_genes, cell_type)
+  * sliceB_cell_boundaries.csv        : convex-hull boundary vertices per cell (cell_id, vertex_order, x, y)
+  * run_summary.json                  : stats and methodology note
 ================================================================================
 """
 
@@ -64,19 +79,19 @@ log = logging.getLogger("bering_B")
 
 
 # ============================================================================
-# CONFIG —— 改这里
+# CONFIG -- EDIT HERE
 # ============================================================================
 class CONFIG:
-    # ---- 选 GPU(共享服务器);留空=默认可见GPU;"-1"=强制CPU ----
+    # ---- select GPU (shared server); empty=default visible GPU; "-1"=force CPU ----
     CUDA_VISIBLE_DEVICES = "0"
 
-    # ---- 切片 B(唯一的数据来源:在它上面自训自测)----
-    TRANSCRIPTS = "/data/qiuyijia/dataset/pancreas_cancer/transcripts.parquet"
-    ANNOTATION  = "/data/qiuyijia/dataset/pancreas_cancer/cell_groups.csv"  # cell_id, group
+    # ---- section B (the only data source: train and test on it) ----
+    TRANSCRIPTS = "yourpath/dataset/pancreas_cancer/transcripts.parquet"
+    ANNOTATION  = "yourpath/dataset/pancreas_cancer/cell_groups.csv"  # cell_id, group
 
-    # transcripts 表的列名(已由 probe_B 确认)
+    # transcripts table column names (confirmed by probe_B)
     COL_TXID   = "transcript_id"
-    COL_CELLID = "cell_id"          # 粗分配;未分配 = "UNASSIGNED"
+    COL_CELLID = "cell_id"          # coarse assignment; unassigned = "UNASSIGNED"
     COL_GENE   = "feature_name"
     COL_X      = "x_location"
     COL_Y      = "y_location"
@@ -84,70 +99,82 @@ class CONFIG:
     COL_QV     = "qv"
     UNASSIGNED_VALUE = "UNASSIGNED"
 
-    # 注释表列名
+    # annotation table column names
     ANNOT_CELLID_COL   = "cell_id"
     ANNOT_CELLTYPE_COL = "group"
 
-    # ---- 输出 ----
-    OUTDIR = "/data/qiuyijia/bering/pancreas_B_output"
+    # ---- output ----
+    OUTDIR = "yourpath/bering/pancreas_B_output"
 
-    # ---- 预处理 ----
+    # ---- preprocessing ----
     QV_THRESHOLD = 20.0
     CONTROL_PREFIXES = (
         "NegControlProbe", "NegControlCodeword", "antisense",
         "BLANK", "Blank", "UnassignedCodeword", "DeprecatedCodeword",
         "Intergenic", "intergenic", "NegPrb", "Neg_", "GenomicControl",
     )
-    USE_3D = False   # Xenium z 噪声大;先用 2D。改 True 则把 z 一并喂入
+    USE_3D = False   # Xenium z is noisy; use 2D for now. Set True to also feed z
 
-    # ---- 训练子块的选取(在 B 内部切一块来训练)----
-    # 以全片质心为中心,取一个边长 TRAIN_TILE_UM 的正方形区域做训练。
-    # 选得太大→OOM/慢;太小→细胞类型覆盖不全。胰腺组织建议 1500~2500。
+    # ---- training sub-tile selection (cut one tile inside B for training) ----
+    # Take a square region of side TRAIN_TILE_UM centered on the whole-section
+    # centroid for training.
+    # Too large -> OOM/slow; too small -> cell types under-covered. Pancreatic tissue
+    # suggests 1500~2500.
     TRAIN_TILE_UM = 1500.0
-    TRAIN_TILE_CENTER = None     # None=用全片中位坐标;或填 (x, y) 自己指定
-    MIN_TRAIN_CELLS_PER_LABEL = 3  # 某类细胞在训练块里少于这么多,警告(可能学不好该类)
+    TRAIN_TILE_CENTER = None     # None=use the whole-section median coords; or pass (x, y) yourself
+    MIN_TRAIN_CELLS_PER_LABEL = 3  # warn if a cell type has fewer than this many cells in the training tile
 
-    # ---- 训练超参(image-free) ----
-    # 上一轮 (产出 60 细胞那次, Edge AUC=0.992) 实测可行参数:
-    # N=10, WINDOW=50, BATCH=4, TRAIN_TILE=1500。
-    # 训练质量足够好,不再追求大 N (A 版 N=15 时 AUC 就 0.992)。
+    # ---- training hyperparameters (image-free) ----
+    # Parameters proven feasible in the previous round (the one that produced 60 cells,
+    # Edge AUC=0.992): N=10, WINDOW=50, BATCH=4, TRAIN_TILE=1500.
+    # Training quality is good enough; no need for a larger N (A version already hit
+    # AUC=0.992 at N=15).
     N_CELLS_PER_CLASS = 10
     N_WINDOWS_PER_CELL = 5
     WINDOW_WIDTH = 50.0
     WINDOW_HEIGHT = 50.0
     BATCH_SIZE = 4
-    INTERNAL_TRAIN_RATIO = 0.8   # CreateData 内部 train/test 划分比例
+    INTERNAL_TRAIN_RATIO = 0.8   # CreateData internal train/test split ratio
 
-    # ---- 训练阶段 GPU/CPU 选择 ----
-    # Bering._trainNode 内部存在隐性内存 leak (训练阶段实测峰值 27-30 GiB),
-    # 共享卡时一旦别人占了 2+ GiB 我们就 OOM,无论我们的 batch 多小。
-    # 策略: 启动时检测 GPU 空闲,>= TRAIN_GPU_NEED_GIB 用 GPU,否则自动 CPU。
-    # FORCE_CPU_TRAIN=True 跳过检测,无脑用 CPU (慢 5-8x 但绝对不 OOM,适合反复 OOM 时的最后兜底)。
-    # 预测阶段不受此影响,继续 GPU (每 tile 独立,无累积 leak)。
+    # ---- GPU/CPU choice for the training stage ----
+    # Bering._trainNode has a hidden memory leak (measured peak 27-30 GiB during
+    # training); on a shared card we OOM whenever someone else holds 2+ GiB,
+    # no matter how small our batch is.
+    # Strategy: detect GPU free space at startup; use GPU if >= TRAIN_GPU_NEED_GIB,
+    # otherwise fall back to CPU.
+    # FORCE_CPU_TRAIN=True skips the check and blindly uses CPU (5-8x slower but never
+    # OOMs, a last-resort fallback when OOM keeps recurring).
+    # The prediction stage is unaffected and stays on GPU (each tile is independent, no
+    # cumulative leak).
     FORCE_CPU_TRAIN = False
     TRAIN_GPU_NEED_GIB = 30.0
 
-    # ---- 训练缓存 ----
-    # 仅调预测端参数 (SEG_*, MIN_*) 时,把 USE_CACHED_TRAIN 改为 True,
-    # 跳过 12 分钟训练阶段直接复用上次的 bg_train。
-    # 注意: 若改了训练相关参数 (N_CELLS_PER_CLASS / WINDOW_* / BATCH_SIZE /
-    # TRAIN_TILE_* / N_NEIGHBORS), 必须删除 outdir/bg_train_cache.pkl 强制重训。
-    # Run#5: 上轮缓存已存在, 本轮只调预测端, 默认 True 跳过训练
+    # ---- training cache ----
+    # When only tuning prediction-side parameters (SEG_*, MIN_*), set
+    # USE_CACHED_TRAIN to True to skip the 12-minute training stage and reuse the
+    # previous bg_train.
+    # Note: if you changed training-related parameters (N_CELLS_PER_CLASS / WINDOW_* /
+    # BATCH_SIZE / TRAIN_TILE_* / N_NEIGHBORS), you must delete
+    # outdir/bg_train_cache.pkl to force retraining.
+    # Run#5: the previous cache already exists, this round only tunes the prediction
+    # side, default True skips training
     USE_CACHED_TRAIN = True
     # Resume jobs can require a valid cache so an import/unpickle problem can
     # never silently fall back to an expensive and unintended retraining run.
     REQUIRE_CACHED_TRAIN = False
 
-    # ---- 预测分块(覆盖全片;带 margin 防止切断细胞)----
+    # ---- prediction tiling (covers the whole section; margin avoids cutting cells) ----
     TILE_SIZE_UM = 600.0
     TILE_MARGIN_UM = 30.0
-    MIN_TILE_TRANSCRIPTS = 200   # 块内前景转录本少于此值则跳过(避免 n_neighbors>n_samples)
+    MIN_TILE_TRANSCRIPTS = 200   # skip a tile if it has fewer foreground transcripts (avoid n_neighbors>n_samples)
 
-    # ---- 节点分类(预测端)----
+    # ---- node classification (prediction side) ----
     N_NEIGHBORS = 10
-    # 旧版 Bering 会先尝试为整个预测 tile 建全图；高密度 Xenium tile 可达
-    # 100万-300万节点，建图失败后其 fallback 对 <150万节点还会误用 None。
-    # 超过此阈值时直接走内部坐标分块分类，每个子块控制在约 TARGET_CHUNK。
+    # Old Bering first tries to build a full graph for the whole prediction tile; a
+    # high-density Xenium tile can reach 1-3M nodes, and after the build fails its
+    # fallback misuses None below 1.5M nodes.
+    # Above this threshold it goes straight to internal coordinate tiling, keeping each
+    # sub-chunk around TARGET_CHUNK.
     # A dense transcriptomic design matrix is created during whole-graph
     # classification (roughly n_spots * n_genes * 8 bytes).  With ~5,000
     # Xenium genes even 150k spots needs several GiB before graph overhead and
@@ -155,41 +182,43 @@ class CONFIG:
     # dereference it.  Keep the direct path small and tile everything larger.
     NODE_CLASSIFICATION_DIRECT_MAX = 100_000
     NODE_CLASSIFICATION_TARGET_CHUNK = 100_000
-    # benchmark 模式应设 True：任何预测块异常都必须让整次运行失败，禁止把
-    # 缺块结果误标为完成。legacy 单切片入口保留 False 以兼容旧行为。
+    # benchmark mode should be True: any prediction-tile error must fail the whole run;
+    # never mark a run with missing tiles as complete. The legacy single-section entry
+    # keeps False to stay compatible with old behavior.
     STRICT_TILE_ERRORS = False
 
-    # ---- 分割步骤参数(cell_segmentation)----
-    # 历轮回拨记录:
-    #   Run#2: LEIDEN=1.5, EDGE=0.9  -> 905K cells, mean=22 t/c (5x 过切)
-    #   Run#3: LEIDEN=0.5, EDGE=0.85 -> 551K cells, mean=40 t/c (2.9x 过切)
-    #   Run#4: LEIDEN=0.2, EDGE=0.7  -> 338K cells, mean=67 t/c (1.8x 过切, 已接近目标)
-    #   Run#5 (本次): LEIDEN=0.1, EDGE=0.55 -> 期望 ~200K cells, mean ~100 t/c
-    # 经验:每轮 leiden 减半 + thresh -0.15, 大约能让细胞数下降 1.6x。
+    # ---- segmentation step parameters (cell_segmentation) ----
+    # Round-by-round tuning record:
+    #   Run#2: LEIDEN=1.5, EDGE=0.9  -> 905K cells, mean=22 t/c (5x over-segmentation)
+    #   Run#3: LEIDEN=0.5, EDGE=0.85 -> 551K cells, mean=40 t/c (2.9x over-segmentation)
+    #   Run#4: LEIDEN=0.2, EDGE=0.7  -> 338K cells, mean=67 t/c (1.8x over-segmentation, near target)
+    #   Run#5 (this run): LEIDEN=0.1, EDGE=0.55 -> expected ~200K cells, mean ~100 t/c
+    # Heuristic: halving leiden + thresh -0.15 per round roughly lowers cell count 1.6x.
     SEG_USE_IMAGE = False
     SEG_NUM_EDGES_PER_SPOT = 30
     SEG_GRAPH_N_NEIGHBORS = 10
-    SEG_LEIDEN_RESOLUTION = 0.1     # 0.2 -> 0.1 (再减半, 让 leiden 切更少更大的簇)
-    SEG_POSITIVE_EDGE_THRESH = 0.55 # 0.7 -> 0.55 (图更密, 连通块更大)
+    SEG_LEIDEN_RESOLUTION = 0.1     # 0.2 -> 0.1 (halve again, let leiden cut fewer, larger clusters)
+    SEG_POSITIVE_EDGE_THRESH = 0.55 # 0.7 -> 0.55 (denser graph, larger connected components)
 
-    # ---- 预测后处理(cell_annotation 的质控阈值)----
-    MIN_TRANSCRIPTS = 45        # 35 -> 45 (微紧, 兜底过滤碎片)
-    MIN_DOMINANT_NODES = 22     # 18 -> 22 (同上)
-    MIN_DOMINANT_RATIO = 0.4    # 保持
+    # ---- prediction post-processing (cell_annotation QC thresholds) ----
+    MIN_TRANSCRIPTS = 45        # 35 -> 45 (slightly tighter, fallback to filter debris)
+    MIN_DOMINANT_NODES = 22     # 18 -> 22 (same as above)
+    MIN_DOMINANT_RATIO = 0.4    # keep
 
-    # ---- 输出选项 ----
-    EXPORT_BOUNDARIES = True     # 凸包细胞边界(细胞多时略慢)
-    MIN_BOUNDARY_PTS = 3         # 少于3个点无法构成多边形
+    # ---- output options ----
+    EXPORT_BOUNDARIES = True     # convex-hull cell boundaries (slightly slower with many cells)
+    MIN_BOUNDARY_PTS = 3         # fewer than 3 points cannot form a polygon
 
     SEED = 0
 
 
 # ============================================================================
-# 小工具
+# small utilities
 # ============================================================================
 def _make_cuda_memstats_safe():
-    """规避某些 torch/CUDA 下 reset_peak_memory_stats() 抛 invalid argument。
-    这些函数只用于显存诊断,对训练数学无影响。必须在 torch 可导入后调用。"""
+    """Avoid reset_peak_memory_stats() raising invalid argument under some torch/CUDA.
+    These functions are only for memory diagnostics and do not affect the training math.
+    Must be called after torch can be imported."""
     try:
         import torch
     except Exception:
@@ -218,49 +247,49 @@ def _make_cuda_memstats_safe():
             except Exception:
                 return 0
         setattr(torch.cuda, fn_name, _safe_num)
-    log.info("已将 torch.cuda 显存统计函数包为异常安全")
+    log.info("Wrapped torch.cuda memory-stat functions as exception-safe")
 
 
 def _attr(obj, name, default="?"):
-    """安全读取对象属性,缺失返回默认值(避免日志行因版本属性差异崩溃)。"""
+    """Safely read an object attribute; return default if missing (avoid log lines crashing on version attribute differences)."""
     return getattr(obj, name, default)
 
 
 def _resolve_col(df, candidates, what):
-    """在 candidates 里找第一个存在于 df 的列名;都没有则报清晰错误。"""
+    """Find the first column name in candidates that exists in df; error clearly if none."""
     for c in candidates:
         if c in df.columns:
             return c
     raise RuntimeError(
-        f"[predict] 在 cell_annotation 输出里找不到「{what}」列。"
-        f"实际列名: {list(df.columns)}。把这行贴给我即可对上。"
+        f"[predict] could not find the \"{what}\" column in the cell_annotation output. "
+        f"Actual columns: {list(df.columns)}. Paste this line back to me to match."
     )
 
 
 # ============================================================================
-# 数据加载与预处理
+# data loading and preprocessing
 # ============================================================================
 def load_and_preprocess() -> pd.DataFrame:
-    """读 B 的 transcripts,QV 过滤 + 去对照探针,统一列名为 x/y/z/features/transcript_id/cell_id。"""
-    log.info(f"[B] 读取 {CONFIG.TRANSCRIPTS}")
+    """Read B's transcripts, QV-filter + drop control probes, normalize column names to x/y/z/features/transcript_id/cell_id."""
+    log.info(f"[B] reading {CONFIG.TRANSCRIPTS}")
     df = pd.read_parquet(CONFIG.TRANSCRIPTS)
     n0 = len(df)
-    log.info(f"[B]   原始转录本 {n0:,};列 {list(df.columns)}")
+    log.info(f"[B]   raw transcripts {n0:,}; columns {list(df.columns)}")
 
-    # QV 过滤
+    # QV filter
     if CONFIG.COL_QV in df.columns:
         df = df[df[CONFIG.COL_QV] >= CONFIG.QV_THRESHOLD]
         log.info(f"[B]   QV>={CONFIG.QV_THRESHOLD}: {n0:,} -> {len(df):,}")
 
-    # 基因名转 str(可能是 bytes)
+    # cast gene names to str (may be bytes)
     genes = df[CONFIG.COL_GENE].map(lambda v: v.decode() if isinstance(v, (bytes, bytearray)) else str(v))
 
-    # 去对照/非基因探针
+    # drop control/non-gene probes
     mask_ctrl = genes.str.startswith(CONFIG.CONTROL_PREFIXES)
     n_drop = int(mask_ctrl.sum())
     df = df[~mask_ctrl.values]
     genes = genes[~mask_ctrl.values]
-    log.info(f"[B]   去对照/非基因: 丢弃 {n_drop:,}")
+    log.info(f"[B]   drop control/non-gene: {n_drop:,}")
 
     out = pd.DataFrame({
         "transcript_id": df[CONFIG.COL_TXID].values,
@@ -272,57 +301,58 @@ def load_and_preprocess() -> pd.DataFrame:
     if CONFIG.USE_3D:
         out["z"] = df[CONFIG.COL_Z].astype(float).values
     else:
-        out["z"] = 0.0  # Bering 内部某些路径会用到 z;2D 时置 0
+        out["z"] = 0.0  # some Bering paths use z; set to 0 for 2D
 
     n_genes = out["features"].nunique()
-    log.info(f"[B]   预处理后 {len(out):,} 转录本;基因 {n_genes}")
+    log.info(f"[B]   after preprocessing {len(out):,} transcripts; {n_genes} genes")
     return out
 
 
 def attach_labels(df: pd.DataFrame) -> pd.DataFrame:
-    """把注释表的 group 贴到每个被分配转录本上(按 cell_id join),加一列 raw_labels。
-    未分配转录本(cell_id==UNASSIGNED)的 raw_labels 先留空,稍后归入 background。"""
+    """Attach the annotation table's group to each assigned transcript (join on cell_id), adding a raw_labels column.
+    Unassigned transcripts (cell_id==UNASSIGNED) keep raw_labels empty for now and are put in background later."""
     ann = pd.read_csv(CONFIG.ANNOTATION)
     id_col, ct_col = CONFIG.ANNOT_CELLID_COL, CONFIG.ANNOT_CELLTYPE_COL
     mapping = dict(zip(ann[id_col].astype(str), ann[ct_col].astype(str)))
-    log.info(f"[label] 注释表 {len(mapping):,} 个细胞,{ann[ct_col].nunique()} 类")
+    log.info(f"[label] annotation table {len(mapping):,} cells, {ann[ct_col].nunique()} classes")
 
     df = df.copy()
     df["raw_labels"] = df["cell_id"].map(mapping)
-    # 被分配、但注释表里没有的细胞(probe 显示仅 ~2 个)→ 当作未分配处理,避免脏标签
+    # assigned cells missing from the annotation table (probe shows only ~2) -> treat as
+    # unassigned to avoid dirty labels
     assigned = df["cell_id"] != CONFIG.UNASSIGNED_VALUE
     missing_lbl = assigned & df["raw_labels"].isna()
     n_missing = int(missing_lbl.sum())
     if n_missing:
-        log.warning(f"[label] {n_missing:,} 条已分配转录本在注释表里无 group,降级为未分配。")
+        log.warning(f"[label] {n_missing:,} assigned transcripts have no group in the annotation table, downgrading to unassigned.")
         df.loc[missing_lbl, "cell_id"] = CONFIG.UNASSIGNED_VALUE
     return df
 
 
 def split_seg_unseg(df: pd.DataFrame):
-    """按 cell_id 切成前景(已分配,有 group)和背景(未分配)。
-    返回符合 Bering_Graph 要求的两张表:
+    """Split by cell_id into foreground (assigned, has group) and background (unassigned).
+    Return the two tables Bering_Graph requires:
       seg:   x,y,z,features,raw_cells,raw_labels
-      unseg: x,y,z,features  (raw_cells/raw_labels 由 Bering 自动置 0/background)
+      unseg: x,y,z,features  (raw_cells/raw_labels are auto-set to 0/background by Bering)
     """
     is_unassigned = df["cell_id"] == CONFIG.UNASSIGNED_VALUE
     seg = df[~is_unassigned].copy()
     unseg = df[is_unassigned].copy()
 
-    # Bering 要求前景列名 raw_cells / raw_labels
+    # Bering requires foreground column names raw_cells / raw_labels
     seg = seg.rename(columns={"cell_id": "raw_cells"})
-    # raw_cells 现在是字符串(如 'bapencgb-1'),Bering 内部会 _reindex_cell_ids 成 1..n,没问题
-    log.info(f"[B]   前景(已分配) {len(seg):,} / 背景(未分配) {len(unseg):,}")
-    log.info(f"[B]   前景细胞数 {seg['raw_cells'].nunique():,};类别 {seg['raw_labels'].nunique()}")
+    # raw_cells is now strings (e.g. 'bapencgb-1'); Bering reindexes them to 1..n internally, fine
+    log.info(f"[B]   foreground (assigned) {len(seg):,} / background (unassigned) {len(unseg):,}")
+    log.info(f"[B]   foreground cells {seg['raw_cells'].nunique():,}; classes {seg['raw_labels'].nunique()}")
     return seg, unseg
 
 
 # ============================================================================
-# 训练(在 B 的一个空间子块上)
+# training (on one spatial sub-tile of B)
 # ============================================================================
 def select_train_tile(seg: pd.DataFrame, unseg: pd.DataFrame):
-    """在全片中取一个边长 TRAIN_TILE_UM 的正方形子块用于训练。
-    训练同时需要该子块内的前景(seg)和背景(unseg)。"""
+    """Take a square sub-tile of side TRAIN_TILE_UM from the whole section for training.
+    Training needs both the foreground (seg) and background (unseg) within that sub-tile."""
     if CONFIG.TRAIN_TILE_CENTER is not None:
         cx, cy = CONFIG.TRAIN_TILE_CENTER
     else:
@@ -330,48 +360,51 @@ def select_train_tile(seg: pd.DataFrame, unseg: pd.DataFrame):
         cy = float(np.median(seg["y"].values))
     h = CONFIG.TRAIN_TILE_UM / 2.0
     xmin, xmax, ymin, ymax = cx - h, cx + h, cy - h, cy + h
-    log.info(f"[train] 训练子块中心=({cx:.0f},{cy:.0f}) 边长={CONFIG.TRAIN_TILE_UM} "
+    log.info(f"[train] training sub-tile center=({cx:.0f},{cy:.0f}) side={CONFIG.TRAIN_TILE_UM} "
              f"=> x[{xmin:.0f},{xmax:.0f}] y[{ymin:.0f},{ymax:.0f}]")
 
     def crop(d):
         return d[(d["x"] >= xmin) & (d["x"] < xmax) & (d["y"] >= ymin) & (d["y"] < ymax)].copy()
 
     seg_t, unseg_t = crop(seg), crop(unseg)
-    log.info(f"[train] 子块内前景 {len(seg_t):,} / 背景 {len(unseg_t):,};"
-             f" 细胞 {seg_t['raw_cells'].nunique():,}")
+    log.info(f"[train] sub-tile foreground {len(seg_t):,} / background {len(unseg_t):,};"
+             f" cells {seg_t['raw_cells'].nunique():,}")
 
-    # 检查类别覆盖
+    # check class coverage
     vc = seg_t.drop_duplicates("raw_cells")["raw_labels"].value_counts()
     thin = vc[vc < CONFIG.MIN_TRAIN_CELLS_PER_LABEL]
     if len(thin):
-        log.warning(f"[train] 以下类别在训练块内细胞数偏少(<{CONFIG.MIN_TRAIN_CELLS_PER_LABEL}),"
-                    f"可能学不好;考虑增大 TRAIN_TILE_UM 或换 TRAIN_TILE_CENTER:\n{thin.to_string()}")
+        log.warning(f"[train] the following classes have too few cells in the training tile "
+                    f"(<{CONFIG.MIN_TRAIN_CELLS_PER_LABEL}), may not be learned well; "
+                    f"consider a larger TRAIN_TILE_UM or a different TRAIN_TILE_CENTER:\n{thin.to_string()}")
     return seg_t, unseg_t, (xmin, xmax, ymin, ymax)
 
 
 def _bg_train_cache_path():
-    """已训练 bg_train 的缓存路径(放 outdir 下,方便用户管理)"""
+    """Cache path for the trained bg_train (kept under outdir for easy management)"""
     import os as _os
     return _os.path.join(str(CONFIG.OUTDIR), "bg_train_cache.pkl")
 
 
 def _try_load_cached_bg_train():
     """
-    尝试从 outdir/bg_train_cache.pkl 加载已训练 bg_train,跳过训练阶段。
-    适用场景:用户只调预测端参数(SEG_LEIDEN_RESOLUTION / SEG_POSITIVE_EDGE_THRESH /
-    MIN_TRANSCRIPTS / MIN_DOMINANT_NODES / MIN_DOMINANT_RATIO),训练完全可复用。
-    每轮可省 12 分钟训练时间。
+    Try to load the trained bg_train from outdir/bg_train_cache.pkl, skipping the
+    training stage. Use case: the user only tunes prediction-side parameters
+    (SEG_LEIDEN_RESOLUTION / SEG_POSITIVE_EDGE_THRESH / MIN_TRANSCRIPTS /
+    MIN_DOMINANT_NODES / MIN_DOMINANT_RATIO), so training is fully reusable.
+    Saves 12 minutes of training time per round.
 
-    注意:如果改了训练相关参数 (N_CELLS_PER_CLASS / WINDOW_* / BATCH_SIZE /
-    TRAIN_TILE_UM / TRAIN_TILE_CENTER / N_NEIGHBORS), 必须删除缓存文件重训。
+    Note: if training-related parameters changed (N_CELLS_PER_CLASS / WINDOW_* /
+    BATCH_SIZE / TRAIN_TILE_UM / TRAIN_TILE_CENTER / N_NEIGHBORS), delete the cache
+    file to force retraining.
     """
     if not getattr(CONFIG, "USE_CACHED_TRAIN", False):
         return None
     p = _bg_train_cache_path()
     if not os.path.exists(p):
         if getattr(CONFIG, "REQUIRE_CACHED_TRAIN", False):
-            raise FileNotFoundError(f"续跑模式要求训练缓存，但文件不存在: {p}")
-        log.info(f"[cache] 未找到训练缓存 {p}, 走完整训练流程")
+            raise FileNotFoundError(f"resume mode requires the training cache, but the file does not exist: {p}")
+        log.info(f"[cache] training cache not found at {p}, running the full training pipeline")
         return None
     try:
         # The pickle contains PyTorch storages that may have been saved from a
@@ -391,85 +424,90 @@ def _try_load_cached_bg_train():
                 bg = pickle.load(f)
         finally:
             torch.storage._load_from_bytes = original_load_from_bytes
-        log.info(f"[cache] 已从 {p} 加载训练好的 bg_train 到 CPU (跳过训练阶段)")
-        log.info(f"[cache] 提醒: 若你改了训练相关参数, 请删除 {p} 强制重训")
+        log.info(f"[cache] loaded trained bg_train from {p} to CPU (skipping training)")
+        log.info(f"[cache] reminder: if you changed training-related parameters, delete {p} to force retraining")
         return bg
     except Exception as e:
         if getattr(CONFIG, "REQUIRE_CACHED_TRAIN", False):
             raise RuntimeError(
-                f"续跑模式禁止重新训练，且训练缓存加载失败: {p} "
+                f"resume mode forbids retraining, and loading the training cache failed: {p} "
                 f"({type(e).__name__}: {e})"
             ) from e
-        log.warning(f"[cache] 加载缓存失败 ({type(e).__name__}: {e}), 走完整训练流程")
+        log.warning(f"[cache] loading cache failed ({type(e).__name__}: {e}), running the full training pipeline")
         return None
 
 
 def _save_bg_train_cache(bg):
-    """训练完后把 bg_train pickle 到 outdir。失败不致命(下次重训而已)。"""
+    """After training, pickle bg_train to outdir. Failure is non-fatal (just retrain next time)."""
     p = _bg_train_cache_path()
     try:
         import pickle
         with open(p, "wb") as f:
             pickle.dump(bg, f)
         size_mb = os.path.getsize(p) / 1024**2
-        log.info(f"[cache] bg_train 已缓存到 {p} ({size_mb:.1f} MB)")
-        log.info(f"[cache] 下次跑只调预测端参数时, 把 CONFIG.USE_CACHED_TRAIN 改为 True 即可跳过训练")
+        log.info(f"[cache] cached bg_train to {p} ({size_mb:.1f} MB)")
+        log.info(f"[cache] next run, when only tuning prediction-side parameters, set CONFIG.USE_CACHED_TRAIN to True to skip training")
     except Exception as e:
-        log.warning(f"[cache] 保存训练缓存失败 ({type(e).__name__}: {e}), 下次仍需重训")
+        log.warning(f"[cache] saving training cache failed ({type(e).__name__}: {e}), will retrain next time")
 
 
 def _decide_train_device():
     """
-    检测 GPU 可用空间, 决定训练阶段用 GPU 还是 CPU。
+    Detect available GPU memory and decide whether the training stage uses GPU or CPU.
 
-    背景: Bering._trainNode 存在隐性内存 leak (训练时 autograd/中间张量囤积不释放),
-    经验上训练阶段会涨到 ~30 GiB。卡空间不够就 OOM, 无论我们怎么改 batch/window 都没用。
+    Background: Bering._trainNode has a hidden memory leak (autograd/intermediate tensors
+    are accumulated and not released during training); empirically the training stage grows
+    to ~30 GiB. If the card has insufficient space it OOMs, no matter how we change
+    batch/window.
 
-    策略:
-      - GPU 空闲 >= TRAIN_GPU_NEED_GIB (默认 30) → 用 GPU 训练
-      - 否则 → CPU 训练 (慢 5-8x,但绝对不 OOM)
-      - 用户可在 CONFIG.FORCE_CPU_TRAIN=True 时跳过检测,强制 CPU
-      - 预测阶段不受此影响,继续 GPU
+    Strategy:
+      - free GPU >= TRAIN_GPU_NEED_GIB (default 30) -> train on GPU
+      - otherwise -> train on CPU (5-8x slower, but never OOMs)
+      - the user can skip the check and force CPU via CONFIG.FORCE_CPU_TRAIN=True
+      - the prediction stage is unaffected and stays on GPU
     """
     if getattr(CONFIG, "FORCE_CPU_TRAIN", False):
-        log.warning("[device] CONFIG.FORCE_CPU_TRAIN=True → 训练阶段强制 CPU")
+        log.warning("[device] CONFIG.FORCE_CPU_TRAIN=True -> forcing CPU for the training stage")
         return "cpu"
     try:
         import torch
         if not torch.cuda.is_available():
-            log.warning("[device] CUDA 不可用, 训练阶段用 CPU")
+            log.warning("[device] CUDA unavailable, using CPU for the training stage")
             return "cpu"
         free, total = torch.cuda.mem_get_info()
         free_gib = free / 1024**3
         total_gib = total / 1024**3
         need_gib = getattr(CONFIG, "TRAIN_GPU_NEED_GIB", 30.0)
-        log.info(f"[device] GPU 可用 {free_gib:.1f}/{total_gib:.1f} GiB; 训练需 >= {need_gib} GiB")
+        log.info(f"[device] GPU free {free_gib:.1f}/{total_gib:.1f} GiB; training needs >= {need_gib} GiB")
         if free_gib < need_gib:
-            log.warning(f"[device] 空间不够 (Bering _trainNode 训练时会涨到 ~30 GiB), "
-                        f"训练阶段自动切到 CPU (慢但稳); 预测阶段仍 GPU")
+            log.warning(f"[device] insufficient space (Bering _trainNode grows to ~30 GiB during training), "
+                        f"automatically switching the training stage to CPU (slower but stable); prediction stays on GPU")
             return "cpu"
-        log.info("[device] 空间充足, 训练阶段用 GPU")
+        log.info("[device] sufficient space, using GPU for the training stage")
         return "gpu"
     except Exception as e:
-        log.warning(f"[device] 检测失败 ({e}), 保守用 CPU 训练")
+        log.warning(f"[device] detection failed ({e}), conservatively using CPU for training")
         return "cpu"
 
 
 def _patch_bering_eval_no_grad():
     """
-    包装 Bering.training._record._evaluate_metrics:
-      1. 在 torch.no_grad() 下运行(避免评估 autograd 图累积)
-      2. 调用前 gc.collect + torch.cuda.empty_cache(释放 PyTorch 缓存碎片)
-    第 2 点针对共享卡场景:别人占卡使可用 VRAM 缩水,训练攒到一定程度后 PyTorch 的缓存
-    碎片(reserved - allocated, 可达 2-3 GiB)就成了 eval 阶段的关键瓶颈。强制清理一次,
-    把那块"未使用但已申请"的内存还给 CUDA,给 eval forward 让出空间。
+    Wrap Bering.training._record._evaluate_metrics:
+      1. run under torch.no_grad() (avoid accumulating the evaluation autograd graph)
+      2. gc.collect + torch.cuda.empty_cache before the call (release PyTorch cache
+         fragmentation)
+    Point 2 targets the shared-card case: when others occupy the card the available VRAM
+    shrinks, and once training has built up enough, PyTorch's cache fragmentation
+    (reserved - allocated, up to 2-3 GiB) becomes the key bottleneck for the eval stage.
+    Force one cleanup to return that "unused but reserved" memory to CUDA, freeing space
+    for the eval forward pass.
     """
     try:
         import torch
         import gc
         from Bering.training import _record as _rec
     except Exception as e:
-        log.warning(f"[patch] 无法导入 Bering.training._record: {e}")
+        log.warning(f"[patch] cannot import Bering.training._record: {e}")
         return
     if getattr(_rec, "_evaluate_metrics_patched", False):
         return
@@ -512,7 +550,8 @@ def _patch_bering_eval_no_grad():
             self.dataset = _NonMutatingDataset(loader.dataset)
 
     def _evaluate_metrics_no_grad(*a, **k):
-        # 关键: 释放 PyTorch 缓存碎片, 共享卡时这往往是 eval 能否过 forward 的胜负手
+        # key: release PyTorch cache fragmentation; on a shared card this is often
+        # the deciding factor for whether eval passes forward
         gc.collect()
         try:
             torch.cuda.empty_cache()
@@ -531,40 +570,43 @@ def _patch_bering_eval_no_grad():
 
     _rec._evaluate_metrics = _evaluate_metrics_no_grad
     _rec._evaluate_metrics_patched = True
-    log.info("[patch] 已包装 _evaluate_metrics: no_grad + 非原地 to() + 进入前 empty_cache")
+    log.info("[patch] wrapped _evaluate_metrics: no_grad + non-in-place to() + empty_cache before entry")
 
 
 def train_on_B(seg_t: pd.DataFrame, unseg_t: pd.DataFrame):
-    """用子块数据建 BrGraph 并训练 node+edge 分类器。
-    调用顺序严格复用切片A版已验证可跑的写法:
-      br.BrGraph(关键字参数) -> br.graphs.BuildWindowGraphs -> br.graphs.CreateData -> br.train.Training
+    """Build a BrGraph from the sub-tile data and train node+edge classifiers.
+    The call order strictly reuses the pattern verified to work in the section A version:
+      br.BrGraph(keyword args) -> br.graphs.BuildWindowGraphs -> br.graphs.CreateData -> br.train.Training
     """
     import Bering as br
 
-    # 关键: 在调任何 Training 前打非原地评估补丁；旧版 evaluator 会把
-    # loader.dataset 的每张 CPU 图永久搬到 GPU，导致高维数据评估时累计 OOM。
+    # key: apply the non-in-place evaluation patch before any Training; the old evaluator
+    # permanently moves each CPU graph in loader.dataset to the GPU, causing cumulative OOM
+    # when evaluating high-dimensional data.
     _patch_bering_eval_no_grad()
 
-    # 前景表用本版本要求的列名: x, y, z, features, raw_cells, raw_labels;背景表只要坐标+features
+    # foreground table uses the column names this version requires: x, y, z, features, raw_cells, raw_labels; background table only needs coords + features
     df_seg = seg_t[["x", "y", "z", "features", "raw_cells", "raw_labels"]].copy()
     df_unseg = unseg_t[["x", "y", "z", "features"]].copy()
 
-    log.info("[train] 构建 Bering 对象 (image-free)")
+    log.info("[train] building Bering object (image-free)")
     bg = br.BrGraph(df_spots_seg=df_seg, df_spots_unseg=df_unseg, image=None, channels=None)
     log.info(f"[train]   n_transcripts={_attr(bg,'n_transcripts')} | "
              f"n_features={_attr(bg,'n_features')} | n_cells={_attr(bg,'n_cells_raw')} | "
              f"n_labels={_attr(bg,'n_labels_raw')} | device={_attr(bg,'device')}")
 
-    log.info("[train] BuildWindowGraphs + CreateData (CPU 上累积窗口图, 避免 GPU 累积爆显存) ...")
-    # 关键修复: BuildWindowGraphs 内部 BuildGraph 把每张窗口图立即 G.to(bg.device) 累积,
-    # CreateData 也会把所有图搬到 bg.device。两者合起来吃光 VRAM。
-    # 修法: 临时把 bg.device 切到 CPU 罩住 BuildWindowGraphs + CreateData,所有图建到
-    # CPU RAM (几百 GiB 撑得起),罩完根据 GPU 空闲度决定训练用 GPU 还是 CPU。
+    log.info("[train] BuildWindowGraphs + CreateData (accumulate window graphs on CPU, avoid GPU accumulation blowing VRAM) ...")
+    # key fix: inside BuildWindowGraphs, BuildGraph immediately accumulates each window
+    # graph via G.to(bg.device); CreateData also moves all graphs to bg.device. Together
+    # they consume all VRAM.
+    # Fix: temporarily switch bg.device to CPU to cover BuildWindowGraphs + CreateData,
+    # building all graphs in CPU RAM (hundreds of GiB are fine); afterwards decide GPU vs
+    # CPU for training based on GPU free space.
     import torch
     _orig_device = bg.device
-    # 在切到 CPU 前就检测一次 GPU 空闲度(以免后面 PyTorch 申请了别的就看不到真实空闲了)
+    # detect GPU free space once before switching to CPU (so a later PyTorch allocation cannot hide the true free space)
     train_device_choice = _decide_train_device()
-    log.info(f"[train]   bg.device 从 {_orig_device} 临时切到 CPU(覆盖 BuildWindowGraphs + CreateData)")
+    log.info(f"[train]   temporarily switching bg.device from {_orig_device} to CPU (covering BuildWindowGraphs + CreateData)")
     bg.device = torch.device("cpu")
     try:
         br.graphs.BuildWindowGraphs(
@@ -573,15 +615,15 @@ def train_on_B(seg_t: pd.DataFrame, unseg_t: pd.DataFrame):
             n_neighbors=CONFIG.N_NEIGHBORS,
             n_windows_per_cell=CONFIG.N_WINDOWS_PER_CELL,
         )
-        log.info("[train]   BuildWindowGraphs 完成, 进入 CreateData")
+        log.info("[train]   BuildWindowGraphs done, entering CreateData")
         br.graphs.CreateData(bg, batch_size=CONFIG.BATCH_SIZE, training_ratio=CONFIG.INTERNAL_TRAIN_RATIO)
     finally:
         if train_device_choice == "gpu":
             bg.device = _orig_device
-            log.info(f"[train]   bg.device 恢复为 {_orig_device}(GPU 训练)")
+            log.info(f"[train]   restored bg.device to {_orig_device} (GPU training)")
         else:
-            # 保持 CPU,Training 也在 CPU 上跑,慢但绝对不 OOM
-            log.warning(f"[train]   bg.device 保持 CPU(CPU 训练; 预计比 GPU 慢 5-8 倍)")
+            # keep CPU; Training also runs on CPU, slower but never OOMs
+            log.warning(f"[train]   keeping bg.device on CPU (CPU training; expected 5-8x slower than GPU)")
         try:
             torch.cuda.empty_cache()
         except Exception:
@@ -591,11 +633,11 @@ def train_on_B(seg_t: pd.DataFrame, unseg_t: pd.DataFrame):
         except Exception:
             pass
 
-    log.info("[train] Training (节点分类器 + 边分类器) ...")
+    log.info("[train] Training (node classifier + edge classifier) ...")
     train_fn = getattr(getattr(br, "train", None), "Training", None) \
         or getattr(getattr(br, "training", None), "Training", None)
     if train_fn is None:
-        raise AttributeError("找不到 Training(试过 br.train.Training / br.training.Training)")
+        raise AttributeError("Training not found (tried br.train.Training / br.training.Training)")
     # Bering.Training creates TrainerNode/TrainerEdge without passing
     # ``bg.device``; both constructors independently choose CUDA whenever it
     # is visible.  Consequently the old "CPU fallback" only built graphs on
@@ -605,22 +647,22 @@ def train_on_B(seg_t: pd.DataFrame, unseg_t: pd.DataFrame):
     _cuda_is_available = torch.cuda.is_available
     if train_device_choice == "cpu":
         torch.cuda.is_available = lambda: False
-        log.warning("[train] 已将 CPU 设备选择传递给 Bering TrainerNode/TrainerEdge")
+        log.warning("[train] passed the CPU device choice to Bering TrainerNode/TrainerEdge")
     try:
         train_fn(bg)
     finally:
         torch.cuda.is_available = _cuda_is_available
 
-    log.info("[train] 完成。训练标签集合: %s",
+    log.info("[train] done. training label set: %s",
              sorted(map(str, np.unique(df_seg["raw_labels"]))))
     return bg
 
 
 # ============================================================================
-# 预测(分块覆盖全片)
+# prediction (tiled over the whole section)
 # ============================================================================
 def _make_tiles(xmin, xmax, ymin, ymax, tile, margin):
-    """把 [xmin,xmax]x[ymin,ymax] 切成核心块,每块外扩 margin 做预测、核心区收结果。"""
+    """Cut [xmin,xmax]x[ymin,ymax] into core tiles; each tile is extended by margin for prediction, and results are collected only from the core."""
     xs = np.arange(xmin, xmax, tile)
     ys = np.arange(ymin, ymax, tile)
     tiles = []
@@ -669,9 +711,9 @@ def _node_classification_memory_safe(bg, n_neighbors):
     chunks_axis = max(2, int(math.ceil(math.sqrt(n_spots / target))))
     num_chunks = chunks_axis ** 2
     log.info(
-        f"[predict] 节点数 {n_spots:,} > {direct_max:,}，直接使用 "
-        f"{chunks_axis}x{chunks_axis}={num_chunks} 个分类子块"
-        f"（目标约 {target:,} nodes/chunk）"
+        f"[predict] node count {n_spots:,} > {direct_max:,}, directly using "
+        f"{chunks_axis}x{chunks_axis}={num_chunks} classification sub-chunks"
+        f" (target about {target:,} nodes/chunk)"
     )
 
     bg.pos_all = _get_pos(bg.spots_all)
@@ -692,9 +734,9 @@ def _node_classification_memory_safe(bg, n_neighbors):
 
 
 def predict_all_B(bg_train, seg_all, unseg_all):
-    """对全片分块跑 node_classification + cell_segmentation + cell_annotation。
-    每块内用训练好的模型(bg_train 的 trainer)。结果按核心区去重拼接。
-    BrGraph 构造严格用切片A版验证过的 br.BrGraph(关键字参数) 形式。"""
+    """Run node_classification + cell_segmentation + cell_annotation tile-by-tile over the whole section.
+    Each tile uses the trained model (bg_train's trainer). Results are deduplicated and concatenated by core region.
+    BrGraph construction strictly uses the br.BrGraph(keyword args) form verified in the section A version."""
     import Bering as br
     import torch
 
@@ -726,26 +768,27 @@ def predict_all_B(bg_train, seg_all, unseg_all):
         if feature_stats["excluded_features"] > 20:
             preview += ", ..."
         log.warning(
-            "[predict] 排除 %s 条训练子区未见转录本"
-            "（%d 个基因: %s）；已训练模型无法编码这些基因",
+            "[predict] excluding %s transcripts whose genes were unseen in the training sub-region"
+            " (%d genes: %s); the trained model cannot encode these genes",
             f"{len(unknown):,}", feature_stats["excluded_features"], preview,
         )
         seg_all = seg_all.loc[seg_known].copy()
         unseg_all = unseg_all.loc[unseg_known].copy()
 
     if len(seg_all) + len(unseg_all) == 0:
-        raise RuntimeError("预测数据中没有任何训练模型已见基因")
+        raise RuntimeError("no genes in the prediction data were seen by the trained model")
 
-    # 预测端前景种子的 raw_labels 占位(node_classification 会用模型预测覆盖它);
-    # 取训练标签集合里任一前景类即可。
+    # raw_labels placeholder for prediction-side foreground seeds (node_classification
+    # overwrites it with the model prediction); any foreground class in the training label
+    # set is fine.
     fg_labels = [l for l in bg_train.raw_labels if str(l) != "background"]
     placeholder_label = fg_labels[0] if fg_labels else "background"
 
     xmin, xmax = allxy["x"].min(), allxy["x"].max()
     ymin, ymax = allxy["y"].min(), allxy["y"].max()
     tiles = _make_tiles(xmin, xmax, ymin, ymax, CONFIG.TILE_SIZE_UM, CONFIG.TILE_MARGIN_UM)
-    log.info(f"[predict] 全片 x[{xmin:.0f},{xmax:.0f}] y[{ymin:.0f},{ymax:.0f}];"
-             f" 切成 {len(tiles)} 块(核心 {CONFIG.TILE_SIZE_UM}um + margin {CONFIG.TILE_MARGIN_UM}um)")
+    log.info(f"[predict] whole section x[{xmin:.0f},{xmax:.0f}] y[{ymin:.0f},{ymax:.0f}];"
+             f" cut into {len(tiles)} tiles (core {CONFIG.TILE_SIZE_UM}um + margin {CONFIG.TILE_MARGIN_UM}um)")
 
     results = []
     selected_resolutions = []
@@ -760,14 +803,16 @@ def predict_all_B(bg_train, seg_all, unseg_all):
             continue
         try:
             if len(seg_e) == 0:
-                # 块内没有任何已分配种子,跳过(否则建不了前景图)
+                # no assigned seed in this tile, skip (otherwise the foreground graph cannot be built)
                 n_skip += 1
                 n_no_seed += 1
                 continue
 
-            # 预测端建图:前景用本块 Xenium 已分配转录本当 coarse 种子(Bering 会重新分割,
-            # 这里只为建对象);raw_cells 重新 factorize 成整数,raw_labels 用占位(预测时被覆盖)。
-            # 严格复用切片A版 predict 的建表/建图写法。
+            # prediction-side graph build: the foreground uses this tile's Xenium-assigned
+            # transcripts as coarse seeds (Bering will re-segment; this is only to build the
+            # object); raw_cells is re-factorized into integers, raw_labels uses a placeholder
+            # (overwritten at prediction time).
+            # Strictly reuse the table/graph build pattern of the section A predict.
             extra_cols = [c for c in ("transcript_id", "original_gene") if c in seg_e.columns]
             df_seg = seg_e[["x", "y", "z", "features"] + extra_cols].copy()
             # Preserve the original coarse CellBin/Xenium seed separately from
@@ -782,7 +827,7 @@ def predict_all_B(bg_train, seg_all, unseg_all):
             df_unseg["seed_cell_id"] = "UNASSIGNED"
 
             bg = br.BrGraph(df_spots_seg=df_seg, df_spots_unseg=df_unseg, image=None, channels=None)
-            bg.use_settings(bg_train)  # 关键:搬训练好的 features/labels/trainer
+            bg.use_settings(bg_train)  # key: carry over the trained features/labels/trainer
             # Bering.use_settings() only updates ``n_labels`` but its node
             # classifier allocates by ``n_labels_raw``.  A prediction tile is
             # constructed with one placeholder label (2 classes including
@@ -812,20 +857,20 @@ def predict_all_B(bg_train, seg_all, unseg_all):
                 min_dominant_ratio=CONFIG.MIN_DOMINANT_RATIO,
             )
             if n_ok == 0:
-                log.info(f"[predict] cell_annotation 输出列(首个成功块): {list(df_res.columns)}")
+                log.info(f"[predict] cell_annotation output columns (first successful tile): {list(df_res.columns)}")
 
             cell_col = _resolve_col(
-                df_res, ["ensembled_cells", "predicted_cells", "cells", "cell_id", "cell"], "细胞ID")
+                df_res, ["ensembled_cells", "predicted_cells", "cells", "cell_id", "cell"], "cell ID")
             lbl_col = _resolve_col(
                 df_res, ["ensembled_labels", "predicted_labels", "predicted_node_labels",
-                         "labels", "cell_type"], "细胞类型")
+                         "labels", "cell_type"], "cell type")
 
-            # 只保留核心区结果(去重叠)
+            # keep only core-region results (deduplicate overlap)
             x0, x1, y0, y1 = core
             keep = (df_res["x"] >= x0) & (df_res["x"] < x1) & \
                    (df_res["y"] >= y0) & (df_res["y"] < y1)
             sub = df_res[keep].copy()
-            # 过滤未分配(cell==0)
+            # filter out unassigned (cell==0)
             sub = sub[sub[cell_col] != 0].copy()
             if len(sub) == 0:
                 if selected_resolution is not None:
@@ -833,7 +878,7 @@ def predict_all_B(bg_train, seg_all, unseg_all):
                 n_ok += 1
                 continue
 
-            # 全局唯一 cell_id:块号 + 局部cell号(避免不同块的局部编号冲突)
+            # globally unique cell_id: tile index + local cell id (avoid local-id clashes across tiles)
             sub["global_cell"] = f"t{ti}_" + sub[cell_col].astype(str)
 
             # New benchmark inputs carry transcript_id and original_gene as
@@ -877,14 +922,14 @@ def predict_all_B(bg_train, seg_all, unseg_all):
         except Exception as e:
             n_skip += 1
             n_failed += 1
-            log.exception(f"[predict] 块 {ti} 失败: {e}")
+            log.exception(f"[predict] tile {ti} failed: {e}")
             if getattr(CONFIG, "STRICT_TILE_ERRORS", False):
                 raise RuntimeError(
-                    f"预测块 {ti}/{len(tiles)} 失败；严格模式禁止输出缺块结果"
+                    f"prediction tile {ti}/{len(tiles)} failed; strict mode forbids outputting results with missing tiles"
                 ) from e
 
         if (ti + 1) % 20 == 0:
-            log.info(f"[predict] 进度 {ti+1}/{len(tiles)};成功 {n_ok} 跳过 {n_skip}")
+            log.info(f"[predict] progress {ti+1}/{len(tiles)}; success {n_ok} skipped {n_skip}")
 
     tile_stats = {
         "total": len(tiles),
@@ -899,29 +944,29 @@ def predict_all_B(bg_train, seg_all, unseg_all):
         key = str(value)
         resolution_counts[key] = resolution_counts.get(key, 0) + 1
     tile_stats["selected_leiden_resolution_counts"] = resolution_counts
-    log.info(f"[predict] 完成: {tile_stats}")
+    log.info(f"[predict] done: {tile_stats}")
     if not results:
-        raise RuntimeError("所有块都没有产出结果,检查数据/参数(看上面 cell_annotation 输出列日志)。")
+        raise RuntimeError("no tile produced results; check the data/parameters (see the cell_annotation output-column logs above).")
     df_out = pd.concat(results, axis=0, ignore_index=True)
     df_out.attrs["tile_stats"] = tile_stats
     df_out.attrs["feature_stats"] = feature_stats
     df_out.attrs["tile_cores"] = [list(core) for core, _ in tiles]
-    log.info(f"[predict] 拼接后 {len(df_out):,} 条转录本被分配到 {df_out['cell_id'].nunique():,} 个细胞")
+    log.info(f"[predict] after concatenation {len(df_out):,} transcripts assigned to {df_out['cell_id'].nunique():,} cells")
     return df_out
 
 
 # ============================================================================
-# 导出三件套
+# export the three output files
 # ============================================================================
 def export_assignments(df_out: pd.DataFrame, outdir: Path):
     """sliceB_transcript_assignments.csv: transcript_id, cell_id, gene, x, y"""
     cols = ["transcript_id", "cell_id", "gene", "x", "y"]
     df_out[cols].to_csv(outdir / "sliceB_transcript_assignments.csv", index=False)
-    log.info(f"[out] sliceB_transcript_assignments.csv ({len(df_out):,} 行)")
+    log.info(f"[out] sliceB_transcript_assignments.csv ({len(df_out):,} rows)")
 
 
 def export_cell_table(df_out: pd.DataFrame, outdir: Path):
-    """sliceB_cells.csv: 每个细胞的质心坐标矩阵 + 计数 + 类型。"""
+    """sliceB_cells.csv: centroid coordinate matrix + counts + type per cell."""
     g = df_out.groupby("cell_id")
     agg = g.agg(
         cx=("x", "mean"),
@@ -929,29 +974,29 @@ def export_cell_table(df_out: pd.DataFrame, outdir: Path):
         n_transcripts=("transcript_id", "size"),
         n_genes=("gene", "nunique"),
     ).reset_index()
-    # 细胞类型:取该细胞内多数转录本的 cell_type
+    # cell type: take the majority cell_type of the transcripts within the cell
     ctype = g["cell_type"].agg(lambda s: s.value_counts().index[0]).reset_index()
     ctype.columns = ["cell_id", "cell_type"]
     cells = agg.merge(ctype, on="cell_id", how="left")
     cells.to_csv(outdir / "sliceB_cells.csv", index=False)
-    log.info(f"[out] sliceB_cells.csv ({len(cells):,} 个细胞;含质心坐标矩阵 cx,cy)")
+    log.info(f"[out] sliceB_cells.csv ({len(cells):,} cells; with centroid coordinate matrix cx,cy)")
     return cells
 
 
 def export_boundaries(df_out: pd.DataFrame, outdir: Path):
-    """sliceB_cell_boundaries.csv: 每个细胞成员转录本的凸包边界顶点。
-    格式 cell_id, vertex_order, x, y(按多边形顺序),便于你画 cell boundary。"""
+    """sliceB_cell_boundaries.csv: convex-hull boundary vertices of each cell's member transcripts.
+    Format cell_id, vertex_order, x, y (in polygon order), for drawing cell boundaries."""
     if not CONFIG.EXPORT_BOUNDARIES:
         return
     try:
         from scipy.spatial import ConvexHull
     except Exception as e:
-        log.warning(f"[out] 无 scipy.spatial.ConvexHull,跳过边界导出: {e}")
+        log.warning(f"[out] no scipy.spatial.ConvexHull, skipping boundary export: {e}")
         return
 
     rows = []
     n_cells = df_out["cell_id"].nunique()
-    log.info(f"[out] 计算 {n_cells:,} 个细胞的凸包边界 ...")
+    log.info(f"[out] computing convex-hull boundaries for {n_cells:,} cells ...")
     for cid, sub in df_out.groupby("cell_id"):
         pts = sub[["x", "y"]].values
         if len(pts) < CONFIG.MIN_BOUNDARY_PTS:
@@ -959,16 +1004,16 @@ def export_boundaries(df_out: pd.DataFrame, outdir: Path):
         try:
             hull = ConvexHull(pts)
         except Exception:
-            continue  # 共线/重复点
-        verts = pts[hull.vertices]  # 逆时针顺序
+            continue  # collinear/duplicate points
+        verts = pts[hull.vertices]  # counter-clockwise order
         for order, (vx, vy) in enumerate(verts):
             rows.append((cid, order, float(vx), float(vy)))
     if not rows:
-        log.warning("[out] 没有可用的细胞边界(可能细胞普遍太小)。")
+        log.warning("[out] no usable cell boundaries (cells may be generally too small).")
         return
     bdf = pd.DataFrame(rows, columns=["cell_id", "vertex_order", "x", "y"])
     bdf.to_csv(outdir / "sliceB_cell_boundaries.csv", index=False)
-    log.info(f"[out] sliceB_cell_boundaries.csv ({bdf['cell_id'].nunique():,} 个细胞的多边形)")
+    log.info(f"[out] sliceB_cell_boundaries.csv ({bdf['cell_id'].nunique():,} cells' polygons)")
 
 
 def summarize(df_out: pd.DataFrame, n_input_tx: int, outdir: Path):
@@ -981,9 +1026,11 @@ def summarize(df_out: pd.DataFrame, n_input_tx: int, outdir: Path):
         "median_transcripts_per_cell": float(g.median()),
         "mean_transcripts_per_cell": float(g.mean()),
         "method_note": (
-            "Bering 是分割精修器(refinement):使用切片B的 Xenium 初始分割(transcripts.cell_id) "
-            "作为粗分配 raw_cells、16类注释(group)作为 raw_labels 进行监督训练。"
-            "与 Baysor/Proseg/BIDCell 等无参考/弱参考方法横向比较时,需在 Methods 中声明此起跑线差异。"
+            "Bering is a segmentation refiner (refinement): it uses section B's Xenium initial "
+            "segmentation (transcripts.cell_id) as the coarse assignment raw_cells and the "
+            "16-class annotation (group) as raw_labels for supervised training."
+            "When comparing horizontally against reference-free/weak-reference methods such as "
+            "Baysor/Proseg/BIDCell, this difference in starting point must be stated in Methods."
         ),
     }
     with open(outdir / "run_summary.json", "w") as f:
@@ -998,7 +1045,7 @@ def summarize(df_out: pd.DataFrame, n_input_tx: int, outdir: Path):
 def main():
     np.random.seed(CONFIG.SEED)
 
-    # GPU + 显存碎片缓解 + 显存统计补丁(必须在任何 torch/Bering 导入前)
+    # GPU + memory-fragmentation mitigation + memory-stat patch (must run before any torch/Bering import)
     if CONFIG.CUDA_VISIBLE_DEVICES != "":
         os.environ["CUDA_VISIBLE_DEVICES"] = str(CONFIG.CUDA_VISIBLE_DEVICES)
         log.info(f"CUDA_VISIBLE_DEVICES = {CONFIG.CUDA_VISIBLE_DEVICES}")
@@ -1009,38 +1056,38 @@ def main():
     outdir = Path(CONFIG.OUTDIR).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # 1) 读 + 预处理 + 贴标签 + 切前景/背景
+    # 1) read + preprocess + attach labels + split foreground/background
     df = load_and_preprocess()
     n_input_tx = len(df)
     df = attach_labels(df)
     seg_all, unseg_all = split_seg_unseg(df)
 
-    # 2) 选训练子块
+    # 2) select the training sub-tile
     seg_t, unseg_t, _ = select_train_tile(seg_all, unseg_all)
 
-    # 3) chdir 到工作目录(Bering 写死相对路径 figures/),预建子目录
+    # 3) chdir to the working directory (Bering hard-codes the relative figures/ path), pre-create subdirs
     work_dir = outdir / "bering_work"
     for sub in ("figures", "checkpoints", "models"):
         (work_dir / sub).mkdir(parents=True, exist_ok=True)
     os.chdir(work_dir)
-    log.info(f"工作目录已切到 {work_dir}(Bering 的 figures/ 等相对产物落这里)")
+    log.info(f"working directory switched to {work_dir} (Bering's figures/ etc. relative outputs land here)")
 
-    # 4) 训练 (若有缓存且 USE_CACHED_TRAIN=True 则跳过)
+    # 4) train (skip if a cache exists and USE_CACHED_TRAIN=True)
     bg_train = _try_load_cached_bg_train()
     if bg_train is None:
         bg_train = train_on_B(seg_t, unseg_t)
         _save_bg_train_cache(bg_train)
 
-    # 5) 全片预测
+    # 5) predict on the whole section
     df_out = predict_all_B(bg_train, seg_all, unseg_all)
 
-    # 6) 导出三件套 + summary(写到绝对 outdir)
+    # 6) export the three output files + summary (written to the absolute outdir)
     export_assignments(df_out, outdir)
     export_cell_table(df_out, outdir)
     export_boundaries(df_out, outdir)
     summarize(df_out, n_input_tx, outdir)
 
-    log.info(f"全部完成。输出在 {outdir}")
+    log.info(f"all done. output in {outdir}")
 
 
 if __name__ == "__main__":

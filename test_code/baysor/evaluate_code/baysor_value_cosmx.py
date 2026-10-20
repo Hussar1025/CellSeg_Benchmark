@@ -44,7 +44,7 @@ from sklearn.neighbors import NearestNeighbors
 EPS = 1e-12
 VERSION = "2026.09.21-cosmx-baysor-subset-v1"
 PIXEL_SIZE_UM = 0.1203
-OUTPUT_DIR = Path("/data/qiuyijia/eval/baysor")
+OUTPUT_DIR = Path("yourpath/eval/baysor")
 EXCLUDED_GENE_PREFIXES = (
     "SystemControl", "Negative", "NegPrb", "Neg_", "FalseCode", "Blank",
     "UnassignedCodeword", "DeprecatedCodeword", "GenomicControl",
@@ -80,10 +80,10 @@ HUMAN_FOVS = (
 DATASETS: Dict[str, DatasetSpec] = {
     "human_brain": DatasetSpec(
         name="human_brain",
-        baysor_dir="/data/qiuyijia/baysor/cosmx_human_brain",
-        metadata_path="/data/qiuyijia/dataset/cosmx_human_brain/S0_metadata_file.csv.gz",
+        baysor_dir="yourpath/baysor/cosmx_human_brain",
+        metadata_path="yourpath/dataset/cosmx_human_brain/S0_metadata_file.csv.gz",
         transcript_path=(
-            "/data/qiuyijia/dataset/cosmx_human_brain/_inspect_cache/"
+            "yourpath/dataset/cosmx_human_brain/_inspect_cache/"
             "tx_fov_4_18_51_52_56_65_74_87_90_101_104_110_124_131_147_"
             "173_187_220_224_234_242_250_255_256_264_296_298_307_339.parquet"
         ),
@@ -91,13 +91,13 @@ DATASETS: Dict[str, DatasetSpec] = {
     ),
     "lymph_fov48_261": DatasetSpec(
         name="lymph_fov48_261",
-        baysor_dir="/data/qiuyijia/baysor/cosmx_lymph_fov48_261",
+        baysor_dir="yourpath/baysor/cosmx_lymph_fov48_261",
         metadata_path=(
-            "/data/qiuyijia/dataset/cosmx_lymph_node/flat_files/"
+            "yourpath/dataset/cosmx_lymph_node/flat_files/"
             "S0_metadata_file.csv.gz"
         ),
         transcript_path=(
-            "/data/qiuyijia/dataset/cosmx_lymph_node/_inspect_cache/"
+            "yourpath/dataset/cosmx_lymph_node/_inspect_cache/"
             "tx_fov_48_261.parquet"
         ),
         fovs=(48, 261),

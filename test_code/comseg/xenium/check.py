@@ -2,27 +2,27 @@
 # -*- coding: utf-8 -*-
 """
 comseg_recentroid_xenium_3.py
-从 ComSeg h5ad 的 uns['df_spots'] 重算质心，摆脱 landmark 继承
+Recompute centroids from uns['df_spots'] in the ComSeg h5ad, avoiding landmark inheritance.
 
-v2 修复: anndata 保存 DataFrame 到 uns 时会拆成 dict of arrays，
-        直接 pd.DataFrame(dict) 会因混入标量而报
-        "If using all scalar values, you must pass an index"。
-        现在先剥掉标量项、对齐长度，再构建 DataFrame。
-        若 uns 不可用，自动回退到外部 tx.csv。
+v2 fix: anndata splits a DataFrame saved to uns into a dict of arrays,
+        so pd.DataFrame(dict) fails with mixed scalars:
+        "If using all scalar values, you must pass an index".
+        Now drop scalar entries and align lengths before building the DataFrame.
+        If uns is unusable, fall back to the external tx.csv.
 
-只改评估代码，不动 ComSeg 源码。
+Only evaluation code changes; ComSeg source is untouched.
 """
 import argparse, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
-PRED = ("/data/qiuyijia/comseg_xenium/xenium_lymph/output_noprior/"
+PRED = ("yourpath/comseg_xenium/xenium_lymph/output_noprior/"
         "xenium_lymph_top300_noprior_mmc0p99.h5ad")
-TX_CSV = ("/data/qiuyijia/comseg_xenium/xenium_lymph/cache_noprior/"
+TX_CSV = ("yourpath/comseg_xenium/xenium_lymph/cache_noprior/"
           "xenium_lymph_top300_noprior_tx.csv")
-GT_CELLS = "/data/qiuyijia/dataset/xenium_roi_crop/cells.parquet"
-OUT = "/data/qiuyijia/eval_results_qv20/lymph"
+GT_CELLS = "yourpath/dataset/xenium_roi_crop/cells.parquet"
+OUT = "yourpath/eval_results_qv20/lymph"
 DATASET = "xenium_3"
 
 
@@ -31,8 +31,8 @@ def log(m):
 
 
 def uns_to_frame(obj):
-    """把 anndata uns 里的 df_spots 还原成 DataFrame。
-    可能是 DataFrame / dict of arrays / structured ndarray / recarray。"""
+    """Rebuild df_spots from anndata uns as a DataFrame.
+    May be a DataFrame / dict of arrays / structured ndarray / recarray."""
     if isinstance(obj, pd.DataFrame):
         return obj
     if isinstance(obj, np.ndarray) and obj.dtype.names:
@@ -43,10 +43,10 @@ def uns_to_frame(obj):
             v = obj[k]
             arr = np.asarray(v)
             if arr.ndim == 0:
-                log(f"    [跳过标量项] {k} = {arr}")
+                log(f"    [Skip scalar] {k} = {arr}")
                 continue
             if arr.ndim > 1:
-                log(f"    [跳过多维项] {k} shape={arr.shape}")
+                log(f"    [Skip ndim>1] {k} shape={arr.shape}")
                 continue
             cols[k] = arr
             lens.append(len(arr))
@@ -56,8 +56,8 @@ def uns_to_frame(obj):
         keep = {k: v for k, v in cols.items() if len(v) == n}
         drop = set(cols) - set(keep)
         if drop:
-            log(f"    [长度不符，丢弃] {sorted(drop)}")
-        log(f"    还原 DataFrame: {n:,} 行 x {len(keep)} 列")
+            log(f"    [length mismatch, dropped] {sorted(drop)}")
+        log(f"    rebuilt DataFrame: {n:,} rows x {len(keep)} columns")
         return pd.DataFrame(keep)
     return None
 
@@ -73,7 +73,7 @@ def pick(cols, cands):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pred", default=PRED)
-    ap.add_argument("--spots", default="", help="外部 tx.csv，留空则优先用 uns")
+    ap.add_argument("--spots", default="", help="external tx.csv; when empty, prefer uns")
     ap.add_argument("--gt-cells", default=GT_CELLS)
     ap.add_argument("--match-radius", type=float, default=0.0)
     ap.add_argument("--out", default=OUT)
@@ -83,40 +83,40 @@ def main():
     from scipy.spatial import cKDTree
 
     log("=" * 74)
-    log(f"ComSeg @ {DATASET} —— 重算质心")
+    log(f"ComSeg @ {DATASET} - recompute centroids")
     log("=" * 74)
 
     sp = None
     if not a.spots:
         A = ad.read_h5ad(a.pred)
-        log(f"\n预测 h5ad: {A.n_obs:,} cells x {A.n_vars:,} genes")
-        log(f"  uns 键: {list(A.uns.keys())}")
+        log(f"\npredicted h5ad: {A.n_obs:,} cells x {A.n_vars:,} genes")
+        log(f"  uns keys: {list(A.uns.keys())}")
         if "df_spots" in A.uns:
-            log("  解析 uns['df_spots'] ...")
+            log("  parsing uns['df_spots'] ...")
             raw = A.uns["df_spots"]
-            log(f"    类型: {type(raw).__name__}")
+            log(f"    type: {type(raw).__name__}")
             if hasattr(raw, "keys"):
-                log(f"    键: {list(raw.keys())}")
+                log(f"    keys: {list(raw.keys())}")
             sp = uns_to_frame(raw)
 
     if sp is None or len(sp) == 0:
         src = a.spots or TX_CSV
-        log(f"\n  uns 不可用，改读外部文件: {src}")
+        log(f"\n  uns unavailable; reading external file: {src}")
         if not Path(src).exists():
-            sys.exit(f"✗ 不存在: {src}")
+            sys.exit(f"not found: {src}")
         sp = pd.read_csv(src)
-        log(f"  {len(sp):,} 行")
+        log(f"  {len(sp):,} rows")
 
-    log(f"\ndf_spots: {len(sp):,} 行")
-    log(f"  列: {list(sp.columns)}")
+    log(f"\ndf_spots: {len(sp):,} rows")
+    log(f"  columns: {list(sp.columns)}")
 
     cx = pick(sp.columns, ["x", "global_x", "x_location", "centroid_x"])
     cy = pick(sp.columns, ["y", "global_y", "y_location", "centroid_y"])
     cc = pick(sp.columns, ["cell_index", "cell", "cell_id", "index_commu",
                            "cell_label", "label", "comseg"])
     if not (cx and cy and cc):
-        sys.exit(f"✗ 缺坐标或 cell 列。实际: {list(sp.columns)}")
-    log(f"  用列: x={cx}  y={cy}  cell={cc}")
+        sys.exit(f"missing coordinate or cell column. Actual: {list(sp.columns)}")
+    log(f"  using columns: x={cx}  y={cy}  cell={cc}")
 
     d = sp.copy()
     d[cc] = pd.to_numeric(d[cc], errors="coerce")
@@ -124,14 +124,14 @@ def main():
     d[cy] = pd.to_numeric(d[cy], errors="coerce")
     d = d.dropna(subset=[cx, cy, cc])
     d = d[d[cc] > 0]
-    log(f"  已分配 {len(d):,} / {len(sp):,} "
+    log(f"  assigned {len(d):,} / {len(sp):,} "
         f"({len(d)/max(len(sp),1)*100:.1f}%)")
     if len(d) == 0:
-        sys.exit("✗ 没有已分配的转录本")
+        sys.exit("no assigned transcripts")
 
     grp = d.groupby(cc).agg(x=(cx, "mean"), y=(cy, "mean"), n=(cx, "size"))
-    log(f"\n重算质心: {len(grp):,} cells")
-    log(f"  每细胞转录本 中位 {grp.n.median():.0f}  均值 {grp.n.mean():.0f}")
+    log(f"\nrecomputed centroids: {len(grp):,} cells")
+    log(f"  transcripts per cell  median {grp.n.median():.0f}  mean {grp.n.mean():.0f}")
     log(f"  x[{grp.x.min():.2f},{grp.x.max():.2f}] "
         f"y[{grp.y.min():.2f},{grp.y.max():.2f}]")
 
@@ -143,9 +143,9 @@ def main():
                 oy = np.sort(A2.obs["centroid_y"].to_numpy(float))
                 dd0 = np.hypot(np.sort(grp.x.to_numpy()) - ox,
                                np.sort(grp.y.to_numpy()) - oy)
-                log(f"  与 h5ad landmark 质心的差 中位 {np.median(dd0):.4f} um")
+                log(f"  difference vs h5ad landmark centroid  median {np.median(dd0):.4f} um")
                 if np.median(dd0) < 1e-3:
-                    log("  ★ 与 landmark 相同 -> df_spots 坐标也来自 prior")
+                    log("  same as landmark -> df_spots coordinates also come from the prior")
         except Exception:
             pass
 
@@ -161,7 +161,7 @@ def main():
     g = gt[m]
     area = (px.max() - px.min() + 2 * pad) * (py.max() - py.min() + 2 * pad)
     r = a.match_radius or float(np.sqrt(area / max(len(g), 1)))
-    log(f"ROI 内 GT {len(g):,}   匹配半径 {r:.2f} um")
+    log(f"GT in ROI {len(g):,}   match radius {r:.2f} um")
 
     gxy = g[["x_centroid", "y_centroid"]].to_numpy(float)
     pxy = np.c_[px, py]
@@ -191,12 +191,12 @@ def main():
     log("=" * 74)
 
     if np.median(dist) < 1e-6:
-        log("★ 重算后仍全为 0 -> 转录本坐标本身来自 prior landmark，")
-        log("  ComSeg 在 noprior 配置下没有独立的空间信息。")
-        log("  结论: ComSeg 的 detection/localization 全平台不可用，")
-        log("        只报 assignment/count/vector 指标。")
+        log("still all zero after recomputation -> transcript coordinates themselves come from the prior landmark,")
+        log("  so ComSeg has no independent spatial information in the noprior configuration.")
+        log("  conclusion: ComSeg detection/localization is unusable on all platforms;")
+        log("        report only assignment/count/vector metrics.")
     else:
-        log("✓ 有了非零定位误差，这是 ComSeg 真实的 detection 表现。")
+        log("non-zero localization error -> this is ComSeg's real detection performance.")
 
     Path(a.out).mkdir(parents=True, exist_ok=True)
     pd.DataFrame([dict(
@@ -209,7 +209,7 @@ def main():
         loc_p95_um=float(np.percentile(dist, 95)),
         match_radius_um=r,
         tx_per_cell_median=float(grp.n.median()),
-        note="质心由转录本按 cell 分组重算，未用 obs 的 landmark 质心"
+        note="centroids recomputed from transcripts grouped by cell; obs landmark centroids not used"
     )]).to_csv(f"{a.out}/comseg_{DATASET}_recentroid.csv", index=False)
     log(f"\n-> {a.out}/comseg_{DATASET}_recentroid.csv")
 

@@ -1,24 +1,22 @@
 #!/usr/bin/env python
 """
-Cellist × Stereo-seq 评估
+Cellist x Stereo-seq evaluation
 
-===== 循环性说明（重要）=====
-· GT = GEM 的 cell 列（CellBin 官方分割）
-· Cellist 的核先验 = ssDNA 图上独立跑的 Cellpose，与 CellBin 完全独立
-  → 本评估【不循环】，19 项指标全部有效
-· 对比：UCS（nuclei_mask = CellBin 栅格化）、ProSeg（prior = CellBin）
-  这两个的高分是先验泄漏，Cellist 的分数才是真实可比的
+Circularity note:
+- GT = GEM's cell column (CellBin official segmentation)
+- Cellist nucleus prior = Cellpose run independently on ssDNA image,
+  fully independent of CellBin -> this evaluation is non-circular.
+- By contrast UCS (nuclei_mask = rasterized CellBin) and ProSeg (prior =
+  CellBin) benefit from prior leakage; Cellist's score is genuinely comparable.
 
-===== 坐标系 =====
-GEM x/y 是 bin 单位，1 bin = 0.5 µm（Stereo-seq DNB 间距）
+Coordinate system: GEM x/y are in bin units, 1 bin = 0.5 um (Stereo-seq DNB pitch).
 
-===== 已知的两个坑（都在这版里修了）=====
-· cell_count.h5 的 barcodes 是【乱序】的 cell ID 字符串，
-  必须建 {cell_id: 列号} 映射，不能用位置索引
-  （淋巴结上这个 bug 曾让 vec_cosine 从 0.777 掉到 0.199）
-· 10X h5 是 CSC 布局：matrix 是 genes×cells，取细胞向量要取【列】
+Two known pitfalls fixed here:
+- cell_count.h5 barcodes are unordered cell ID strings; a {cell_id: column}
+  mapping is required, not positional indexing.
+- 10X h5 uses CSC layout: matrix is genes x cells, so a cell vector is a column.
 
-用法：
+Usage:
   python cellist_stereo_1.py --dataset E16.5_E2S6
   python cellist_stereo_1.py --dataset E16.5_E2S6 --resolution 0.5
 """
@@ -39,29 +37,27 @@ warnings.filterwarnings("ignore")
 SEP = "=" * 68
 P = lambda *a: print(*a, flush=True)
 
-DATA_DIR = "/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all"
-CELLIST_BASE = "/data/qiuyijia/cellist/stereo"
-OUT_CSV = "/data/qiuyijia/eval_results/cellist/stereo.csv"
+DATA_DIR = "yourpath"
+CELLIST_BASE = "yourpath"
+OUT_CSV = "yourpath"
 
 DATASETS = {
     "E16.5_E2S6": dict(
-        gem=f"{DATA_DIR}/E16.5_E2S6_Dorsal_Midbrain_GEM_CellBin.tsv.gz",
+        gem="yourpath",
         gt_cells=6229),
     "E14.5_E1S3": dict(
-        gem=f"{DATA_DIR}/E14.5_E1S3_Dorsal_Midbrain_GEM_CellBin.tsv.gz",
+        gem="yourpath",
         gt_cells=4872),
     "E16.5_E2S7": dict(
-        gem=f"{DATA_DIR}/E16.5_E2S7_Dorsal_Midbrain_GEM_CellBin.tsv.gz",
+        gem="yourpath",
         gt_cells=7960),
 }
 
 
-# ══════════════════════════════════════════════════════════════════════════
-#  GEM（含官方 cell 列 = 逐转录本 GT）
-# ══════════════════════════════════════════════════════════════════════════
+# GEM (with official cell column = per-transcript GT)
 def load_gem(dataset):
     gem_path = DATASETS[dataset]["gem"]
-    P(f"  读 GEM {os.path.basename(gem_path)} ...")
+    P(f"  Reading GEM {os.path.basename(gem_path)} ...")
     gem = pd.read_csv(gem_path, sep="\t", compression="gzip")
     ren = {}
     for c in gem.columns:
@@ -78,11 +74,11 @@ def load_gem(dataset):
             ren[c] = "cell"
     gem = gem.rename(columns=ren)
     gem["geneID"] = gem["geneID"].astype("category")
-    P(f"    {len(gem):,} 行  {gem.geneID.nunique():,} 基因  "
+    P(f"    {len(gem):,} rows  {gem.geneID.nunique():,} genes  "
       f"x[{gem.x.min()},{gem.x.max()}] y[{gem.y.min()},{gem.y.max()}]")
     inc = gem.cell > 0
-    P(f"    有 cell 归属 {int(inc.sum()):,} 行 ({inc.mean()*100:.1f}%)  "
-      f"CellBin 细胞 {gem.loc[inc,'cell'].nunique():,}")
+    P(f"    rows with a cell label {int(inc.sum()):,} ({inc.mean()*100:.1f}%)  "
+      f"CellBin cells {gem.loc[inc,'cell'].nunique():,}")
     return gem
 
 
@@ -93,21 +89,17 @@ def gt_centroids(gem, resolution):
         n_row=("x", "size"), n_umi=("MIDCounts", "sum")).reset_index()
     med_row = float(cen.n_row.median())
     d_bin = 2 * np.sqrt(med_row / np.pi)
-    P(f"\n  GT {len(cen):,} 细胞")
-    P(f"    每细胞 spot 中位 {med_row:.0f}  UMI 中位 {cen.n_umi.median():.0f}")
-    P(f"    经验直径 {d_bin:.1f} bin = {d_bin*resolution:.1f} µm "
-      f"@ {resolution} µm/bin")
+    P(f"\n  GT {len(cen):,} cells")
+    P(f"    median spots/cell {med_row:.0f}  median UMI {cen.n_umi.median():.0f}")
+    P(f"    empirical diameter {d_bin:.1f} bin = {d_bin*resolution:.1f} um "
+      f"@ {resolution} um/bin")
     return cen
 
 
-# ══════════════════════════════════════════════════════════════════════════
-#  Cellist 预测
-# ══════════════════════════════════════════════════════════════════════════
+# Cellist predictions
 def find_cellist_output(dataset, explicit_dir=None):
-    """
-    找 cell_coord.txt / cell_count.h5。优先用显式给的目录，
-    否则在 CELLIST_BASE 下按数据集名或默认 stereo 目录搜索。
-    """
+    """Locate cell_coord.txt / cell_count.h5; explicit dir first, else search
+    under CELLIST_BASE by dataset name or the default stereo directory."""
     search_roots = []
     if explicit_dir:
         search_roots.append(explicit_dir)
@@ -130,7 +122,7 @@ def load_pred(coord_file):
         return None
     return pd.DataFrame({
         "cell": df["Cellist"].values.astype(float),
-        "x": df["x"].values.astype(float),      # barcoding 模式 = bin 单位
+        "x": df["x"].values.astype(float),      # barcoding mode = bin units
         "y": df["y"].values.astype(float),
         "nSpot": df["nSpot"].values if "nSpot" in df.columns else np.nan,
     })
@@ -138,10 +130,9 @@ def load_pred(coord_file):
 
 def load_expr(h5_file):
     """
-    cell_count.h5 → (CSC genes×cells, 基因名, {cell_id: 列号})
+    cell_count.h5 -> (CSC genes x cells, gene names, {cell_id: column})
 
-    ★ barcodes 是乱序 cell ID，必须建 ID→列号 映射
-      （淋巴结上用位置索引让 vec_cosine 从 0.777 掉到 0.199）
+    Barcodes are unordered cell IDs; an ID -> column mapping is required.
     """
     if h5_file is None or not os.path.exists(h5_file):
         return None, None, None
@@ -162,14 +153,12 @@ def load_expr(h5_file):
     return mat, genes, id2col
 
 
-# ══════════════════════════════════════════════════════════════════════════
-#  评估
-# ══════════════════════════════════════════════════════════════════════════
+# Evaluation
 def evaluate(dataset, coord_file, h5_file, gem, cen, resolution,
             match_um, vec_sample):
     pred = load_pred(coord_file)
     if pred is None or pred.empty:
-        P("  ✘ 预测为空"); return None
+        P("  FAIL: prediction is empty"); return None
 
     R_bin = match_um / resolution
     AR_bin = R_bin * 1.5
@@ -177,7 +166,7 @@ def evaluate(dataset, coord_file, h5_file, gem, cen, resolution,
 
     if (pred.x.max() < cen.cx.min() or pred.x.min() > cen.cx.max() or
             pred.y.max() < cen.cy.min() or pred.y.min() > cen.cy.max()):
-        P(f"  ✘ 坐标范围不重叠！pred x[{pred.x.min():.0f},{pred.x.max():.0f}] "
+        P(f"  FAIL: coordinate ranges do not overlap! pred x[{pred.x.min():.0f},{pred.x.max():.0f}] "
           f"vs GT x[{cen.cx.min():.0f},{cen.cx.max():.0f}]")
         return None
 
@@ -200,7 +189,7 @@ def evaluate(dataset, coord_file, h5_file, gem, cen, resolution,
     f1 = 2*prec*rec/(prec+rec) if prec+rec else 0.0
     sh_bin = np.array([p[2] for p in pairs]) if pairs else np.array([np.nan])
     sh_um = sh_bin * resolution
-    P(f"\n  匹配 {n_match:,} / GT {n_gt:,} / 预测 {n_pred:,}")
+    P(f"\n  matched {n_match:,} / GT {n_gt:,} / pred {n_pred:,}")
     P(f"  P={prec:.4f} R={rec:.4f} F1={f1:.4f}")
 
     txy = gem[["x", "y"]].values.astype(float)
@@ -222,7 +211,7 @@ def evaluate(dataset, coord_file, h5_file, gem, cen, resolution,
         cr = float(np.sqrt(np.mean((pc[m]-gc[m])**2)))
     else:
         cp = cs = cm = cr = np.nan
-    P(f"  计数相关 Pearson={cp}")
+    P(f"  count correlation Pearson={cp}")
 
     vc = vj = vp = np.nan
     n_valid = 0
@@ -262,8 +251,8 @@ def evaluate(dataset, coord_file, h5_file, gem, cen, resolution,
                 vc = float(np.mean(cos_l))
                 vj = float(np.nanmean(js_l))
                 vp = float(np.mean(pr_l)) if pr_l else np.nan
-    P(f"  基因向量 cosine={vc}  有效对 {n_valid:,}"
-      f"{'  （无h5文件，指标置NaN）' if mat is None else ''}")
+    P(f"  gene vector cosine={vc}  valid pairs {n_valid:,}"
+      f"{'  (no h5 file, metrics set to NaN)' if mat is None else ''}")
 
     row2gt = {p[0]: cen.cell.iloc[p[1]] for p in pairs}
     has_gt = gem.cell.values > 0
@@ -276,7 +265,7 @@ def evaluate(dataset, coord_file, h5_file, gem, cen, resolution,
         acc = float(umi[both_m][agree].sum() / w_both)
     else:
         overlap = acc = np.nan
-    P(f"  分配一致性 accuracy={acc}")
+    P(f"  assignment consistency accuracy={acc}")
 
     rnd = lambda v, n=4: round(float(v), n) if v == v else np.nan
     return dict(
@@ -299,27 +288,28 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="E16.5_E2S6", choices=list(DATASETS))
     ap.add_argument("--resolution", type=float, default=0.5,
-                    help="µm per bin（Stereo-seq DNB 间距 500nm）")
+                    help="um per bin (Stereo-seq DNB pitch 500nm)")
     ap.add_argument("--match-radius-um", type=float, default=13.0,
-                    help="匹配半径 µm（GT 经验直径约 13µm）")
+                    help="match radius in um (GT empirical diameter ~13um)")
     ap.add_argument("--vec-sample", type=int, default=2000)
     ap.add_argument("--coord-dir", default=None,
-                    help="显式指定 Cellist 输出所在目录；不给则自动搜索")
+                    help="explicit Cellist output directory; auto-searched if omitted")
     ap.add_argument("--out", default=OUT_CSV)
     a = ap.parse_args()
 
-    P(SEP); P(f"Cellist × Stereo-seq 评估 —— {a.dataset}"); P(SEP)
-    P(f"  resolution {a.resolution} µm/bin   "
-      f"匹配半径 {a.match_radius_um} µm = {a.match_radius_um/a.resolution:.0f} bin")
-    P(f"  ★ 不循环：Cellist 核先验 = ssDNA 上独立跑的 Cellpose，与 CellBin 独立")
+    P(SEP); P(f"Cellist x Stereo-seq evaluation -- {a.dataset}"); P(SEP)
+    P(f"  resolution {a.resolution} um/bin   "
+      f"match radius {a.match_radius_um} um = {a.match_radius_um/a.resolution:.0f} bin")
+    P(f"  non-circular: Cellist nucleus prior = Cellpose run independently on ssDNA, "
+      f"independent of CellBin")
 
     coord_file, h5_file = find_cellist_output(a.dataset, a.coord_dir)
     if coord_file is None:
-        P(f"\n  ✘ 找不到 {a.dataset} 的 Cellist 输出，"
-          f"检查 {CELLIST_BASE} 或用 --coord-dir 显式指定")
+        P(f"\n  FAIL: Cellist output for {a.dataset} not found; "
+          f"check {CELLIST_BASE} or pass --coord-dir explicitly")
         return
     P(f"\n  coord: {coord_file}")
-    P(f"  h5:    {h5_file if h5_file else '(未找到，vec指标将为NaN)'}")
+    P(f"  h5:    {h5_file if h5_file else '(not found, vec metrics will be NaN)'}")
 
     gem = load_gem(a.dataset)
     cen = gt_centroids(gem, a.resolution)
@@ -334,13 +324,13 @@ def main():
         if a.dataset != "E16.5_E2S6" else a.out
     pd.DataFrame([res]).to_csv(out_ds, index=False)
 
-    P(f"\n{SEP}\n最终结果 (Cellist × {a.dataset})\n{SEP}")
+    P(f"\n{SEP}\nFinal result (Cellist x {a.dataset})\n{SEP}")
     for k, v in res.items():
         if k not in ("method", "dataset"):
             P(f"  {k:22} {v}")
-    P(f"\n  已写 → {out_ds}")
-    P(f"  注：逐转录本 GT 来自 GEM 的 cell 列（CellBin 官方），"
-      f"assign 指标最可靠")
+    P(f"\n  written -> {out_ds}")
+    P(f"  note: per-transcript GT comes from GEM's cell column (CellBin official); "
+      f"assign metrics are the most reliable")
 
 
 if __name__ == "__main__":

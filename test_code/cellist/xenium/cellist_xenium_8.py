@@ -3,16 +3,15 @@
 """
 cellist_xenium.py
 =======================================================================
-Cellist on centered Xenium ROIs (liver / mouse brain), built on the same
-pattern as your CosMx scripts: Python API for the nucleus step, output
-validation, incremental summary TSV, DONE/FAILED flags, logging.
+Cellist on centered Xenium ROIs (liver / mouse brain), same pattern as
+the CosMx scripts: Python API for the nucleus step, output validation,
+incremental summary TSV, DONE/FAILED flags, logging.
 
 Stages
 ------
   prep    ROI DAPI tif + transcripts gem (tsv.gz) in ONE pixel space,
           plus the platform cell count in the ROI as a GT reference
   grid    sweep diameter / cellprob / flow, scored against that GT count
-          (the analogue of your param_test script)
   seg     Cellpose nucleus step -> cellist seg -> raster -> counts -> QC
   all     prep + seg
   report  QC only
@@ -24,35 +23,26 @@ Usage
   python cellist_xenium.py --dataset liver --stage seg \\
       --nucleus-diameter-um 7.0 --cellprob-threshold -1.0
 
-Sizes are given in MICRONS
---------------------------
-diameter / cell radius / expansion are specified in um and converted to
-gem units internally, then logged both ways. A diameter tuned on CosMx
-pixels does not transfer to Xenium (0.2125 um/px), so carrying
-`diameter=20` across platforms silently changes what is being asked for.
+Sizes are in MICRONS: diameter / cell radius / expansion are converted to
+gem units internally. A diameter tuned on CosMx pixels does not transfer
+to Xenium (0.2125 um/px).
 
-Coordinate space
-----------------
-The DAPI image and the gem must share one coordinate system. Both are
-built on a grid of --gem-bin native pixels (default 2 -> 0.425 um), which
-keeps subcellular resolution while cutting the spot count ~4x versus
-native. --gem-bin must divide --bin-factor so the final raster
-downsamples cleanly onto the UCS / Proseg comparison grid.
+Coordinate space: DAPI and gem share one coordinate system, on a grid of
+--gem-bin native pixels (default 2 -> 0.425 um). --gem-bin must divide
+--bin-factor so the final raster downsamples cleanly onto the UCS / Proseg
+comparison grid.
 
-Axis convention (FIX 2026-10-04)
---------------------------------
-The gem is written with x = ROI column, y = ROI row. Cellist (built for
-Stereo-seq) attaches a nucleus to a spot by reading image[x, y], i.e. it
-treats gem x as the image ROW. With an untransposed DAPI this pins every
-nucleus label onto the transcripts at the transposed position; the
-xenium_8 diagnosis confirmed it (spot-to-nucleus distance 1.3 units with
-x<->row versus 2,193 units with x<->col). The fix is to transpose the DAPI
-written for Cellist, which is now the DEFAULT (--no-transpose-tif turns it
-off). The gem and every output coordinate stay x = column, y = row, so
-rasterise / quantify are unchanged. Cached prep, nuclei and seg results
-are reused only if they were produced with the same axis setting, and an
-axis self-check after the nucleus step stops the run if nuclear
-transcripts do not sit on DAPI-bright pixels.
+Axis convention (FIX 2026-10-04):
+The gem keeps x = ROI column, y = ROI row. Cellist (built for Stereo-seq)
+attaches a nucleus to a spot by reading image[x, y], i.e. it treats gem x
+as the image ROW. With an untransposed DAPI, every nucleus lands on the
+transposed spot (verified on xenium_8: distance 1.3 units with x<->row vs
+2,193 units with x<->col). Fix: transpose the DAPI written for Cellist,
+now the DEFAULT (--no-transpose-tif disables it). The gem and every output
+coordinate stay x = column, y = row, so rasterise / quantify are
+unchanged. Cached prep, nuclei and seg results are reused only if built
+with the same axis setting, and an axis self-check after the nucleus step
+stops the run if nuclear transcripts do not sit on DAPI-bright pixels.
 """
 
 import os
@@ -76,15 +66,13 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 DATASETS = {
-    "xenium_8": {"root": "/data/qiuyijia/dataset/xenium_8", "tag": "xenium_8"},
-    "xenium_9": {"root": "/data/qiuyijia/dataset/xenium_9", "tag": "xenium_9"},
-    "xenium_10": {"root": "/data/qiuyijia/dataset/xenium_10", "tag": "xenium_10"},
-
-    "liver": {"root": "/data/qiuyijia/dataset/xenium_liver", "tag": "liver"},
-    "mouse_brain": {"root": "/data/qiuyijia/dataset/xenium_mouse_brain",
-                    "tag": "mouse_brain"},
+    "xenium_8": {"root": "yourpath", "tag": "xenium_8"},
+    "xenium_9": {"root": "yourpath", "tag": "xenium_9"},
+    "xenium_10": {"root": "yourpath", "tag": "xenium_10"},
+    "liver": {"root": "yourpath", "tag": "liver"},
+    "mouse_brain": {"root": "yourpath", "tag": "mouse_brain"},
 }
-OUT_TEMPLATE = "/data/qiuyijia/cellist_xenium_{tag}_roi{roi}"
+OUT_TEMPLATE = "yourpath"
 
 CONTROL_PREFIXES = (
     "NegControlProbe", "NegControlCodeword", "negcontrol",
@@ -98,7 +86,7 @@ MORPH_CANDIDATES = [
     "outs/morphology_mip.ome.tif",
     "outs/morphology.ome.tif",
     "morphology_focus/morphology_focus_0000.ome.tif",
-    "morphology_focus/ch0000_dapi.ome.tif",          # FIX: Xenium multimodal layout (xenium_8)
+    "morphology_focus/ch0000_dapi.ome.tif",          # Xenium multimodal layout (xenium_8)
     "morphology.ome.tif",
 ]
 TRANSCRIPT_CANDIDATES = ["outs/transcripts.parquet", "transcripts.parquet"]
@@ -141,9 +129,7 @@ def banner(msg):
     logging.info("=" * 90)
 
 
-# ----------------------------------------------------------------------
-# file resolution / ROI  (identical to ucs_xenium.py and proseg_xenium.py)
-# ----------------------------------------------------------------------
+# file resolution / ROI (identical to ucs_xenium.py and proseg_xenium.py)
 def resolve_first(root, candidates, what, required=True):
     for c in candidates:
         p = root / c
@@ -193,7 +179,7 @@ def image_level0_shape(path):
 
 def _zarr_level0(series, level_obj):
     """series.levels[0].aszarr() returns a multiscale Group on pyramidal
-    OME-TIFFs, and touching .shape on a Group raises. Try level=0 first."""
+    OME-TIFFs, and touching .shape on a Group raises; try level=0 first."""
     import zarr
 
     last = None
@@ -218,12 +204,11 @@ def _zarr_level0(series, level_obj):
 
 
 def read_dapi_crop(path, channel, y0, x0, sy, sx):
-    """
-    Read only the requested ROI from the physical TIFF tiles.
+    """Read only the requested ROI from the physical TIFF tiles.
 
-    Xenium morphology_focus is a single-page tiled JPEG2000 TIFF.
-    On this machine tifffile.aszarr() can expose valid JPEG2000 tiles
-    as fill-value zeros, and full-page virtual reads are therefore avoided.
+    Xenium morphology_focus is a single-page tiled JPEG2000 TIFF. On this
+    machine tifffile.aszarr() can expose valid JPEG2000 tiles as fill-value
+    zeros, so full-page virtual reads are avoided.
     """
     import tifffile
     import numpy as np
@@ -331,8 +316,8 @@ def read_dapi_crop(path, channel, y0, x0, sy, sx):
     )
 
     if crop.max() <= crop.min():
-        # FIX: some files (e.g. multi-page z-stacks / pyramids) decode to zeros on the
-        # physical-tile path; fall back to a zarr read of level 0 before giving up
+        # multi-page z-stacks / pyramids decode to zeros on the physical-tile
+        # path; fall back to a zarr read of level 0 before giving up
         logging.warning("physical-tile DAPI ROI is constant; retrying through zarr level 0")
         with tifffile.TiffFile(str(path)) as tf:
             s0 = tf.series[0]
@@ -373,9 +358,7 @@ def compute_roi(img_h, img_w, roi_size, origin=None):
     return y0, x0, sy, sx
 
 
-# ----------------------------------------------------------------------
 # GT reference: platform nuclei whose centroid lies in the ROI
-# ----------------------------------------------------------------------
 def platform_cell_count(nb_path, meta):
     ps = meta["pixel_size"]
     y0, x0, sy, sx = meta["y0"], meta["x0"], meta["size_y"], meta["size_x"]
@@ -400,9 +383,7 @@ def platform_cell_count(nb_path, meta):
     return int(inside.sum())
 
 
-# ----------------------------------------------------------------------
 # stage: prep
-# ----------------------------------------------------------------------
 def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     """Write the ROI DAPI tif and the gem, both on the gem-bin grid."""
     import pyarrow.parquet as pq
@@ -417,7 +398,7 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
         old = json.loads(meta_p.read_text())
         same_roi = all(abs(float(old.get(k, -1)) - float(meta[k])) < 1e-9
                        for k in ("y0", "x0", "size_y", "size_x", "pixel_size", "gem_bin"))
-        # FIX: a cache written with the other axis setting must not be reused
+        # a cache written with the other axis setting must not be reused
         same_axis = bool(old.get("dapi_transposed", False)) == bool(meta["dapi_transposed"])
         if same_roi and same_axis:
             logging.info(f"reusing cached inputs: {tif_p.name}, {gem_p.name}")
@@ -432,9 +413,9 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     logging.info(f"gem/image grid = {Hb} x {Wb}   "
                  f"1 unit = {gb} native px = {unit_um:.4f} um")
 
-    # ---- DAPI ---------------------------------------------------------
+    # DAPI
     if args.reuse_dapi:
-        # FIX: reuse an already prepared ROI DAPI on the gem grid (ROI orientation, not transposed)
+        # reuse an already prepared ROI DAPI on the gem grid (ROI orientation, not transposed)
         dapi = np.squeeze(tifffile.imread(args.reuse_dapi))
         if dapi.shape != (Hb, Wb):
             raise RuntimeError(f"--reuse-dapi shape {dapi.shape} != gem grid {(Hb, Wb)}")
@@ -468,7 +449,7 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     del dapi
     gc.collect()
 
-    # ---- gem ----------------------------------------------------------
+    # gem
     ymin, ymax = y0 * ps, (y0 + Hb * gb) * ps
     xmin, xmax = x0 * ps, (x0 + Wb * gb) * ps
     pf = pq.ParquetFile(str(tx_path))
@@ -560,9 +541,7 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     return tif_p, gem_p, out
 
 
-# ----------------------------------------------------------------------
-# Cellpose nucleus step (Python API, as in the CosMx scripts)
-# ----------------------------------------------------------------------
+# Cellpose nucleus step (Python API)
 def make_tag(p):
     cp = str(p["cellprob_threshold"]).replace("-", "m").replace(".", "p")
     fl = str(p["flow_threshold"]).replace(".", "p")
@@ -603,13 +582,13 @@ def validate_outputs(out_dir, out_prefix, method="Cellpose"):
 
 
 def axis_self_check(nuc_dir, prefix, prep, min_lift=1.5):
-    """FIX: verify that transcripts Cellist placed inside nuclei sit on bright DAPI.
+    """Verify that transcripts Cellist placed inside nuclei sit on bright DAPI.
 
-    The gem keeps x = column, y = row, so the check reads the DAPI in ROI
-    orientation (undoing the transpose applied for Cellist) at [y, x]. If the
-    nucleus labels were attached to transposed spots, these transcripts land
-    on DAPI at chance level (~25 % above the 75th percentile) instead of well
-    above it, and the run is stopped before the expensive seg step.
+    The gem keeps x = column, y = row, so the check reads DAPI in ROI
+    orientation (undoing the transpose applied for Cellist) at [y, x]. If
+    nucleus labels were attached to transposed spots, these transcripts
+    land on DAPI at chance level (~25% above the 75th percentile) instead
+    of well above it; stop the run before the expensive seg step.
     """
     import tifffile
 
@@ -644,7 +623,7 @@ def log_memory():
     """Report host RAM; cellist seg is CPU/RAM bound, one process per patch."""
     try:
         info = {}
-        for line in open("/proc/meminfo"):
+        for line in open("yourpath"):
             k, v = line.split(":", 1)
             info[k] = int(v.strip().split()[0]) / 1024 / 1024   # GiB
         logging.info(f"RAM total={info.get('MemTotal', 0):.1f} GiB  "
@@ -652,7 +631,7 @@ def log_memory():
                      f"swap free={info.get('SwapFree', 0):.1f} GiB")
         return info.get("MemAvailable", 0)
     except Exception as e:  # noqa: BLE001
-        logging.info(f"(could not read /proc/meminfo: {e})")
+        logging.info(f"(could not read memory info: {e})")
         return None
 
 
@@ -705,8 +684,8 @@ def nuclear_transcript_report(nuc_dir, prefix, min_tx):
     On liver that leaves 2,943 of 16,886 nuclei, and the seg step then
     returned exactly 2,942 cells: none of --alpha, --beta, --cell-radius
     or --gene-use moved that number, because the survivors are decided
-    before any of them apply. So the figure to maximise when tuning the
-    nucleus step is not the nucleus count, it is this one.
+    before any of them apply. The figure to maximise when tuning the
+    nucleus step is therefore this usable count, not the raw nucleus count.
     """
     p = Path(nuc_dir) / f"{prefix}_Cellpose_nucleus_coord.txt"
     if not p.exists():
@@ -798,9 +777,7 @@ def stage_grid(gem_p, tif_p, out_root, prep, args):
     logging.info("param grid finished")
 
 
-# ----------------------------------------------------------------------
 # cellist seg + downstream
-# ----------------------------------------------------------------------
 def find_one(directory, pattern, what):
     """Newest match, not the alphabetically first.
 
@@ -824,7 +801,7 @@ def find_one(directory, pattern, what):
 def run_seg(gem_p, nuc_dir, out_prefix, out_root, prep, args):
     sdir = out_root / "cellist"
     done = sdir / ".done"
-    # FIX: reuse a finished seg only if it was produced with the same axis setting
+    # reuse a finished seg only if it was produced with the same axis setting
     sig = f"dapi_transposed={bool(prep.get('dapi_transposed', False))}"
     if done.exists() and not args.force_run:
         if sig in done.read_text():
@@ -926,7 +903,7 @@ def run_seg(gem_p, nuc_dir, out_prefix, out_root, prep, args):
 def block_majority(lab, factor, min_frac=0.5):
     """Downsample labels, counting background as a candidate.
 
-    Taking the most common NON-ZERO label fills a coarse pixel whenever a
+    Taking the most common non-zero label fills a coarse pixel whenever a
     single native pixel is labelled, which inflates foreground by the
     downsampling factor. Requiring the block to be at least `min_frac`
     foreground keeps areas comparable with methods whose masks are native
@@ -988,8 +965,8 @@ def rasterise(sdir, out_root, prep, args):
     # 0 even well inside the cell. Left as is, "area" measures transcript
     # occupancy rather than footprint, and block downsampling erases the mask
     # entirely on a sparse dataset. Fill each label out to --fill-radius-um by
-    # nearest labelled bin, which is a restricted Voronoi over all cells at
-    # once and never crosses into a neighbour's territory beyond the midline.
+    # nearest labelled bin, a restricted Voronoi over all cells at once that
+    # never crosses into a neighbour's territory beyond the midline.
     if args.fill_radius_um > 0:
         from scipy import ndimage as ndi
 
@@ -1176,9 +1153,6 @@ def qc_report(out_root, prep, compare_to=None):
         print(f"  foreground Dice  {dice:.3f}")
 
 
-# ----------------------------------------------------------------------
-# main
-# ----------------------------------------------------------------------
 def get_args():
     p = argparse.ArgumentParser(
         description="Cellist on a centered Xenium ROI (Cellist Python API).",
@@ -1201,7 +1175,7 @@ def get_args():
     p.add_argument("--pixel-size", type=float, default=None)
     p.add_argument("--morphology", default=None)
     p.add_argument("--dapi-channel", type=int, default=0)
-    # FIX: transpose by default -- Cellist reads image[x, y] with x = row (Stereo-seq
+    # transpose by default -- Cellist reads image[x, y] with x = row (Stereo-seq
     # convention) while the gem keeps x = column
     p.add_argument("--transpose-tif", dest="transpose_tif", action="store_true", default=True,
                    help="transpose the DAPI written for Cellist (default: on)")
@@ -1308,7 +1282,7 @@ def main():
         tif_p, gem_p, prep = prep_inputs(tx, morph, nb, input_dir, meta, args)
     else:
         prep = json.loads(prep_meta_p.read_text())
-        # FIX: never reuse a prep written with the other axis setting
+        # never reuse a prep written with the other axis setting
         if bool(prep.get("dapi_transposed", False)) != bool(args.transpose_tif):
             banner("STAGE prep (cached prep has a different axis setting)")
             tif_p, gem_p, prep = prep_inputs(tx, morph, nb, input_dir, meta, args)
@@ -1365,7 +1339,7 @@ def main():
                          .to_string(index=False))
         return
 
-    # ---- single run ---------------------------------------------------
+    # single run
     torch = gpu_report()
     nuc_dir = out_root / "cellpose"
     nuc_dir.mkdir(parents=True, exist_ok=True)
@@ -1375,7 +1349,7 @@ def main():
     nuc_sig = f"DONE dapi_transposed={bool(prep.get('dapi_transposed', False))}"
 
     m = validate_outputs(nuc_dir, out_prefix)
-    # FIX: reuse nuclei only if they were segmented on the DAPI with the same axis setting
+    # reuse nuclei only if they were segmented on the DAPI with the same axis setting
     same_axis = done_flag.exists() and nuc_sig in done_flag.read_text()
     if same_axis and m["nucleus_property_rows"] > 0 and not args.force_nucleus:
         logging.info(f"reusing nucleus segmentation: "

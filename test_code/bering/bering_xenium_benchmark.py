@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""统一的、reference-assisted Bering benchmark runner。
+"""Unified, reference-assisted Bering benchmark runner.
 
-输入使用 Xenium 风格的逐分子 Parquet schema；``cell_id`` 是 Bering 的粗分割
-种子（raw_cells），可以来自 Xenium 或 CellBin。它不是 seed-free 分割。所有
-数据集使用配置中明确记录的 QC、标签生成、Bering 超参数和随机种子。
+Input uses an Xenium-style per-molecule Parquet schema; ``cell_id`` is Bering's
+coarse-segmentation seed (raw_cells), sourced from Xenium or CellBin. This is
+not seed-free segmentation. All datasets use the QC, label generation, Bering
+hyperparameters and random seed recorded explicitly in the config.
 
-配置由 ``configs/*.json`` 提供。脚本不会把官方 cell_boundaries 当作预测，
-不会把独立的人工真值用于调参。Stereo-seq reference-assisted 模式会用已经
-作为粗分割输入的 CellBin 种子数，在预先给定的 Leiden 候选值中逐 tile 选择。
+Configuration is provided by ``configs/*.json``. The script never treats
+official cell_boundaries as predictions and never tunes on independent manual
+ground truth. Stereo-seq reference-assisted mode selects the Leiden value per
+tile, among the predefined candidates, using the CellBin seed counts that
+already served as the coarse-segmentation input.
 """
 from __future__ import annotations
 

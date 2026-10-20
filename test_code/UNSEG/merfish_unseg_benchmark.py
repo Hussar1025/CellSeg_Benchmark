@@ -23,7 +23,7 @@ import pandas as pd
 import tifffile
 
 HERE = Path(__file__).resolve().parent
-ROOT = Path('/data/qiuyijia')
+ROOT = Path('yourpath')
 DATA = ROOT / 'dataset'
 DEFAULT_OUTPUT = HERE / 'merfish_outputs'
 sys.path.insert(0, str(ROOT / 'cellpose'))

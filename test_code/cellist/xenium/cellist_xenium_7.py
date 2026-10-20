@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Cellist xenium_6 colon downstream sweep — direct-engine version.
+Cellist xenium_6 colon downstream sweep - direct-engine version.
 
 NO source-code patching.
 We invoke the verified cellist_xenium_5.py engine directly using:
@@ -20,11 +20,11 @@ from __future__ import annotations
 import json, os, re, shutil, subprocess, sys
 from pathlib import Path
 
-ENGINE = Path("/data/qiuyijia/cellist/code/cellist_xenium_5.py")
-ROOT = Path("/data/qiuyijia/dataset/xenium7/outs")
+ENGINE = Path("yourpath")
+ROOT = Path("yourpath")
 MORPH = ROOT / "morphology_focus/morphology_focus_0000.ome.tif"
-BASE = Path("/data/qiuyijia/cellist_xenium7_roi10000")
-OUTROOT = Path("/data/qiuyijia/cellist_xenium7_downstream")
+BASE = Path("yourpath")
+OUTROOT = Path("yourpath")
 
 TRIALS = [
     dict(tag="r3_imp0p5_fill0_freq", radius=3, imp=0.5, fill=0, gene="Frequent", two=False),

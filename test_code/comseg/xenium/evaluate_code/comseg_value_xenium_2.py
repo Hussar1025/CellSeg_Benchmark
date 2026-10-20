@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-comseg_value_xenium_2.py — 评估 ComSeg @ xenium_2 (Xenium breast, ROI5000)
+comseg_value_xenium_2.py - evaluate ComSeg @ xenium_2 (Xenium breast, ROI5000)
 
-★ v2 修复坐标系错误
-  spot_assignment 里的 global_x/global_y 是 ROI-local 像素 (x[0.1,5000.0])，
-  而 cells.parquet 的 x_centroid/y_centroid 是全片微米。v1 直接拿前者的范围
-  去框后者，框出了全片 74,308 个 GT (应为 8,393)，匹配半径被撑到 20 um，
-  于是 count_pearson=-0.05、vec_cosine=0.31 等全部是伪结果。
-  换算 (prep_meta.json):  um = (local_px + origin) * pixel_size
-                          x0=24497  y0=11210  pixel_size=0.2125
+v2 fixes a coordinate-frame bug
+  global_x/global_y in spot_assignment are ROI-local pixels (x[0.1,5000.0]),
+  while x_centroid/y_centroid in cells.parquet are whole-slide um. v1 used the
+  former range to bound the latter, selecting 74,308 GT cells over the whole
+  slide (should be 8,393); the match radius was inflated to 20 um, so
+  count_pearson=-0.05, vec_cosine=0.31 and the rest were spurious.
+  Conversion (prep_meta.json):  um = (local_px + origin) * pixel_size
+                           x0=24497  y0=11210  pixel_size=0.2125
 
-评估口径与 comseg_value_xenium_4.py 一致:
-  质心从 spot_assignment 按 cell 分组重算，不用 h5ad 的 obs.centroid_x/y ——
-  后者继承自 nucleus prior 的 landmark(uns 里 _landmark_for_centroid 是证据)，
-  会让 loc_* 恒为 0、precision 恒为 1。
-  匹配走 KD-tree 最近邻 + 半径截断 + 一对一去重，无任何 ID 直连。
-  半径 = sqrt(ROI面积 / ROI内GT细胞数)。
+Evaluation protocol matches comseg_value_xenium_4.py:
+  centroids are recomputed from spot_assignment grouped by cell, not obs.centroid_x/y
+  in the h5ad - the latter inherits the nucleus-prior landmark (uns has
+  _landmark_for_centroid as evidence), which would make loc_* always 0 and precision always 1.
+  Matching uses KD-tree nearest neighbor + radius cutoff + one-to-one dedup, never direct IDs.
+  Radius = sqrt(ROI area / GT cells in ROI).
 
-指标: 检测(P/R/F1, cell_ratio) 定位(loc mean/median/p95)
-      计数(pearson/spearman/mae/rmse) 表达向量(cosine/JS/pearson)
-      归属(assign_accuracy, overall_correct, coverage_fraction)
-      形态(median_diameter_um) 分布(tx/cell 分位, <10 占比)
+Metrics: detection (P/R/F1, cell_ratio), localization (loc mean/median/p95),
+      count (pearson/spearman/mae/rmse), expression vector (cosine/JS/pearson),
+      assignment (assign_accuracy, overall_correct, coverage_fraction),
+      morphology (median_diameter_um), distribution (tx/cell quantiles, share <10)
 
-用法:
+Usage:
   python3 comseg_value_xenium_2.py
   python3 comseg_value_xenium_2.py --no-dedup
-  python3 comseg_value_xenium_2.py --skip-tx     # 跳过表达向量(省内存)
+  python3 comseg_value_xenium_2.py --skip-tx     # skip expression vectors (saves memory)
 """
 import argparse
 import glob
@@ -37,10 +38,10 @@ import sys
 import numpy as np
 import pandas as pd
 
-ROOT = "/data/qiuyijia/comseg_xenium_breast_roi5000"
-GT_CELLS = "/data/qiuyijia/dataset/xenium_breast/cells.parquet"
-GT_TX = "/data/qiuyijia/dataset/xenium_breast/transcripts.parquet"
-OUT = "/data/qiuyijia/eval_results_qv20/breast"
+ROOT = "yourpath/comseg_xenium_breast_roi5000"
+GT_CELLS = "yourpath/dataset/xenium_breast/cells.parquet"
+GT_TX = "yourpath/dataset/xenium_breast/transcripts.parquet"
+OUT = "yourpath/eval_results_qv20/breast"
 METHOD, DATASET = "ComSeg", "xenium_2"
 
 
@@ -66,83 +67,83 @@ def main():
     log(f"{METHOD} @ {DATASET}  (Xenium breast, ROI 5000 px)")
     log("=" * 78)
 
-    # ── 坐标换算参数 ────────────────────────────────────────────────
+    # --- coordinate conversion parameters -------------------------------------
     mp = os.path.join(a.root, "input", "prep_meta.json")
     if not os.path.exists(mp):
-        sys.exit(f"✗ 缺 {mp}，无法确定 ROI 原点与像素尺寸")
+        sys.exit(f"missing {mp}; cannot determine the ROI origin and pixel size")
     meta = json.load(open(mp))
     X0, Y0 = float(meta["x0"]), float(meta["y0"])
     PX = float(meta["pixel_size"])
-    log(f"  ROI 原点 (x0={X0:.0f}, y0={Y0:.0f}) px   pixel_size {PX} um/px")
+    log(f"  ROI origin (x0={X0:.0f}, y0={Y0:.0f}) px   pixel_size {PX} um/px")
     log(f"  ROI {meta['size_x']} x {meta['size_y']} px = "
         f"{meta['size_x']*PX:.1f} x {meta['size_y']*PX:.1f} um")
     log(f"  prep: {meta['n_transcripts']:,} tx / GT {meta['gt_expected_cells']:,}"
         f" = {meta['n_transcripts']/meta['gt_expected_cells']:.1f} tx/cell"
         f"   qv_min={meta.get('qv_min')}")
 
-    # ── 预测 ────────────────────────────────────────────────────────
+    # --- prediction -----------------------------------------------------------
     fs = sorted(glob.glob(os.path.join(
         a.root, "comseg_out", "tile_*", "spot_assignment.parquet")))
     if not fs:
-        sys.exit(f"✗ 无 spot_assignment.parquet")
-    log(f"\n【预测】{len(fs)} 个 tile")
+        sys.exit(f"no spot_assignment.parquet")
+    log(f"\nprediction: {len(fs)} tiles")
     d = pd.concat([pd.read_parquet(f) for f in fs], ignore_index=True)
-    log(f"  合并 {len(d):,} 行   列: {list(d.columns)}")
+    log(f"  merged {len(d):,} rows   columns: {list(d.columns)}")
     if not a.no_dedup:
         n0 = len(d)
         d = d.drop_duplicates(subset=["global_x", "global_y", "gene"],
                               keep="first")
-        log(f"  tile overlap 去重: {n0:,} -> {len(d):,} "
-            f"(删 {(n0-len(d))/n0*100:.1f}%)")
+        log(f"  tile overlap dedup: {n0:,} -> {len(d):,} "
+            f"(removed {(n0-len(d))/n0*100:.1f}%)")
 
-    # ROI-local px -> 全片 um
+    # ROI-local px -> whole-slide um
     d["_xum"] = (d["global_x"].astype(float) + X0) * PX
     d["_yum"] = (d["global_y"].astype(float) + Y0) * PX
     log(f"  local px  x[{d.global_x.min():.1f},{d.global_x.max():.1f}]")
-    log(f"  全片 um   x[{d._xum.min():.1f},{d._xum.max():.1f}] "
+    log(f"  whole-slide um   x[{d._xum.min():.1f},{d._xum.max():.1f}] "
         f"y[{d._yum.min():.1f},{d._yum.max():.1f}]")
 
     assigned = pd.to_numeric(d["cell"], errors="coerce") > 0
-    log(f"  已分配 {int(assigned.sum()):,} ({assigned.mean()*100:.1f}%)")
+    log(f"  assigned {int(assigned.sum()):,} ({assigned.mean()*100:.1f}%)")
 
     da = d[assigned].copy()
     g = da.groupby("cell").agg(x=("_xum", "mean"), y=("_yum", "mean"),
                                n=("_xum", "size"))
     q = g.n.quantile([.05, .25, .5, .75, .95])
-    log(f"\n  预测细胞 {len(g):,}")
-    log(f"  每细胞 tx  中位 {g.n.median():.0f}  均值 {g.n.mean():.0f}  "
-        f"均/中 {g.n.mean()/max(g.n.median(),1):.2f}")
+    log(f"\n  predicted cells {len(g):,}")
+    log(f"  tx per cell  median {g.n.median():.0f}  mean {g.n.mean():.0f}  "
+        f"mean/median {g.n.mean()/max(g.n.median(),1):.2f}")
     log(f"             p5/p25/p75/p95 = {q.iloc[0]:.0f}/{q.iloc[1]:.0f}/"
-        f"{q.iloc[3]:.0f}/{q.iloc[4]:.0f}   <10 的 {(g.n<10).mean()*100:.2f}%")
+        f"{q.iloc[3]:.0f}/{q.iloc[4]:.0f}   <10: {(g.n<10).mean()*100:.2f}%")
 
     sp = da.groupby("cell").agg(sx=("_xum", "std"), sy=("_yum", "std"))
     diam = 2 * np.sqrt(2) * np.sqrt((sp.sx ** 2 + sp.sy ** 2) / 2)
-    log(f"  等效直径(2*sqrt2*RMS散布) 中位 {diam.median():.2f} um")
+    log(f"  equivalent diameter (2*sqrt2*RMS spread) median {diam.median():.2f} um")
 
-    # ── GT: 用 ROI 的真实边界裁，不用预测坐标的跨度 ─────────────────
+    # --- GT: crop by the true ROI bounds, not by the predicted coordinate span ---
     gt_all = pd.read_parquet(a.gt_cells)
     x0u, x1u = X0 * PX, (X0 + meta["size_x"]) * PX
     y0u, y1u = Y0 * PX, (Y0 + meta["size_y"]) * PX
     m = ((gt_all.x_centroid >= x0u) & (gt_all.x_centroid < x1u) &
          (gt_all.y_centroid >= y0u) & (gt_all.y_centroid < y1u))
     gt = gt_all[m].reset_index(drop=True)
-    log(f"\n【GT】ROI x[{x0u:.1f},{x1u:.1f}] y[{y0u:.1f},{y1u:.1f}] um")
-    log(f"  ROI 内 {len(gt):,}  (全片 {len(gt_all):,}；"
-        f"prep 期望 {meta['gt_expected_cells']:,})")
+    log(f"\nGT: ROI x[{x0u:.1f},{x1u:.1f}] y[{y0u:.1f},{y1u:.1f}] um")
+    log(f"  in ROI {len(gt):,}  (whole slide {len(gt_all):,}; "
+        f"prep expected {meta['gt_expected_cells']:,})")
     if abs(len(gt) - meta["gt_expected_cells"]) > .1 * meta["gt_expected_cells"]:
-        log(f"  ⚠ 与 prep 期望差异 >10%，核对 ROI 换算")
+        log(f"  [warn] differs from prep expectation by >10%; check the ROI conversion")
 
     gtn = None
     for c in ("transcript_counts", "n_counts", "total_counts"):
         if c in gt.columns:
             gtn = gt[c].to_numpy(float)
-            log(f"  GT 每细胞 tx 用列 {c}  中位 {np.median(gtn):.0f}")
+            log(f"  GT tx per cell from column {c}  median {np.median(gtn):.0f}")
             break
 
-    # ── 匹配 ────────────────────────────────────────────────────────
+    # --- matching -------------------------------------------------------------
     r = a.match_radius or float(np.sqrt((x1u - x0u) * (y1u - y0u) /
                                         max(len(gt), 1)))
-    log(f"\n【匹配】KD-tree 一对一，半径 {r:.2f} um")
+    log(f"\nmatching: KD-tree one-to-one, radius {r:.2f} um")
     P = np.c_[g.x.to_numpy(float), g.y.to_numpy(float)]
     G = gt[["x_centroid", "y_centroid"]].to_numpy(float)
     dist, gi = cKDTree(G).query(P, k=1, distance_upper_bound=r)
@@ -168,7 +169,7 @@ def main():
 
     det_ok = not (np.nanmedian(dd) < 1e-6)
     if not det_ok:
-        log("  ★ loc_median = 0 -> 质心仍来自 prior landmark")
+        log("  loc_median = 0 -> centroids still come from the prior landmark")
 
     res = dict(method=METHOD, dataset=DATASET,
                gt_cells=len(G), pred_cells=len(P), matched=matched,
@@ -189,7 +190,7 @@ def main():
                uses_platform_prior=False,
                detection_comparable=det_ok, data_error=False)
 
-    # ── 计数 ────────────────────────────────────────────────────────
+    # --- counts ---------------------------------------------------------------
     if pairs and gtn is not None:
         pi = np.array([p[0] for p in pairs])
         gj = np.array([p[1] for p in pairs])
@@ -201,14 +202,14 @@ def main():
                        count_spearman=float(spearmanr(A[k], B[k])[0]),
                        count_mae=float(np.abs(A[k] - B[k]).mean()),
                        count_rmse=float(np.sqrt(((A[k]-B[k])**2).mean())))
-            log(f"\n【计数】n={int(k.sum()):,}  "
+            log(f"\ncounts: n={int(k.sum()):,}  "
                 f"pearson {res['count_pearson']:.4f}  "
                 f"spearman {res['count_spearman']:.4f}  "
                 f"mae {res['count_mae']:.1f}  rmse {res['count_rmse']:.1f}")
 
-    # ── 归属 + 表达向量 ────────────────────────────────────────────
+    # --- assignment + expression vectors --------------------------------------
     if pairs and not a.skip_tx and os.path.exists(a.gt_tx):
-        log(f"\n【归属 / 表达向量】读 GT 转录本表 ...")
+        log(f"\nassignment / expression vectors: reading GT transcript table ...")
         try:
             tx = pd.read_parquet(a.gt_tx, columns=[
                 "x_location", "y_location", "feature_name", "cell_id", "qv"])
@@ -218,24 +219,24 @@ def main():
                 (tx.y_location >= y0u) & (tx.y_location < y1u)].copy()
         if "qv" in tx.columns:
             tx = tx[tx.qv >= res["qv_min"]]
-        log(f"  ROI 内 GT 转录本 {len(tx):,}  "
-            f"(prep 记录 {meta['n_transcripts']:,})")
+        log(f"  GT transcripts in ROI {len(tx):,}  "
+            f"(prep recorded {meta['n_transcripts']:,})")
 
         id2row = {v: i for i, v in
                   enumerate(gt["cell_id"].astype(str).to_numpy())}
         tx["_gtrow"] = (tx["cell_id"].astype(str).map(id2row)
                         .fillna(-1).astype(np.int64))
 
-        # 预测转录本 -> 最近的 GT 转录本，容差 0.5 um
+        # predicted transcript -> nearest GT transcript, tolerance 0.5 um
         dq, iq = cKDTree(np.c_[tx.x_location.to_numpy(float),
                                tx.y_location.to_numpy(float)]).query(
             np.c_[da._xum.to_numpy(float), da._yum.to_numpy(float)],
             k=1, distance_upper_bound=0.5)
         hit = np.isfinite(dq)
-        log(f"  预测转录本对上 GT 转录本 {int(hit.sum()):,} / {len(da):,} "
+        log(f"  predicted transcripts matched to a GT transcript {int(hit.sum()):,} / {len(da):,} "
             f"({hit.mean()*100:.1f}%)")
         if hit.mean() < .5:
-            log("  ⚠ 命中率 <50%，坐标换算可能仍有偏移")
+            log("  [warn] hit rate <50%; the coordinate conversion may still be off")
 
         cell2row = {c: i for i, c in enumerate(g.index)}
         pred_row = np.array([cell2row.get(c, -1)
@@ -250,7 +251,7 @@ def main():
             res["assign_accuracy"] = acc
             res["overall_correct"] = acc * float(assigned.mean())
             log(f"  assign_accuracy {acc:.4f}  "
-                f"(在 {int(valid.sum()):,} 条可判定转录本上)")
+                f"(over {int(valid.sum()):,} decidable transcripts)")
             log(f"  overall_correct  {res['overall_correct']:.4f}")
 
         if "feature_name" in tx.columns:
@@ -292,11 +293,11 @@ def main():
                 log(f"  vec_cosine {res['vec_cosine']:.4f}  "
                     f"vec_js_dist {res['vec_js_dist']:.4f}  "
                     f"vec_pearson {res['vec_pearson']:.4f}  "
-                    f"(n={int(k.sum()):,}, {len(genes):,} 基因)")
+                    f"(n={int(k.sum()):,}, {len(genes):,} genes)")
 
-    res["note"] = ("质心由 spot_assignment 按 cell 分组重算(非 landmark)；"
-                   "ROI-local px 已按 prep_meta 的 origin/pixel_size 换算为"
-                   "全片 um；KD-tree 一对一匹配；tile overlap 已去重")
+    res["note"] = ("centroids recomputed from spot_assignment grouped by cell (not landmark); "
+                   "ROI-local px converted to whole-slide um with prep_meta origin/pixel_size; "
+                   "KD-tree one-to-one matching; tile overlap deduplicated")
 
     os.makedirs(a.out, exist_ok=True)
     f = os.path.join(a.out, f"comseg_{DATASET}_metrics.csv")

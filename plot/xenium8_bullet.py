@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-xenium_8 污染来源构成 —— 独立气泡矩阵脚本
+xenium_8 contamination source composition -- standalone bubble matrix script
 ==========================================
-从 contamination_xenium8.py 中拆出的气泡图，可单独反复调样式，不必重跑整个分析。
+Bubble plot extracted from contamination_xenium8.py so the style can be tuned repeatedly without rerunning the whole analysis.
 
-数据：OUTDIR/bubble_source_data.csv（contamination_xenium8.py 运行时自动写出）
-      若该文件不存在，本脚本会调用 contamination_xenium8.compute() 现算一次并写出。
-      --recompute 强制重算。
+Data: OUTDIR/bubble_source_data.csv (written automatically when contamination_xenium8.py runs)
+      If that file is missing, this script calls contamination_xenium8.compute() to compute and write it once.
+      --recompute forces a recompute.
 
-每格 = 某方法、某 case 中，外来转录本来自某谱系的占比；按列归一化为"洁净度分数"
-（占比越小 -> 分数越高 -> 气泡越大、越方、越浅）。计算逻辑与主脚本一致。
+Each cell = fraction of foreign transcripts from a lineage, for one method and one case; columns are normalized into "cleanliness score"
+(smaller share -> higher score -> larger, squarer, lighter bubble). The scoring logic matches the main script.
 
-样式（相对主脚本的修改）：
-  · case 配色：T = 橙 #ED7D31、髓系 = 蓝 #5B9BD5（v3 原配色），Epi/Tumor = #FFC000
-  · 气泡描边 0.8 -> 1.6（更粗）
-  · 气泡间距更小：GAP_EPS 0.018 -> 0.004（相邻最大气泡之间只留描边宽度 + 0.004 英寸）
-运行： python bubble_xenium8.py            输出 OUTDIR/bubble_source.pdf / .png
+Style (changes from the main script):
+  · case colors: T = orange #ED7D31, myeloid = blue #5B9BD5 (v3 original), Epi/Tumor = #FFC000
+  · bubble stroke 0.8 -> 1.6 (thicker)
+  · smaller bubble gaps: GAP_EPS 0.018 -> 0.004 (only stroke width + 0.004 inch between adjacent largest bubbles)
+Run:  python bubble_xenium8.py            outputs OUTDIR/bubble_source.pdf / .png
        python bubble_xenium8.py --recompute
 """
 import os
@@ -41,16 +41,16 @@ plt.rcParams["ps.fonttype"] = 42
 DATA_CSV = os.path.join(OUTDIR, "bubble_source_data.csv")
 OUT = os.path.join(OUTDIR, "bubble_source.pdf")
 
-# ---- 样式 ----
+# ---- Style ----
 CASE_COLORS = {"T": "#ED7D31", "Myeloid": "#5B9BD5", "Epi/Tumor": "#FFC000"}
 ROW_BG_A, ROW_BG_B = "#EDEDED", "#FFFFFF"
-EDGE_C, EDGE_W = "#1A1A1A", 1.6          # 气泡描边（更粗）
-GAP_EPS = 0.004                          # 相邻最大气泡间额外留白（英寸），越小越紧
+EDGE_C, EDGE_W = "#1A1A1A", 1.6          # bubble stroke (thicker)
+GAP_EPS = 0.004                          # extra gap (inch) between adjacent largest bubbles; smaller = tighter
 MIN_INDENT = EDGE_W / 72.0 / 2.0 + GAP_EPS
 LIGHT_MAX, LIGHT_GAMMA = 0.97, 0.65
 HALF_MIN, HALF_MAX = 0.077, 0.300
 SQ_RANGE, SQ_POWER = (2.0, 8.0), 6.0
-CAT_GAP = 0.5                            # case 之间的横向间隔（格子边长的倍数）
+CAT_GAP = 0.5                            # horizontal gap between cases (multiples of cell side length)
 LABEL_ROT, LEADER_IN = 45, 0.13
 FS = 12
 SCORE_LO, SCORE_SPAN = 0.05, 0.90
@@ -89,9 +89,9 @@ def shape_of(v):
 
 def load_data():
     if os.path.exists(DATA_CSV) and "--recompute" not in sys.argv:
-        print(f"读取 {DATA_CSV}")
+        print(f"Loaded {DATA_CSV}")
         return pd.read_csv(DATA_CSV)
-    print("没有现成的气泡数据（或指定了 --recompute），调用 contamination_xenium8.compute() 现算")
+    print("no cached bubble data (or --recompute given), calling contamination_xenium8.compute() now")
     import contamination_xenium8 as C
     methods, store = C.compute()
     C.save_bubble_data(methods, store)
@@ -99,14 +99,14 @@ def load_data():
 
 
 def build_blocks(df):
-    """-> [(case, 列(外来谱系), 占比矩阵, 行(方法))]，行为在所有 case 中都有结果的方法。"""
+    """-> [(case, column (foreign lineage), fraction matrix, row (method))]; rows are methods with results in every case."""
     cases = [c for c in CASES if c in set(df["case"])]
     order = [m for m in METHODS if m in set(df["method"])] + \
             sorted(set(df["method"]) - set(METHODS))
     rows = [m for m in order if all(((df["method"] == m) & (df["case"] == c)).any() for c in cases)]
     dropped = [m for m in order if m not in rows]
     if dropped:
-        print(f"[注意] 这些方法不是每个 case 都有结果，不进入气泡矩阵：{dropped}")
+        print(f"[Note] these methods lack results for at least one case, excluded from the bubble matrix: {dropped}")
     blocks = []
     for c in cases:
         self_lin = CASES[c][1]
@@ -202,7 +202,7 @@ def plot(blocks, rows, out=OUT):
 
 def main():
     df = load_data()
-    print("各方法、各 case 的可评估细胞数：")
+    print("Assessable cells per method and case:")
     print(df.drop_duplicates(["method", "case"]).pivot(index="display", columns="case", values="n_cell")
           .to_string())
     blocks, rows = build_blocks(df)

@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""ComSeg (merfish) 评估 —— 自包含，不 import 其它脚本。
-输入两种之一：
-  --run-dir  含 tile_results/*.h5ad + tile_metadata.tsv  (全拼所有 tile)
-  --h5ad     单个 comseg 输出 h5ad (obs 有 centroid_x/y, image_name)
-统一口径：无论 ROI 多大，全部拼合后，只截【中心 10000×10000 native px】内的预测细胞参与评估，
-GT 也用同一中心 10000 ROI 的 platform 核。指标与 merfish benchmark 一致(19项)。
+"""ComSeg (merfish) evaluation - self-contained, imports no other script.
+One of two inputs:
+  --run-dir  contains tile_results/*.h5ad + tile_metadata.tsv  (assemble all tiles)
+  --h5ad     a single ComSeg output h5ad (obs has centroid_x/y, image_name)
+Uniform protocol: regardless of ROI size, after assembling, only predicted cells inside
+the central [10000x10000 native px] participate in evaluation; GT uses the platform
+nuclei in the same central 10000 ROI. Metrics match the merfish benchmark (19 items).
 
-用法:
-  # 拼多 tile (如 merfish1 的 64 个 tile, 原 ROI 20000, 只评中心 10000)
+Usage:
+  # multi-tile (e.g. 64 tiles for merfish1, source ROI 20000, evaluate center 10000 only)
   python comseg_value_merfish_1.py --dataset mouse_brain \
-    --root /data/qiuyijia/dataset/merfish_mouse_brain \
-    --run-dir /data/qiuyijia/comseg_merfish_1_dapi_prior_roi20000 --src-roi 20000
+    --root yourpath/dataset/merfish_mouse_brain \
+    --run-dir yourpath/comseg_merfish_1_dapi_prior_roi20000 --src-roi 20000
 
-  # 单 h5ad (如 liver1)
+  # single h5ad (e.g. liver1)
   python comseg_value_merfish_1.py --dataset liver1 \
-    --root /data/qiuyijia/dataset/merfish_liver1 \
-    --h5ad /data/qiuyijia/comseg/merfish_liver1/output/merfish_liver1_roi_top300_mmc0p99.h5ad --src-roi 10000
+    --root yourpath/dataset/merfish_liver1 \
+    --h5ad yourpath/comseg/merfish_liver1/output/merfish_liver1_roi_top300_mmc0p99.h5ad --src-roi 10000
 """
 import argparse, glob, re
 from pathlib import Path
 import numpy as np, pandas as pd, tifffile
 
-EVAL_ROI = 10000  # 统一评估口径：中心 10000x10000 native px
+EVAL_ROI = 10000  # uniform evaluation window: central 10000x10000 native px
 
 
 def find_one(root, pats):
@@ -41,7 +42,7 @@ def geometry(root, src_roi, roi_origin=None, src_hw=None):
     if not dapi: raise SystemExit("no *dapi*.tif")
     with tifffile.TiffFile(dapi) as t: H, W = t.series[0].shape[-2:]
     if src_hw is not None: H, W = int(src_hw[0]), int(src_hw[1])
-    # 源 ROI 原点(拼合坐标基准) 与 中心评估 ROI 原点
+    # source ROI origin (assembly coordinate base) and central evaluation ROI origin
     if roi_origin is not None:
         src_y0, src_x0 = int(roi_origin[0]), int(roi_origin[1])
     else:
@@ -63,7 +64,7 @@ def eval_um_bounds(g):
 
 
 def load_pred_tiles(run_dir, g, src_roi):
-    """全拼 tile: 每 tile 内 um 质心 + ry/rx 原点 -> 全局 um。"""
+    """Assemble all tiles: in-tile um centroid + ry/rx origin -> global um."""
     import anndata as ad
     meta = pd.read_csv(Path(run_dir)/"tile_metadata.tsv", sep="\t")
     origin = {r.tile_id:(float(r.ry),float(r.rx)) for r in meta.itertuples()}
@@ -72,7 +73,7 @@ def load_pred_tiles(run_dir, g, src_roi):
         a=ad.read_h5ad(f); tid=re.search(r"tile_\d+",f).group()
         if tid not in origin: continue
         ry,rx=origin[tid]
-        # tile 原点(native px) -> 全局微米; 再加 tile 内 centroid(已是微米)
+        # tile origin (native px) -> global um; then add the in-tile centroid (already um)
         ox_um, oy_um = px_to_um(g, np.array([g["src_x0"]+rx]), np.array([g["src_y0"]+ry]))
         ux = a.obs["centroid_x"].to_numpy(float) + ox_um[0]
         uy = a.obs["centroid_y"].to_numpy(float) + oy_um[0]
@@ -94,7 +95,7 @@ def load_pred_tiles(run_dir, g, src_roi):
 def load_pred_h5ad(h5, g, src_roi):
     import anndata as ad
     a=ad.read_h5ad(h5)
-    # centroid 已是【全局微米】坐标(实测 liver: range 与 CFG ROI 完全吻合)，直接用
+    # centroid is already in global um (measured on liver: range matches the CFG ROI exactly), use directly
     ux = a.obs["centroid_x"].to_numpy(float)
     uy = a.obs["centroid_y"].to_numpy(float)
     X=a.X; X=np.asarray(X.todense()) if hasattr(X,"todense") else np.asarray(X)
@@ -187,9 +188,9 @@ def main():
     ap.add_argument("--run-dir",default=None)
     ap.add_argument("--h5ad",default=None)
     ap.add_argument("--dataset",default="x")
-    ap.add_argument("--src-roi",type=int,default=10000,help="拼合结果的源 ROI 尺寸(px)")
-    ap.add_argument("--roi-origin",nargs=2,type=int,default=None,metavar=("Y0","X0"),help="源ROI真实原点(native px),覆盖居中假设")
-    ap.add_argument("--src-hw",nargs=2,type=int,default=None,metavar=("H","W"),help="真实图像H W,覆盖读图")
+    ap.add_argument("--src-roi",type=int,default=10000,help="source ROI size of the assembled result (px)")
+    ap.add_argument("--roi-origin",nargs=2,type=int,default=None,metavar=("Y0","X0"),help="true source ROI origin (native px), overrides the centered assumption")
+    ap.add_argument("--src-hw",nargs=2,type=int,default=None,metavar=("H","W"),help="true image H W, overrides reading the image")
     ap.add_argument("--out",default=None)
     a=ap.parse_args()
     g=geometry(a.root,a.src_roi,a.roi_origin,a.src_hw)
@@ -199,9 +200,9 @@ def main():
     elif a.h5ad:
         px,py,gm_p,genes_p=load_pred_h5ad(a.h5ad,g,a.src_roi)
     else:
-        raise SystemExit("给 --run-dir 或 --h5ad")
+        raise SystemExit("provide --run-dir or --h5ad")
 
-    # 只留中心评估 ROI 内的预测细胞
+    # keep predicted cells inside the central evaluation ROI
     X0,X1,Y0,Y1=eval_um_bounds(g)
     keep=(px>=X0)&(px<X1)&(py>=Y0)&(py<Y1)
     px,py,gm_p=px[keep],py[keep],gm_p[keep]
@@ -210,12 +211,12 @@ def main():
     tx_x,tx_y,tx_g,genes=load_tx(a.root)
     print(f"eval ROI(um)={tuple(round(v,1) for v in roi_um)}  pred_in_ROI={len(px)}  GT={len(gx)}")
 
-    # GT 基因向量: 转录本按最近 GT 质心
+    # GT gene vectors: assign transcripts to the nearest GT centroid
     from scipy.spatial import cKDTree
     dd,jj=cKDTree(np.c_[gx,gy]).query(np.c_[tx_x,tx_y],k=1)
     rad=max(np.median(dd)*2,3.0); ok=dd<=rad
     gm_gt=np.zeros((len(gx),len(genes)),np.float32); np.add.at(gm_gt,(jj[ok],tx_g[ok]),1.0)
-    # pred 基因向量对齐基因表
+    # align pred gene vectors to the gene table
     gi={x:i for i,x in enumerate(genes)}
     remap=np.array([gi.get(x,-1) for x in genes_p])
     gm_pred=np.zeros((len(px),len(genes)),np.float32)
@@ -247,7 +248,7 @@ def main():
     print("="*56)
     for k,v in R.items(): print(f"  {k:20s} {v}")
     print("="*56)
-    out=a.out or f"/data/qiuyijia/comseg_value_{a.dataset}.csv"
+    out=a.out or f"yourpath/comseg_value_{a.dataset}.csv"
     pd.DataFrame([R]).to_csv(out,index=False); print("written ->",out)
 
 

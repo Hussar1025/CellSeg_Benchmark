@@ -1,24 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-BOMS 运行 —— Xenium ROI（人淋巴结）  最终版
+BOMS run -- Xenium ROI (human lymph node)  final
 =========================================================================
-定案：HVG-400 基因子集。
-  * int32 约束：n_tx × n_gene < 21.4亿。全量 73万转录本 × 400 = 2.9亿，安全。
-  * 4495 全基因 → 73万×4495 = 32.9亿 > int32，会 std::bad_array_new_length。
-  * HVG 是 BOMS 在 Prime 5K 高维 panel 上的合理适配（同 Cellist 只用 HVG），
-    评估时标注 "top-400 HVG" 即可。
+Decision: HVG-400 gene subset.
+  * int32 constraint: n_tx × n_gene < 2.14B. Full 730K transcripts × 400 = 290M, safe.
+  * 4495 full genes -> 730K × 4495 = 3.29B > int32, would raise std::bad_array_new_length.
+  * HVG is a sensible BOMS adaptation for the Prime 5K high-dimensional panel
+    (like Cellist using only HVG); label the evaluation "top-400 HVG".
 
-用法
+Usage
 -----
-# ① 先扫 h_s 找接近 GT(2442) 细胞数的值（epochs 小，快）
+# 1. sweep h_s first to find the value closest to the GT(2442) cell count (few epochs, fast)
 python boms_xenium_roi_run.py --sweep-hs
 
-# ② 用选定 h_s 正式跑（epochs=30）
+# 2. production run with the chosen h_s (epochs=30)
 python boms_xenium_roi_run.py --h-s 11
 
-输出（供 eval_boms_xenium.py 读）：
-  boms_xenium_roi.npz  含 seg / x / y / gene_idx / gene_names / cell_loc / count_mat
+Output (read by eval_boms_xenium.py):
+  boms_xenium_roi.npz  contains seg / x / y / gene_idx / gene_names / cell_loc / count_mat
 """
 
 import os, time, argparse
@@ -30,22 +30,22 @@ SEP = "=" * 72
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--tx", default="/data/qiuyijia/dataset/xenium_roi_crop/"
+    p.add_argument("--tx", default="yourpath/dataset/xenium_roi_crop/"
                                    "transcripts.parquet")
-    p.add_argument("--out", default="/data/qiuyijia/boms_xenium_roi/"
+    p.add_argument("--out", default="yourpath/boms_xenium_roi/"
                                     "boms_xenium_roi.npz")
     p.add_argument("--top-genes", type=int, default=400,
-                   help="HVG 数（定案 400；int32 上限约 2900）")
+                   help="HVG count (decided: 400; int32 limit ~2900)")
     p.add_argument("--qv-min", type=float, default=20.0)
     p.add_argument("--h-s", type=float, default=11.0,
-                   help="细胞直径(µm)，非半径。淋巴结起点，用 --sweep-hs 定")
+                   help="cell diameter (µm), not radius; lymph-node start, tune with --sweep-hs")
     p.add_argument("--h-r", type=float, default=0.3)
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--K", type=int, default=30)
     p.add_argument("--sweep-hs", action="store_true",
-                   help="扫 h_s 找接近 GT 细胞数的值（用小 epochs）")
+                   help="sweep h_s for the value closest to the GT cell count (few epochs)")
     p.add_argument("--sweep-epochs", type=int, default=10,
-                   help="扫描时用的 epochs（小=快）")
+                   help="epochs used during the sweep (smaller = faster)")
     p.add_argument("--gt-cells", type=int, default=2442)
     return p.parse_args()
 
@@ -61,9 +61,9 @@ def load_tx(cfg):
 
     prod = len(tx) * tx.feature_name.nunique()
     cov = None
-    print(f"  转录本 {n0:,} → 过滤+top{cfg.top_genes}基因 → {len(tx):,}")
-    print(f"  基因 {tx.feature_name.nunique()}  n_tx×n_gene={prod:,} "
-          f"{'✘ 溢出!' if prod > 2**31 else '✓ 安全'}")
+    print(f"  transcripts {n0:,} -> filter + top {cfg.top_genes} genes -> {len(tx):,}")
+    print(f"  genes {tx.feature_name.nunique()}  n_tx×n_gene={prod:,} "
+          f"{'overflow!' if prod > 2**31 else 'safe'}")
 
     gene_names = np.sort(tx.feature_name.unique())
     g2i = {g: i for i, g in enumerate(gene_names)}
@@ -74,7 +74,7 @@ def load_tx(cfg):
 def main():
     cfg = parse_args()
     os.makedirs(os.path.dirname(cfg.out), exist_ok=True)
-    print(SEP); print("BOMS —— Xenium ROI（HVG-400）"); print(SEP)
+    print(SEP); print("BOMS -- Xenium ROI (HVG-400)"); print(SEP)
 
     tx, gene_names = load_tx(cfg)
     X = tx.x_location.values.astype(np.float64)
@@ -83,10 +83,10 @@ def main():
 
     from boms import run_boms
 
-    # ── 扫 h_s 模式 ────────────────────────────────────────────────────────
+    # ── sweep h_s mode ─────────────────────────────────────────────────────
     if cfg.sweep_hs:
-        print(f"\n  扫 h_s（epochs={cfg.sweep_epochs}，目标 GT={cfg.gt_cells}）")
-        print(f"  {'h_s':>6} {'细胞数':>8} {'vs GT':>8} {'用时':>7}")
+        print(f"\n  sweep h_s (epochs={cfg.sweep_epochs}, target GT={cfg.gt_cells})")
+        print(f"  {'h_s':>6} {'cells':>8} {'vs GT':>8} {'elapsed':>7}")
         print("  " + "-" * 34)
         best = None
         for hs in [6.9, 9, 11, 13, 15, 18]:
@@ -98,15 +98,15 @@ def main():
             print(f"  {hs:>6.1f} {nc:>8,} {d:>+8,} {time.time()-t0:>6.0f}s")
             if best is None or abs(d) < abs(best[1]):
                 best = (hs, d, nc)
-        print(f"\n  → 最接近 GT 的 h_s = {best[0]}（细胞 {best[2]:,}, "
-              f"差 {best[1]:+,}）")
-        print(f"     注：扫描用 epochs={cfg.sweep_epochs}，正式跑 epochs=30 "
-              f"细胞数会略有变化")
-        print(f"\n  正式跑：python {os.path.basename(__file__)} --h-s {best[0]}")
+        print(f"\n  -> closest h_s to GT = {best[0]} (cells {best[2]:,}, "
+              f"diff {best[1]:+,})")
+        print(f"     note: sweep uses epochs={cfg.sweep_epochs}; the production "
+              f"run (epochs=30) cell count will shift slightly")
+        print(f"\n  production run: python {os.path.basename(__file__)} --h-s {best[0]}")
         return
 
-    # ── 正式运行 ──────────────────────────────────────────────────────────
-    print(f"\n  正式运行  h_s={cfg.h_s}  epochs={cfg.epochs}  "
+    # ── production run ─────────────────────────────────────────────────────
+    print(f"\n  production run  h_s={cfg.h_s}  epochs={cfg.epochs}  "
           f"top-{cfg.top_genes} HVG")
     t0 = time.time()
     modes, seg, count_mat, cell_loc, coords = run_boms(
@@ -117,11 +117,11 @@ def main():
     n_cell = int(seg.max())
     n_asg = int((seg > 0).sum())
     print(f"\n{SEP}")
-    print(f"完成  用时 {dt:.0f}s")
-    print(f"  细胞数     {n_cell:,}   (GT {cfg.gt_cells})")
-    print(f"  已分配 RNA {n_asg:,} / {len(X):,} ({n_asg/len(X)*100:.1f}%)")
+    print(f"Done  elapsed {dt:.0f}s")
+    print(f"  cells       {n_cell:,}   (GT {cfg.gt_cells})")
+    print(f"  assigned RNA {n_asg:,} / {len(X):,} ({n_asg/len(X)*100:.1f}%)")
     _, cnt = np.unique(seg[seg > 0], return_counts=True)
-    print(f"  每细胞 RNA 中位 {np.median(cnt):.0f}  "
+    print(f"  RNA per cell median {np.median(cnt):.0f}  "
           f"p5~p95 {np.percentile(cnt,5):.0f}~{np.percentile(cnt,95):.0f}")
     print(SEP)
 
@@ -129,10 +129,10 @@ def main():
         cfg.out, seg=seg, x=X, y=Y, gene_idx=G,
         gene_names=gene_names, cell_loc=cell_loc, count_mat=count_mat,
         h_s=cfg.h_s, top_genes=cfg.top_genes)
-    print(f"  已存 → {cfg.out}")
-    print(f"\n  评估：")
+    print(f"  Saved -> {cfg.out}")
+    print(f"\n  evaluation:")
     print(f"    python eval_boms_xenium.py --npz {cfg.out} "
-          f"--data-dir /data/qiuyijia/dataset/xenium_roi_crop")
+          f"--data-dir yourpath/dataset/xenium_roi_crop")
 
 
 if __name__ == "__main__":

@@ -8,10 +8,10 @@ import tifffile
 import cv2
 from scipy.ndimage import gaussian_filter
 
-IMG = "/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all/E12.5_E1S3.tif"
-GEM = "/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all/E12.5_E1S3_Dorsal_Midbrain_GEM_CellBin.tsv.gz"
+IMG = "yourpath/dataset/stereoseq/stereo-seq_data_all/E12.5_E1S3.tif"
+GEM = "yourpath/dataset/stereoseq/stereo-seq_data_all/E12.5_E1S3_Dorsal_Midbrain_GEM_CellBin.tsv.gz"
 
-OUT_BASE = "/data/qiuyijia/genesegnet_e12_5_train"
+OUT_BASE = "yourpath/genesegnet_e12_5_train"
 TRAIN_ROOT = os.path.join(OUT_BASE, "train", "e12_5")
 VAL_ROOT   = os.path.join(OUT_BASE, "val",   "e12_5")
 
@@ -73,7 +73,7 @@ def main():
     g = pd.read_csv(GEM, sep="\t", usecols=["geneID", "x", "y", "MIDCounts", "cell"])
     print("rows =", len(g))
 
-    # 经验证：E12.5 对齐关系是 row=x, col=y
+    # Verified: for E12.5 the alignment is row=x, col=y
     rows = g["x"].astype(int).values
     cols = g["y"].astype(int).values
 

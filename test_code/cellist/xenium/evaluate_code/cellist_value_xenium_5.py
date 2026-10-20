@@ -4,9 +4,7 @@
 cellist_value_xenium_5_mouse_brain.py
 Evaluator for the COMPLETED Cellist Xenium-5 mouse brain run.
 
-Known completed result:
-  /data/qiuyijia/cellist_xenium_liver_tune/r7_a0.05_b2_two1_local0
-  QC: 2,942 cells, platform reference ~11,963.
+Known completed result: 2,942 cells, platform reference ~11,963.
 
 The evaluator auto-locates:
   cellist_segmentation.tif / segmentation*.tif / label*.tif
@@ -17,15 +15,11 @@ Cellist raster grid:
   native pixel=0.2125 um
   raster pixel=0.425 um
 
-ROI:
-  y0=13704 x0=21974 size=10000 native px
+ROI: y0=13704 x0=21974 size=10000 native px
 
 Metrics:
-  detection/localization
-  count ratio
-  median area / equivalent diameter
-  transcript assignment rate
-  matched-cell transcript count correlation
+  detection/localization, count ratio, median area / equivalent diameter,
+  transcript assignment rate, matched-cell transcript count correlation.
 
 It intentionally evaluates the completed result even though QC is poor.
 """
@@ -40,15 +34,15 @@ from scipy.spatial import cKDTree
 from scipy.stats import pearsonr,spearmanr
 
 NATIVE_PIX=0.2125
-# Final Cellist raster is not necessarily on the GEM input grid.
+# The final Cellist raster is not necessarily on the GEM input grid.
 # Infer raster pixel size from ROI native-pixel extent / final mask shape.
 ROI_Y0=6956
 ROI_X0=12077
 ROI_SIZE=10000
 
-ROOT_DEFAULT="/data/qiuyijia/dataset/xenium_mouse_brain"
-RUN_DEFAULT="/data/qiuyijia/cellist_xenium_mouse_brain_roi10000"
-OUT_DEFAULT="/data/qiuyijia/eval_results_qv20/mouse_brain/cellist_xenium_5_metrics.csv"
+ROOT_DEFAULT="yourpath"
+RUN_DEFAULT="yourpath"
+OUT_DEFAULT="yourpath"
 
 
 def choose_col(cols,cands,required=True):
@@ -197,12 +191,12 @@ def main():
     gt=load_gt(args.root);gtxy=gt[["x","y"]].to_numpy(float)
     mp,mg,dist=sparse_match(pred_xy,gtxy,args.match_radius)
 
-    # Pred transcript counts: prefer cell_by_gene.npy.
+    # Predicted transcript counts: prefer cell_by_gene.npy.
     cbg=Path(args.run)/"cell_by_gene.npy"
     if cbg.exists():
         X=np.load(cbg,mmap_mode="r")
         pred_counts=np.asarray(X.sum(axis=1)).ravel().astype(float)
-        # If raster contains a few labels lost after quantification, align conservatively.
+        # If the raster contains a few labels lost after quantification, align conservatively.
         if len(pred_counts)!=len(labels):
             print(f"WARNING cell_by_gene rows={len(pred_counts)} raster labels={len(labels)}")
             n=min(len(pred_counts),len(labels))

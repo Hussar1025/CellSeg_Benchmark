@@ -48,7 +48,7 @@ import pandas as pd
 
 VERSION = "2026.08.13"
 
-DATA_ROOT = "/data/qiuyijia/dataset/MERFISH_Lung_cancer"
+DATA_ROOT = "yourpath/dataset/MERFISH_Lung_cancer"
 ROI_SIZE = 10000                 # mosaic px, centred -> 1080 x 1080 um
 DAPI_HINT = "dapi"
 
@@ -566,7 +566,7 @@ PRIOR_CHOICES = ['centroid', 'polygon', 'dapi', 'disk']
 # ==========================================================================
 
 
-OUT_DEFAULT = "/data/qiuyijia/comseg_merfish_lung"
+OUT_DEFAULT = "yourpath/comseg_merfish_lung"
 
 
 def add_args(ap):

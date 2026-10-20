@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-eval_boms_xenium_6.py  —— BOMS × Xenium 小鼠结肠 评估（19 指标）
+eval_boms_xenium_6.py -- BOMS × Xenium mouse colon evaluation (19 metrics)
 =========================================================================
-pred : /data/qiuyijia/boms_xenium_6/boms_xenium_6.npz
-GT   : cells.parquet（质心）+ transcripts.parquet（cell_id 分配）
-ROI  : 直接读 npz 的 roi 字段（与 run 完全一致，不重算）
-seg  : 0-based（0=第 0 个细胞，非背景），cell_loc[i] <-> seg==i
+pred : yourpath/boms_xenium_6/boms_xenium_6.npz
+GT   : cells.parquet (centroids) + transcripts.parquet (cell_id assignment)
+ROI  : read directly from the npz roi field (same as run, not recomputed)
+seg  : 0-based (0 = cell 0, not background), cell_loc[i] <-> seg==i
 
-# 运行（用有 numpy/pandas/scipy/pyarrow 的环境，例如 ucs 或 proseg_eval）
+# Run (in an env with numpy/pandas/scipy/pyarrow, e.g. ucs or proseg_eval)
 conda activate ucs
 python eval_boms_xenium_6.py
 """
@@ -24,11 +24,11 @@ from scipy.spatial.distance import jensenshannon
 warnings.filterwarnings("ignore")
 SEP = "=" * 68
 
-# ── 配置（本文件 = xenium_4 / Xenium 小鼠结肠）────────────────────────────────
-LABEL        = "Xenium 小鼠结肠"
-NPZ_PATH     = "/data/qiuyijia/SpaSegBench/result/boms/xenium_7/boms_xenium_7.npz"
-DATA_DIR     = "/data/qiuyijia/dataset/xenium7/outs"
-OUT_PATH     = "/data/qiuyijia/eval_results/boms/xenium_7.csv"
+# ── config ────────────────────────────────────────────────────────────
+LABEL        = "Xenium mouse colon"
+NPZ_PATH     = "yourpath/SpaSegBench/result/boms/xenium_7/boms_xenium_7.npz"
+DATA_DIR     = "yourpath/dataset/xenium7/outs"
+OUT_PATH     = "yourpath/eval_results/boms/xenium_7.csv"
 MATCH_RADIUS = 20.0   # µm
 QV_MIN       = 20.0
 
@@ -43,39 +43,39 @@ def find(root, *pats):
 
 
 os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
-print(SEP); print(f"BOMS × {LABEL} 评估"); print(SEP)
+print(SEP); print(f"BOMS × {LABEL} evaluation"); print(SEP)
 
 # ════════════════════════════════════════════════════════════════════════
 # 1. pred npz
 # ════════════════════════════════════════════════════════════════════════
 d = np.load(NPZ_PATH, allow_pickle=True)
-seg      = d["seg"].astype(np.int64)          # 0-based，每个值都是真细胞
+seg      = d["seg"].astype(np.int64)          # 0-based, every value is a real cell
 tx_x     = d["x"].astype(np.float64)
 tx_y     = d["y"].astype(np.float64)
 gene_names = d["gene_names"].astype(str)
 gene2i   = {g: i for i, g in enumerate(gene_names)}
 gene_idx = pd.Series(d["gene"].astype(str)).map(gene2i).to_numpy()
 if np.isnan(gene_idx).any():
-    raise SystemExit("npz 里存在 gene 不在 gene_names 中，无法建立 gene_idx")
+    raise SystemExit("npz contains a gene not in gene_names; cannot build gene_idx")
 gene_idx = gene_idx.astype(np.int64)
 cell_loc = d["cell_loc"].astype(np.float64)
 n_pred   = cell_loc.shape[0]
 n_gene   = len(gene_names)
 pred_xy  = cell_loc
-pred_counts = np.bincount(seg, minlength=n_pred)   # pred_counts[i] = 细胞 i 的转录本数
+pred_counts = np.bincount(seg, minlength=n_pred)   # pred_counts[i] = transcript count of cell i
 
 if "roi" not in d.files:
-    raise SystemExit("npz 无 roi 字段，无法确定评估窗口")
+    raise SystemExit("npz has no roi field; cannot determine eval window")
 ROI_X0, ROI_X1, ROI_Y0, ROI_Y1 = [float(v) for v in d["roi"]]
 print(f"ROI x[{ROI_X0:.1f},{ROI_X1:.1f}] y[{ROI_Y0:.1f},{ROI_Y1:.1f}] µm")
-print(f"pred 细胞 {n_pred:,}  转录本 {len(seg):,}  基因 {n_gene}")
+print(f"pred cells {n_pred:,}  transcripts {len(seg):,}  genes {n_gene}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 2. GT 细胞质心
+# 2. GT cell centroids
 # ════════════════════════════════════════════════════════════════════════
 cp = find(DATA_DIR, "cells.parquet", "cells.csv.gz")
 if cp is None:
-    raise SystemExit(f"在 {DATA_DIR} 下找不到 cells.parquet / cells.csv.gz")
+    raise SystemExit(f"cannot find cells.parquet / cells.csv.gz under {DATA_DIR}")
 gt = pd.read_parquet(cp) if str(cp).endswith("parquet") else pd.read_csv(cp)
 xc = next(c for c in gt.columns if c.lower() in ("x_centroid", "center_x"))
 yc = next(c for c in gt.columns if c.lower() in ("y_centroid", "center_y"))
@@ -88,16 +88,16 @@ gt = gt[(gt.cx >= ROI_X0) & (gt.cx < ROI_X1) &
         (gt.cy >= ROI_Y0) & (gt.cy < ROI_Y1)].reset_index(drop=True)
 gt_xy = gt[["cx", "cy"]].values.astype(float)
 n_gt  = len(gt)
-print(f"GT 细胞（ROI 内）{n_gt:,}   源 {cp.name}")
+print(f"GT cells (in ROI) {n_gt:,}   source {cp.name}")
 if n_gt == 0:
-    raise SystemExit("ROI 内 GT 细胞为 0，检查 ROI / GT 坐标口径")
+    raise SystemExit("0 GT cells in ROI; check ROI / GT coordinate conventions")
 
 # ════════════════════════════════════════════════════════════════════════
-# 3. GT 转录本（cell_id 分配 -> 计数 + 基因向量）
+# 3. GT transcripts (cell_id assignment -> counts + gene vectors)
 # ════════════════════════════════════════════════════════════════════════
 tp = find(DATA_DIR, "transcripts.parquet", "transcripts.csv.gz")
 if tp is None:
-    raise SystemExit(f"在 {DATA_DIR} 下找不到 transcripts.parquet")
+    raise SystemExit(f"cannot find transcripts.parquet under {DATA_DIR}")
 want = ["cell_id", "feature_name", "x_location", "y_location"]
 try:
     tg = pd.read_parquet(tp, columns=want + ["qv", "is_gene"])
@@ -115,10 +115,10 @@ gt_cnt = tg.groupby("cell_id").size()
 gt["gt_count"] = gt.cell_id.map(gt_cnt).fillna(0).astype(int)
 gt_gene_grp = (tg[tg.cell_id.isin(gt.cell_id)]
                .groupby(["cell_id", "feature_name"]).size().unstack(fill_value=0))
-print(f"GT 转录本（ROI 内）{len(tg):,}")
+print(f"GT transcripts (in ROI) {len(tg):,}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 4. 匹配（pred 细胞 -> 最近 GT 质心，radius 内一对一）
+# 4. matching (pred cells -> nearest GT centroid, one-to-one within radius)
 # ════════════════════════════════════════════════════════════════════════
 tree = cKDTree(gt_xy)
 dists, gi = tree.query(pred_xy, k=1, distance_upper_bound=MATCH_RADIUS)
@@ -140,7 +140,7 @@ gi_arr  = [p[1] for p in pairs]
 print(f"matched {n_match:,}   F1={f1:.4f}  P={prec:.4f}  R={recall:.4f}")
 
 # ════════════════════════════════════════════════════════════════════════
-# 5. 计数指标
+# 5. count metrics
 # ════════════════════════════════════════════════════════════════════════
 p_cnt = np.array([pred_counts[pi] for pi in pi_arr], dtype=float)
 g_cnt = gt.iloc[gi_arr]["gt_count"].values.astype(float)
@@ -153,7 +153,7 @@ else:
     count_pearson = count_spearman = count_mae = count_rmse = np.nan
 
 # ════════════════════════════════════════════════════════════════════════
-# 6. 基因向量（抽样 800 对）
+# 6. gene vectors (sample 800 pairs)
 # ════════════════════════════════════════════════════════════════════════
 np.random.seed(42)
 samp = (np.random.choice(len(pairs), min(800, len(pairs)), replace=False)
@@ -183,7 +183,7 @@ vec_js      = float(np.mean(jsd))     if jsd     else np.nan
 vec_pearson = float(np.mean(prs))     if prs     else np.nan
 
 # ════════════════════════════════════════════════════════════════════════
-# 7. 分配指标（pred 每 tx 的最近 GT 质心 vs 匹配到的 GT）
+# 7. assignment metrics (nearest GT centroid per pred tx vs matched GT)
 # ════════════════════════════════════════════════════════════════════════
 d_tx, gi_tx = tree.query(np.stack([tx_x, tx_y], 1), k=1,
                          distance_upper_bound=MATCH_RADIUS)
@@ -204,7 +204,7 @@ assign_overlap  = float(np.mean(ov_list)) if ov_list else np.nan
 assign_accuracy = float(np.mean(ac_list)) if ac_list else np.nan
 
 # ════════════════════════════════════════════════════════════════════════
-# 汇总
+# summary
 # ════════════════════════════════════════════════════════════════════════
 metrics = dict(
     gt_cells        = n_gt,
@@ -227,8 +227,8 @@ metrics = dict(
     assign_overlap  = round(assign_overlap,  4),
     assign_accuracy = round(assign_accuracy, 4),
 )
-print(f"\n{SEP}\n结果 (BOMS × {LABEL})\n{SEP}")
+print(f"\n{SEP}\nResults (BOMS × {LABEL})\n{SEP}")
 for k, v in metrics.items():
     print(f"  {k:22} {v}")
 pd.DataFrame([metrics]).to_csv(OUT_PATH, index=False)
-print(f"\n  已写 → {OUT_PATH}")
+print(f"\n  Saved → {OUT_PATH}")

@@ -1,6 +1,6 @@
 {
   "dataset": "xenium_mouse_brain",
-  "data_root": "/data/qiuyijia/dataset/xenium_mouse_brain",
+  "data_root": "yourpath/dataset/xenium_mouse_brain",
   "outs_zip": "Xenium_Prime_Mouse_Brain_Coronal_FF_outs.zip",
   "transcripts": "outs/transcripts.parquet",
   "seed_source": "official_transcripts_cell_id",
@@ -10,5 +10,5 @@
   "bering": {"n_cells_perClass": 10, "window_width": 50, "window_height": 50, "bwg_n_neighbors": 10, "batch_size": 4, "training_ratio": 0.8, "tile_size_um": 600, "tile_margin_um": 30, "min_tile_transcripts": 200, "seg_positive_edge_thresh": 0.55, "seg_leiden_resolution": 0.1, "seg_num_edges_perSpot": 30, "seg_graph_n_neighbors": 10, "ann_min_transcripts": 20, "ann_min_dominant_nodes": 10, "ann_min_dominant_ratio": 0.4},
   "unassigned_values": ["UNASSIGNED", "0", "-1", "nan", "None", ""],
   "seed": 0,
-  "output_dir": "/data/qiuyijia/bering/xenium_mouse_brain_output"
+  "output_dir": "yourpath/bering/xenium_mouse_brain_output"
 }

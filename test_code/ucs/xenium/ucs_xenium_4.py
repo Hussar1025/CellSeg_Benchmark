@@ -7,11 +7,11 @@ try:
 except Exception:
     pq=None
 
-ROOT='/data/qiuyijia/dataset/xenium_liver'
+ROOT='yourpath/dataset/xenium_liver'
 OUTS=os.path.join(ROOT,'outs')
-UCS_DIR='/data/qiuyijia/ucs/UCS'
+UCS_DIR='yourpath/ucs/UCS'
 UCS_RUN=os.path.join(UCS_DIR,'run.py')
-WORK='/data/qiuyijia/ucs_xenium_liver_clean'
+WORK='yourpath/ucs_xenium_liver_clean'
 GENE_MAP=os.path.join(WORK,'gene_map.tif')
 GENE_INDEX=os.path.join(WORK,'gene_index.csv')
 NUCLEI_MASK=os.path.join(WORK,'nuclei_mask.tif')

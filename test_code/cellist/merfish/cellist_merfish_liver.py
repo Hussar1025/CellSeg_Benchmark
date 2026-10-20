@@ -2,41 +2,40 @@
 # -*- coding: utf-8 -*-
 
 """
-Cellist × MERFISH liver — external multi-patch version
+Cellist x MERFISH liver - external multi-patch version
 ======================================================
 
-目的：
-    避免整个 2160×2160 liver ROI 被 Cellist 当成一个
-    包含 5000+ nuclei 的超大 patch，从而在 segmentation
-    阶段被 SIGKILL (rc=-9)。
+Goal: avoid the whole 2160x2160 liver ROI being treated by Cellist as a
+single patch with 5000+ nuclei, which gets SIGKILL (rc=-9) during
+segmentation.
 
-方法保持不变：
+Pipeline unchanged:
 
     DAPI
-      ↓
+      |
     Cellpose nuclei
-      ↓
+      |
     Cellist
 
-本脚本只是在进入 Cellist 之前，将同一个 ROI 切成规则 patch。
+This script only splits the same ROI into regular patches before Cellist.
 
-默认：
-    3 × 3 = 9 patches
+Default: 3 x 3 = 9 patches.
 
-特点：
-    1. 不使用其它分割方法的任何结果。
-    2. 复用当前 Cellist 自己生成的：
+Features:
+    1. Uses no results from any other segmentation method.
+    2. Reuses Cellist's own outputs:
            DAPI cache
            transcript cache
            Cellpose mask
-    3. 每个 nucleus 只属于一个 patch。
-    4. 每个 transcript 只属于一个 patch。
-       因此最终不会产生 patch overlap / duplicate assignment。
-    5. 每个 patch 串行运行 Cellist，减少峰值资源。
-    6. 完成后自动把 Cellist segmentation 坐标平移回
-       原始 2160×2160 Cellist ROI，并重编号 cell ID。
+    3. Each nucleus belongs to exactly one patch.
+    4. Each transcript belongs to exactly one patch, so there is no
+       patch overlap or duplicate assignment.
+    5. Patches run Cellist serially to lower peak resource use.
+    6. After completion, Cellist segmentation coordinates are shifted
+       back to the original 2160x2160 Cellist ROI and cell IDs are
+       renumbered.
 
-用法：
+Usage:
 
     conda activate cellist
 
@@ -62,16 +61,14 @@ import h5py
 from scipy.sparse import csr_matrix
 
 
-# ============================================================
 # Dataset
-# ============================================================
 
 CFG = {
 
     "liver1": {
 
         "out":
-            "/data/qiuyijia/cellist/merfish_liver1",
+            "yourpath",
 
         "prefix":
             "merfish_liver1",
@@ -80,7 +77,7 @@ CFG = {
     "liver2": {
 
         "out":
-            "/data/qiuyijia/cellist/merfish_liver2",
+            "yourpath",
 
         "prefix":
             "merfish_liver2",
@@ -96,9 +93,7 @@ def P(*args, **kwargs):
     print(*args, **kwargs)
 
 
-# ============================================================
 # 10X H5 writer
-# ============================================================
 
 def write_10x_h5(
     path,
@@ -202,9 +197,7 @@ def write_10x_h5(
         )
 
 
-# ============================================================
 # Locate Cellist cache
-# ============================================================
 
 def locate_cache(
     dataset,
@@ -255,10 +248,10 @@ def locate_cache(
         if not os.path.isfile(p):
 
             raise FileNotFoundError(
-                "\n缺少 Cellist 自己的缓存：\n"
+                "\nMissing Cellist cache:\n"
                 f"{p}\n\n"
-                "先用原 cellist_merfish_liver.py "
-                "完成 DAPI / transcript / Cellpose preparation。"
+                "First finish DAPI / transcript / Cellpose preparation "
+                "with the original cellist_merfish_liver.py."
             )
 
     return (
@@ -268,9 +261,7 @@ def locate_cache(
     )
 
 
-# ============================================================
 # Build one tile input
-# ============================================================
 
 def build_tile_inputs(
     tile_dir,
@@ -299,9 +290,7 @@ def build_tile_inputs(
         x1 - x0
     )
 
-    # --------------------------------------------------------
     # transcripts belonging uniquely to this tile
-    # --------------------------------------------------------
 
     tm = (
         (px_global >= x0)
@@ -334,15 +323,12 @@ def build_tile_inputs(
         )
     )
 
-    # --------------------------------------------------------
     # nuclei in this tile
     #
-    # Because tiles are non-overlapping, every nucleus label
-    # is assigned to exactly one tile based on pixels inside it.
-    #
-    # Nuclei crossing tile boundaries are truncated at the seam.
-    # This is preferable here to duplicate cells/transcripts.
-    # --------------------------------------------------------
+    # Tiles are non-overlapping, so every nucleus label is assigned to
+    # exactly one tile based on pixels inside it. Nuclei crossing tile
+    # boundaries are truncated at the seam; this is preferable here to
+    # duplicate cells/transcripts.
 
     mask = np.ascontiguousarray(
         mask_global[
@@ -388,9 +374,7 @@ def build_tile_inputs(
 
         return None
 
-    # --------------------------------------------------------
     # nucleus properties
-    # --------------------------------------------------------
 
     from skimage.measure import (
         regionprops_table
@@ -440,9 +424,7 @@ def build_tile_inputs(
         index=False
     )
 
-    # --------------------------------------------------------
     # unique transcript coordinates
-    # --------------------------------------------------------
 
     key = (
         py.astype(
@@ -521,9 +503,7 @@ def build_tile_inputs(
         index=False
     )
 
-    # --------------------------------------------------------
     # GEM
-    # --------------------------------------------------------
 
     gem = pd.DataFrame(
         {
@@ -567,9 +547,7 @@ def build_tile_inputs(
         index=False
     )
 
-    # --------------------------------------------------------
     # spot_count.h5
-    # --------------------------------------------------------
 
     spot_to_row = {
         k:i
@@ -629,9 +607,7 @@ def build_tile_inputs(
         ]
     )
 
-    # --------------------------------------------------------
     # nucleus_count.h5
-    # --------------------------------------------------------
 
     transcript_nucleus = (
         local_mask[
@@ -751,9 +727,7 @@ def build_tile_inputs(
     }
 
 
-# ============================================================
 # Run one Cellist tile
-# ============================================================
 
 def run_tile(
     tile,
@@ -821,7 +795,7 @@ def run_tile(
 
     env = os.environ.copy()
 
-    # Cellist itself remains CPU-only as in previous liver runs.
+    # Cellist remains CPU-only as in previous liver runs.
     env[
         "CUDA_VISIBLE_DEVICES"
     ] = ""
@@ -865,7 +839,7 @@ def run_tile(
 
     P(
         f"  size        = "
-        f"{tile['W']}×{tile['H']}"
+        f"{tile['W']}x{tile['H']}"
     )
 
     P(
@@ -899,9 +873,7 @@ def run_tile(
     return outdir
 
 
-# ============================================================
 # Merge Cellist coordinate outputs
-# ============================================================
 
 def merge_outputs(
     tiles,
@@ -970,7 +942,7 @@ def merge_outputs(
     if not groups:
 
         raise RuntimeError(
-            "没有找到 Cellist segmentation 输出"
+            "No Cellist segmentation output found"
         )
 
     P()
@@ -991,7 +963,7 @@ def merge_outputs(
                 sep="\t"
             )
 
-            # local → complete ROI coordinates
+            # local -> complete ROI coordinates
             if "x" in df.columns:
 
                 df["x"] = (
@@ -1091,9 +1063,7 @@ def merge_outputs(
     )
 
 
-# ============================================================
 # Main
-# ============================================================
 
 def main():
 
@@ -1136,7 +1106,7 @@ def main():
         "--grid",
         type=int,
         default=3,
-        help="N×N patch grid; default 3 -> 9 patches"
+        help="NxN patch grid; default 3 -> 9 patches"
     )
 
     ap.add_argument(
@@ -1153,13 +1123,13 @@ def main():
     P(SEP)
 
     P(
-        f"Cellist MULTIPATCH × "
+        f"Cellist MULTIPATCH x "
         f"{args.dataset}"
     )
 
     P(
         f"grid = "
-        f"{args.grid}×{args.grid}"
+        f"{args.grid}x{args.grid}"
     )
 
     P(
@@ -1184,9 +1154,7 @@ def main():
 
     P(SEP)
 
-    # --------------------------------------------------------
     # Read Cellist's own caches
-    # --------------------------------------------------------
 
     dapi_path, tx_path, mask_path = (
         locate_cache(
@@ -1242,7 +1210,7 @@ def main():
 
     P(
         f"ROI working grid = "
-        f"{W}×{H}"
+        f"{W}x{H}"
     )
 
     P(
@@ -1255,9 +1223,7 @@ def main():
         f"{len(px):,}"
     )
 
-    # --------------------------------------------------------
     # Tile boundaries
-    # --------------------------------------------------------
 
     xs = np.linspace(
         0,
@@ -1288,9 +1254,7 @@ def main():
 
     tiles = []
 
-    # --------------------------------------------------------
     # Build + run each tile serially
-    # --------------------------------------------------------
 
     tile_index = 0
 
@@ -1355,7 +1319,7 @@ def main():
 
             P(
                 f"tile {tile['prefix']}: "
-                f"{tile['W']}×{tile['H']}  "
+                f"{tile['W']}x{tile['H']}  "
                 f"nuclei={tile['n_nuclei']:,}  "
                 f"tx={tile['n_transcripts']:,}"
             )
@@ -1367,7 +1331,7 @@ def main():
     if not tiles:
 
         raise RuntimeError(
-            "没有有效 patch"
+            "No valid patch"
         )
 
     P()
@@ -1392,9 +1356,7 @@ def main():
             args.cell_radius
         )
 
-    # --------------------------------------------------------
     # Merge
-    # --------------------------------------------------------
 
     merged_dir = os.path.join(
         patch_root,
@@ -1411,7 +1373,7 @@ def main():
     P(SEP)
 
     P(
-        f"DONE — Cellist multipatch "
+        f"DONE - Cellist multipatch "
         f"{args.dataset}"
     )
 

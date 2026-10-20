@@ -12,20 +12,20 @@ from tqdm import tqdm
 
 CFG = {
     "liver1": {
-        "base": "/data/qiuyijia/dataset/merfish_liver1",
+        "base": "yourpath/dataset/merfish_liver1",
         "roi_x0": 5236.737991920782,
         "roi_x1": 6316.729987066785,
         "roi_y0": 3811.048683925526,
         "roi_y1": 4891.037342034139,
-        "work_dir": "/data/qiuyijia/ucs_merfish_liver1",
+        "work_dir": "yourpath/ucs_merfish_liver1",
     },
     "liver2": {
-        "base": "/data/qiuyijia/dataset/merfish_liver2",
+        "base": "yourpath/dataset/merfish_liver2",
         "roi_x0": 5771.0386869252825,
         "roi_x1": 6851.029458488514,
         "roi_y0": 4970.975379467495,
         "roi_y1": 6050.964816216321,
-        "work_dir": "/data/qiuyijia/ucs_merfish_liver2",
+        "work_dir": "yourpath/ucs_merfish_liver2",
     },
 }
 
@@ -54,7 +54,7 @@ def pick_best_gpu(min_free_gb=10.0):
             if free_gb > best_free:
                 best_free, best_idx = free_gb, int(idx)
         if best_free < min_free_gb:
-            raise RuntimeError(f"没有 GPU 空闲超过 {min_free_gb} GB")
+            raise RuntimeError(f"No GPU exceeds {min_free_gb} GB free")
         return str(best_idx)
     except Exception:
         return "0"
@@ -65,7 +65,7 @@ def find_one(patterns):
         hits.extend(glob.glob(p))
     hits = sorted(set(hits))
     if len(hits) != 1:
-        raise RuntimeError(f"需要唯一匹配，但找到 {len(hits)} 个: {hits}")
+        raise RuntimeError(f"expected exactly one match, found {len(hits)}: {hits}")
     return hits[0]
 
 def process_one_hdf5(args):

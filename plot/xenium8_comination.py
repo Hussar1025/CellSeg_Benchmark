@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-xenium_8 (ccRCC) 污染分析 v4
-主 case: 蛋白定义的 T 细胞 (CD3e+) 被肿瘤转录本 (KRT8/18/KRT7/MUC1/CDH1/EPCAM) 污染
-对照   : 蛋白定义的髓系细胞 (CD68+)、上皮/肿瘤细胞 (PanCK+)
-指标   : 胞内 外来谱系 / 自身谱系 转录本比值 (无参照系, 直接可读)
-输出   : 空间图 / 气泡矩阵 / 联合分布 / 累积剖面(边界原点 + 归一化相对距离)
+xenium_8 (ccRCC) contamination analysis v4
+Main case: protein-defined T cells (CD3e+) contaminated by tumor transcripts
+    (KRT8/18/KRT7/MUC1/CDH1/EPCAM)
+Control : protein-defined myeloid (CD68+) and epithelial/tumor (PanCK+) cells
+Metric  : in-cell foreign-lineage / self-lineage transcript ratio
+    (no reference set, directly readable)
+Output  : spatial plot / bubble matrix / joint distribution / cumulative profile
+    (boundary origin + normalized relative distance)
 
-v4 相对 v3 的修改（计算逻辑不变）：
-  · 方法列表来自 common.all_methods()（16 个方法中找到结果的那些），某个方法读取失败
-    或与 GT 不对齐时跳过并记录，不影响其他方法
-  · 气泡矩阵的配色改用 panel.CASE_COLORS（v3 本地只定义了 T / Myeloid，第三个 case
-    Epi/Tumor 会报 KeyError）
-  · 气泡描边 1.4 -> 0.8，与 Fig. 2 的气泡图保持一致
-  · 方法显示名统一用 panel.DISPLAY（Cellpose 显示为 Cellpose-SAM）
-先运行 python common.py --check 确认各方法的输入。
+v4 changes vs v3 (computation logic unchanged):
+  - methods come from common.all_methods(); a method that fails to load or is
+    misaligned with GT is skipped and logged without affecting the others
+  - bubble colors use panel.CASE_COLORS (v3 only defined T / Myeloid, so the
+    third case Epi/Tumor raised KeyError)
+  - bubble stroke 1.4 -> 0.8 to match Fig. 2
+  - display names use panel.DISPLAY (Cellpose shown as Cellpose-SAM)
+Run python common.py --check first to confirm each method's inputs.
 """
 import os
 import numpy as np
@@ -36,7 +39,7 @@ from panel import (OUTDIR, MARK, LINEAGES, CASES, PX, X0, Y0, SZ,
                    ORANGE, BLUE, GREY, MCOL, DISPLAY, CASE_COLORS as _PANEL_CASE_COLORS,
                    MIN_TX, MIN_OWN, ENV_RING)
 
-# case 配色：T / 髓系沿用 v3 的两色（橙 / 蓝），其余 case 用 panel 中的颜色
+# case colors: T / Myeloid keep the two v3 colors (orange / blue); other cases use panel colors
 CASE_COLORS = dict(_PANEL_CASE_COLORS, T=ORANGE, Myeloid=BLUE)
 from common import (log, read_ch, protein_pos, get_mask, all_methods,
                     load_transcripts, cell_table, protein_identity)
@@ -53,12 +56,12 @@ _REL_OUT = 1.0 / 3.0
 BIN_R = np.concatenate([np.arange(0.0, 1.0, 0.05),
                         np.arange(1.0, 1.0 + _REL_OUT + 0.01, 0.05 / 3)])
 
-# 气泡矩阵外观（配色来自 panel.CASE_COLORS）
+# bubble matrix appearance (colors from panel.CASE_COLORS)
 ROW_BG_A, ROW_BG_B = "#EDEDED", "#FFFFFF"
-EDGE_C, EDGE_W = "#1A1A1A", 0.8          # 气泡描边（与 bubble_xenium8.py 一致）
+EDGE_C, EDGE_W = "#1A1A1A", 0.8          # bubble stroke (matches bubble_xenium8.py)
 LIGHT_MAX, LIGHT_GAMMA = 0.97, 0.65
 HALF_MIN, HALF_MAX = 0.077, 0.300
-GAP_EPS = 0.004                           # 气泡间额外留白（英寸）
+GAP_EPS = 0.004                           # extra whitespace between bubbles (inches)
 MIN_INDENT = EDGE_W / 72.0 / 2.0 + GAP_EPS
 SQ_RANGE, SQ_POWER = (2.0, 8.0), 6.0
 CAT_GAP = 0.5
@@ -67,12 +70,13 @@ FS = 12
 SCORE_LO, SCORE_SPAN = 0.05, 0.90
 _SCRATCH = None
 
-# 每个 (方法, case) 至少需要的可评估细胞数；低于则跳过
+# minimum assessable cells required per (method, case); fewer are skipped
 MIN_CELLS = 30
-# 强制放行：即使可评估细胞少于 MIN_CELLS 也保留并画全所有图（细胞数为 0 时仍跳过）。
-# DISSECT 只检出约 1/4 的细胞，蛋白定义的髓系细胞仅剩十余个；结果仅作展示，图注需注明 n。
+# Force-keep: keep and plot all figures even below MIN_CELLS (still skipped at 0 cells).
+# DISSECT detects only ~1/4 of cells, leaving just over ten protein-defined myeloid cells;
+# results are for display only, so the figure caption must note n.
 FORCE_KEEP = {("dissect", "Myeloid")}
-MIN_FIT_FORCED = 3          # 强制放行的组合在联合分布图中做线性拟合所需的最少点数（常规为 20）
+MIN_FIT_FORCED = 3          # min points for the linear fit in the joint plot for force-kept combos (normally 20)
 
 
 def text_w(t, fs):
@@ -113,9 +117,9 @@ def signed_distance(binary, px_um):
 
 # =====================================================================
 def compute():
-    log("== 蛋白阳性区 ==")
+    log("== protein-positive region ==")
     posmap = {c: protein_pos(ch) for c, (ch, _) in CASES.items()}
-    log("\n== 转录本 ==")
+    log("\n== transcripts ==")
     g, tix, tiy, gm, expect = load_transcripts()
 
     methods, skipped = [], {}
@@ -125,7 +129,7 @@ def compute():
         try:
             mask = get_mask(name)
         except Exception as e:
-            log(f"  [跳过] {type(e).__name__}: {e}")
+            log(f"  [Skip] {type(e).__name__}: {e}")
             skipped[name] = str(e)
             continue
         methods.append(name)
@@ -143,10 +147,10 @@ def compute():
             n_cell = int(ev.sum())
             forced = (name, cname) in FORCE_KEEP
             if n_cell == 0 or (n_cell < MIN_CELLS and not forced):
-                log(f"  {cname}: 细胞过少({n_cell}), 跳过")
+                log(f"  {cname}: too few cells ({n_cell}), skip")
                 continue
             if n_cell < MIN_CELLS:
-                log(f"  {cname}: 细胞仅 {n_cell} 个（< {MIN_CELLS}），按 FORCE_KEEP 强制保留")
+                log(f"  {cname}: only {n_cell} cells (< {MIN_CELLS}), force-kept via FORCE_KEEP")
 
             src = {a: float(cnt[a][ev].sum()) for a in LINEAGES}
             fsum = sum(src[a] for a in LINEAGES if a != self_lin)
@@ -197,8 +201,8 @@ def compute():
             mid_r = 0.5 * (BIN_R[1:] + BIN_R[:-1])
             i1 = int(np.clip(np.searchsorted(BIN_R, 1.0) - 1, 0, len(mid_r) - 1))
 
-            log(f"  {cname}: 细胞={n_cell} 中位比值={np.nanmedian(ratio[ev]):.2f}"
-                f"  来源=" + str({a: (round(share[a], 3)
+            log(f"  {cname}: cells={n_cell} median ratio={np.nanmedian(ratio[ev]):.2f}"
+                f"  source=" + str({a: (round(share[a], 3)
                                     if np.isfinite(share[a]) else 'self')
                                   for a in LINEAGES}))
             store[(name, cname)] = dict(
@@ -211,7 +215,7 @@ def compute():
                 cum_r_frn=np.cumsum(hr_f) / n_cell, i1=i1,
                 R_med=float(np.median(R_cell[ev])))
     if skipped:
-        log("\n== 跳过的方法 ==")
+        log("\n== skipped methods ==")
         for k, v in skipped.items():
             log(f"  {DISPLAY.get(k, k)}: {v}")
     return methods, store
@@ -277,14 +281,14 @@ IMAGE_METHODS = ["cellpose", "cellpose3", "cellsam", "mesmer", "stardist", "cell
 
 
 def plot_bubble(methods, store):
-    """三张气泡矩阵：全部方法 / 9 种转录本方法 / 7 种图像方法。
-    每张图内按列（外来谱系）重新归一化。某方法在某个 case 中细胞不足而没有结果时，
-    该方法仍保留一行，对应格子画灰色短横线，保证所有方法都出现在图中。"""
+    """Three bubble matrices: all methods / 9 transcript-based / 7 image-based methods.
+    Each plot re-normalizes per column (foreign lineage). A method with too few cells in a
+    case still keeps its row; the missing cells are drawn as a gray dash so every method appears."""
     order = [m for m in OMICS_METHODS + IMAGE_METHODS if m in methods] + \
             [m for m in methods if m not in OMICS_METHODS + IMAGE_METHODS]
     missing = [DISPLAY.get(m, m) for m in OMICS_METHODS + IMAGE_METHODS if m not in methods]
     if missing:
-        log(f"  [注意] 这些方法没有读取成功，无法进入气泡图：{missing}")
+        log(f"  [Note] these methods failed to load and are omitted from the bubble plot: {missing}")
     subsets = [("all", "All methods", order),
                ("omics", "Transcript-based methods", [m for m in order if m in OMICS_METHODS]),
                ("image", "Image-based methods", [m for m in order if m in IMAGE_METHODS])]
@@ -309,7 +313,7 @@ def _bubble_one(rows, store, label, fp):
     for cname, cols, Mx in blocks:
         gap = [DISPLAY.get(rows[i], rows[i]) for i in np.nonzero(np.isnan(Mx).all(1))[0]]
         if gap:
-            log(f"  [{label}] {cname}: 无结果（细胞不足），画灰色短横线：{gap}")
+            log(f"  [{label}] {cname}: no result (too few cells), drawn as gray dash: {gap}")
     scores = []
     for cname, cols, Mx in blocks:
         S = np.full_like(Mx, np.nan)
@@ -370,7 +374,7 @@ def _bubble_one(rows, store, label, fp):
             for i in range(nR):
                 yc = (nR - 1 - i) * cell + cell / 2
                 v = S[i, j]
-                if not np.isfinite(v):                       # 该方法在此 case 无结果
+                if not np.isfinite(v):                       # method has no result for this case
                     ax.plot([X - cell * 0.18, X + cell * 0.18], [yc, yc], color="#9E9E9E",
                             lw=1.1, zorder=3)
                     continue
@@ -397,7 +401,7 @@ def _bubble_one(rows, store, label, fp):
                 rotation=LABEL_ROT, rotation_mode="anchor", ha="left",
                 va="center", fontsize=FS, color="#1A1A1A")
     fig.text(left_in / fig_w - 0.004, 1 - 0.06 / fig_h,
-             f"Contamination source composition — {label}   "
+             f"Contamination source composition - {label}   "
              "(larger & squarer & lighter = smaller share)",
              ha="left", va="top", fontsize=FS, color="#1A1A1A")
     fig.savefig(fp, bbox_inches="tight", facecolor="white")
@@ -456,7 +460,7 @@ def plot_joint(methods, store):
             min_fit = MIN_FIT_FORCED if forced else 20
             if kf.sum() < min_fit:
                 lines.append(f"{DISPLAY.get(name, name):<12s}  n/a")
-                if forced and len(x):                       # 强制放行：点太少也照样画散点，不留空白
+                if forced and len(x):                       # force-keep: still scatter even with few points, no blank panel
                     ax.scatter(x, y, c="#5B9BD5", s=12, linewidths=0, alpha=0.9)
                 continue
             slope, itc = np.polyfit(x[kf], y[kf], 1)
@@ -549,7 +553,7 @@ def plot_cumulative(methods, store):
                 ax.set_title(ttl, fontsize=11)
                 ax.grid(alpha=0.25)
                 ax.set_ylim(bottom=0)
-            # 图例与解析式信息横向并列：图例紧贴图右侧，解析式放在图例右边，两者垂直居中对齐
+            # legend and fit info side by side: legend hugs the right edge, fit formula to its right, both vertically centered
             h, l = axes[1].get_legend_handles_labels()
             leg = fig.legend(h, l, loc="center left", bbox_to_anchor=(1.0, 0.5),
                              frameon=False, fontsize=10)
@@ -570,7 +574,7 @@ def plot_cumulative(methods, store):
 
 
 def save_bubble_data(methods, store):
-    """把气泡矩阵所需的数据（各方法、各 case 的外来转录本来源构成）存成 CSV，供独立的气泡图脚本使用。"""
+    """Save the bubble matrix data (foreign-transcript source composition per method and case) as CSV for the standalone bubble plot script."""
     rows = []
     for (name, cname), d in store.items():
         for a in LINEAGES:
@@ -587,9 +591,9 @@ def save_bubble_data(methods, store):
 def main():
     methods, store = compute()
     if not store:
-        raise SystemExit("没有任何方法产出结果，请先运行 python common.py --check")
+        raise SystemExit("no method produced results; run python common.py --check first")
     save_bubble_data(methods, store)
-    log("\n== 绘图 ==")
+    log("\n== plotting ==")
     plot_spatial(methods, store)
     plot_bubble(methods, store)
     plot_joint(methods, store)

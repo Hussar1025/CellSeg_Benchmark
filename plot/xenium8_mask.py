@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-xenium_8 (ccRCC): 分割掩膜 + 转录本点 放大对比图  (T vs 肿瘤)
+xenium_8 (ccRCC): segmentation mask + transcript-point zoom-in comparison (T vs tumor)
 =============================================================
-在同一个小 ROI 上并排展示 ProSeg 与 Cellpose 的分割, 直观呈现边界差异
-如何影响转录本纯净性。
+Show ProSeg and Cellpose segmentations side by side on the same small ROI, making visible
+how the boundary difference affects transcript purity.
 
-细胞身份
-  T 细胞      : CD3e 蛋白阳性 (独立于转录本)
-  肿瘤细胞    : 优先用 PanCK 蛋白; 若阳性细胞过少则退回转录本判定
-                (Epi/Tumor marker 占优), 日志与图例会标明实际所用方式
+Cell identity
+  T cells      : CD3e protein-positive (independent of transcripts)
+  tumor cells  : prefer PanCK protein; if too few positive cells, fall back to
+                 transcript calls (Epi/Tumor marker dominant); logs and legend note
+                 the method actually used
 
-绘制层次 (由下至上)
-  1. DAPI 核背景 (灰度)
-  2. 细胞填充色: T = 浅橙, 肿瘤 = 浅紫, 其他 = 浅灰 (低透明度, 不遮核)
-  3. 细胞边界: 用 skimage.find_contours 提取轮廓后以固定线宽绘制,
-               因此两个方法的线条粗细完全一致, 不受 mask 分辨率影响
-  4. 转录本点: 蓝 = 该细胞身份对应谱系的特异基因 (自身信号)
-               橙 = 其他谱系的特异基因 (外来 -> 污染)
-               浅灰 = 非谱系特异基因 (管家等), 可关闭
+Drawing layers (bottom to top)
+  1. DAPI nuclear background (grayscale)
+  2. cell fill: T = light orange, tumor = light purple, other = light gray
+     (low alpha, does not hide nuclei)
+  3. cell boundary: contours extracted with skimage.find_contours, drawn at a fixed
+                 width so both methods share identical line weight regardless of mask
+                 resolution
+  4. transcript dots: blue = lineage-specific genes of the cell's own identity (self)
+                orange = lineage-specific genes of other lineages (foreign -> contamination)
+                light gray = non-lineage-specific genes (housekeeping etc.), optional
 """
 import os
 import numpy as np
@@ -41,41 +44,41 @@ from panel import (OUTDIR, MARK, LINEAGES, PX, X0, Y0, SZ,
 from common import (log, read_ch, protein_pos, get_mask, load_transcripts,
                     cell_table, down_frac)
 
-# ================= 可调参数 =================
+# ================= tunable parameters =================
 METHODS = ["proseg", "cellpose"]
-ROI_UM = 40.0                  # 搜索用视野边长 (um)
-N_CELL_TARGET = (4, 12)        # 视野内细胞数期望区间
-MAX_UNASSIGNED_TRY = [0, 1, 2, 3, 99]   # 允许的 unassigned 细胞数, 逐级放宽
-SUB_FRAC = 0.75                # 最终视野 = 40 * 0.75 = 30 um
-SUB_CORNER = "SW"              # SW=左下 / SE=右下 / NW=左上 / NE=右上
+ROI_UM = 40.0                  # search field side length (um)
+N_CELL_TARGET = (4, 12)        # expected cell-count range in the field of view
+MAX_UNASSIGNED_TRY = [0, 1, 2, 3, 99]   # allowed unassigned cell counts, relaxed step by step
+SUB_FRAC = 0.75                # final field = 40 * 0.75 = 30 um
+SUB_CORNER = "SW"              # SW=lower-left / SE=lower-right / NW=upper-left / NE=upper-right
 SEARCH_TOP = 800
-NEIGHBOR_UM = 12.0             # 判断"被包围"时的邻域半径
-MIN_TUMOR_AROUND = 2           # 视野内至少要有几个肿瘤细胞
-SHOW_OTHER_TX = True           # 是否画非谱系特异转录本(浅灰)
+NEIGHBOR_UM = 12.0             # neighbourhood radius used to judge "surrounded"
+MIN_TUMOR_AROUND = 2           # minimum tumor cells required in the field
+SHOW_OTHER_TX = True           # whether to draw non-lineage transcripts (light gray)
 PT_SIZE = 26
-LINE_W = 1.2                   # 细胞轮廓线宽(两方法一致)
-FILL_ALPHA = 0.42              # 掩膜填充透明度
-BG_ALPHA = 1.0                 # DAPI 背景不透明度
-BG_GAMMA = 0.65                # <1 提亮暗部, 让核更醒目
-# 身份完全由蛋白决定, 不使用任何转录本信息 -> 与污染判定完全正交
+LINE_W = 1.2                   # cell contour line width (same for both methods)
+FILL_ALPHA = 0.42              # mask fill alpha
+BG_ALPHA = 1.0                 # DAPI background opacity
+BG_GAMMA = 0.65                # <1 brightens shadows so nuclei stand out
+# identity is decided purely by protein, with no transcript info -> fully orthogonal to contamination calls
 
-CH_T = "ch0011_cd3e"        # T 细胞
-CH_MYE = "ch0015_cd68"      # 髓系
-CH_TUMOR = "ch0030_panck"   # 上皮/肿瘤
-CH_CD45 = "ch0033_cd45"     # 泛白细胞(用于"其他免疫细胞")
+CH_T = "ch0011_cd3e"        # T cells
+CH_MYE = "ch0015_cd68"      # myeloid
+CH_TUMOR = "ch0030_panck"   # epithelial/tumor
+CH_CD45 = "ch0033_cd45"     # pan-leukocyte (used for "other immune" cells)
 LIN_T = "T"
 LIN_MYE = "Myeloid"
 LIN_TUMOR = "Epi/Tumor"
 LIN_IMM = "other immune"
 
-# 仅蛋白可判定的身份(证据纯净): 其余一律 unassigned
-# 指定配色(仅此四色): (68,144,169) (91,155,213) (255,192,0) (237,125,49)
-# 其中橙色 (237,125,49) 专门留给"外来转录本", 掩膜不使用。
-# 无蛋白身份者无可用色, 以中性浅灰占位。
+# only identities decidable by protein (pure evidence); everything else is unassigned
+# fixed color scheme (only these four): (68,144,169) (91,155,213) (255,192,0) (237,125,49)
+# orange (237,125,49) is reserved for "foreign transcripts", not used for masks.
+# cells without a protein identity have no color and use neutral light gray as a placeholder.
 EDGE = {
-    LIN_T:        "#4490A9",   # (68,144,169)  CD3e+ 蛋白确证
-    LIN_MYE:      "#5B9BD5",   # (91,155,213)  CD68+ 蛋白确证
-    LIN_TUMOR:    "#FFC000",   # (255,192,0)   PanCK+ 或 无蛋白身份者(见下)
+    LIN_T:        "#4490A9",   # (68,144,169)  CD3e+ protein-confirmed
+    LIN_MYE:      "#5B9BD5",   # (91,155,213)  CD68+ protein-confirmed
+    LIN_TUMOR:    "#FFC000",   # (255,192,0)   PanCK+ or no protein identity (see below)
 }
 def _light(hexc, f=0.72):
     from matplotlib.colors import to_rgb
@@ -84,25 +87,25 @@ def _light(hexc, f=0.72):
 
 
 def _dark(hexc, f=0.35):
-    """加深: 用于自身转录本点, 与同色的半透明掩膜底色拉开对比"""
+    """Darken: used for self-transcript dots to stand out against the same-color translucent mask fill."""
     from matplotlib.colors import to_rgb
     r, g_, b = to_rgb(hexc)
     return (r * (1 - f), g_ * (1 - f), b * (1 - f))
 
 
 FILL = {k: _light(v) for k, v in EDGE.items()}
-DOT = {k: _dark(v) for k, v in EDGE.items()}      # 自身转录本点用色
-# 身份 -> 用于判定转录本"自身/外来"的谱系
+DOT = {k: _dark(v) for k, v in EDGE.items()}      # self-transcript dot colors
+# identity -> lineage used to judge "self/foreign" transcripts
 IDENT2LIN = {LIN_T: "T", LIN_MYE: "Myeloid", LIN_TUMOR: "Epi/Tumor"}
-TX_FOREIGN = "#ED7D31"        # (237,125,49) 外来转录本专用
-TX_OTHER = "#D9D9D9"          # 非谱系特异转录本(灰)
+TX_FOREIGN = "#ED7D31"        # (237,125,49) reserved for foreign transcripts
+TX_OTHER = "#D9D9D9"          # non-lineage transcripts (gray)
 
 
 def identity_protein(tab, posmap):
-    """身份完全由蛋白通道决定, 不使用任何转录本信息。
-    优先级: CD3e+ -> T;  CD68+ -> Myeloid;  PanCK+ -> Epi/Tumor;
-            余下 CD45+ -> other immune;  其他 -> unassigned
-    多通道同时阳性时, 取阳性面积占比最高者。"""
+    """Identity decided purely by protein channels, with no transcript info.
+    Priority: CD3e+ -> T;  CD68+ -> Myeloid;  PanCK+ -> Epi/Tumor;
+              remaining CD45+ -> other immune;  otherwise -> unassigned.
+    When multiple channels are positive, take the one with the highest positive-area fraction."""
     nl = tab["nl"]
     f = tab["f"]
     mask = tab["mask"]
@@ -127,52 +130,54 @@ def identity_protein(tab, posmap):
                      np.array(keys, dtype=object)[best_i], "unassigned")
     ident = ident.astype(object)
     n_prot = {k: int((ident == k).sum()) for k in keys}
-    # 无蛋白身份者统一归为上皮/肿瘤:
-    #   本样本为 ccRCC, 肿瘤细胞占主体, 而 PanCK 染色偏弱(阳性像素仅 1.26%),
-    #   未被任何通道判定者多为 PanCK 染色不足的肿瘤细胞, 假阴性代价小。
-    #   注意: 这一步引入先验假设, 非纯蛋白证据, 解读时需区别对待。
-    confirmed = ident != "unassigned"        # 是否由蛋白通道确证
+    # Cells without a protein identity are all assigned to epithelial/tumor:
+    #   this sample is ccRCC, so tumor cells dominate, while PanCK staining is weak
+    #   (positive pixels only 1.26%); unassigned cells are mostly tumor cells with
+    #   insufficient PanCK staining, so the false-negative cost is small.
+    #   Note: this step introduces a prior assumption, not pure protein evidence, and
+    #   must be treated separately when interpreting.
+    confirmed = ident != "unassigned"        # whether confirmed by a protein channel
     n_fallback = int((~confirmed).sum())
     ident[ident == "unassigned"] = LIN_TUMOR
     from collections import Counter
-    log("    身份分布: " + str(dict(Counter(ident).most_common())))
+    log("    identity distribution: " + str(dict(Counter(ident).most_common())))
     for k in keys:
-        log(f"      {k:10s} 蛋白确证 {n_prot[k]} cells")
-    log(f"      其中 {n_fallback} 个无蛋白身份者按假设归入 {LIN_TUMOR}")
+        log(f"      {k:10s} protein-confirmed {n_prot[k]} cells")
+    log(f"      {n_fallback} unassigned cells fall back to {LIN_TUMOR}")
     return ident, confirmed, ("CD3e/CD68/PanCK protein; cells without any "
                               "protein marker assigned to Epi/Tumor")
 
 
 def pick_roi(tab, ident, gm, tix, tiy):
-    """选 ROI: 找一个被上皮/肿瘤细胞(PanCK+)包围的 T 细胞(CD3e+)。
-    评分 = 邻域内 PanCK+ 细胞数(主) + 邻域肿瘤转录本密度(次),
-    并要求视野内细胞数适中。"""
+    """Pick an ROI: find a T cell (CD3e+) surrounded by epithelial/tumor cells (PanCK+).
+    Score = neighborhood PanCK+ cell count (primary) + neighborhood tumor transcript
+    density (secondary), and require a moderate cell count in the field."""
     t_idx = np.nonzero(ident == LIN_T)[0]
     tum_idx = np.nonzero(ident == LIN_TUMOR)[0]
     if len(t_idx) == 0:
-        raise RuntimeError("没有蛋白确认的 T 细胞")
+        raise RuntimeError("no protein-confirmed T cells")
     if len(tum_idx) == 0:
-        log("  警告: 没有 PanCK+ 细胞, 退回按肿瘤转录本密度选 ROI")
+        log("  Warning: no PanCK+ cells, falling back to tumor transcript density for ROI")
     cen_t = tab["cen_px"][t_idx]
     allc = tab["cen_px"]
     half = ROI_UM / 2 / PX
     r_near = NEIGHBOR_UM / PX
 
-    # 邻域内的肿瘤细胞数
+    # tumor cell count in the neighborhood
     if len(tum_idx):
         tree_c = cKDTree(tab["cen_px"][tum_idx])
         n_tum_cell = np.array([len(q) for q in
                                tree_c.query_ball_point(cen_t, r_near)])
     else:
         n_tum_cell = np.zeros(len(cen_t))
-    # 邻域内的肿瘤转录本数
+    # tumor transcript count in the neighborhood
     tree_x = cKDTree(np.c_[tix[gm["Epi/Tumor"]], tiy[gm["Epi/Tumor"]]])
     n_tum_tx = np.array([len(q) for q in
                          tree_x.query_ball_point(cen_t, r_near)])
-    score = n_tum_cell * 1000 + n_tum_tx          # 肿瘤细胞数优先
+    score = n_tum_cell * 1000 + n_tum_tx          # tumor cell count takes priority
     order = np.argsort(score)[::-1][:SEARCH_TOP]
 
-    # 分级搜索: 先要求视野内没有 unassigned 细胞, 找不到再逐步放宽
+    # tiered search: first require no unassigned cells in the field, then relax step by step
     for max_un in MAX_UNASSIGNED_TRY:
         for k in order:
             cx, cy = cen_t[k]
@@ -182,31 +187,31 @@ def pick_roi(tab, ident, gm, tix, tiy):
             if not (N_CELL_TARGET[0] <= n <= N_CELL_TARGET[1]):
                 continue
             sub_id = ident[np.nonzero(inb)[0]]
-            n_un = 0          # 已无 unassigned(统一归入 Epi/Tumor)
+            n_un = 0          # no unassigned left (all folded into Epi/Tumor)
             n_tum_in = int((sub_id == LIN_TUMOR).sum())
             if n_tum_in < MIN_TUMOR_AROUND:
                 continue
             from collections import Counter
-            log(f"  ROI 中心=({cx:.0f},{cy:.0f})px  "
-                f"邻域肿瘤细胞={int(n_tum_cell[k])}  "
-                f"邻域肿瘤转录本={int(n_tum_tx[k])}")
-            log(f"    视野内细胞={n}  构成: {dict(Counter(sub_id).most_common())}")
-            log(f"    (本次允许的 unassigned 上限 = "
-                f"{'不限' if max_un >= 99 else max_un}, 实际 {n_un})")
+            log(f"  ROI center=({cx:.0f},{cy:.0f})px  "
+                f"neighborhood tumor cells={int(n_tum_cell[k])}  "
+                f"neighborhood tumor transcripts={int(n_tum_tx[k])}")
+            log(f"    cells in view={n}  composition: {dict(Counter(sub_id).most_common())}")
+            log(f"    (allowed unassigned upper bound this round = "
+                f"{'unlimited' if max_un >= 99 else max_un}, actual {n_un})")
             return float(cx), float(cy)
         if max_un < 99:
-            log(f"  无满足 unassigned<={max_un} 的位置, 放宽条件重试")
+            log(f"  no position meeting unassigned<={max_un}, relaxing and retrying")
 
     k = order[0]
     cx, cy = cen_t[k]
-    log(f"  未找到完全符合条件者, 用评分最高的 T 细胞: ({cx:.0f},{cy:.0f})  "
-        f"邻域肿瘤细胞={int(n_tum_cell[k])}")
+    log(f"  no fully matching candidate, using highest-scoring T cell: ({cx:.0f},{cy:.0f})  "
+        f"neighborhood tumor cells={int(n_tum_cell[k])}")
     return float(cx), float(cy)
 
 
 def draw_panel(ax, name, tab, ident, confirmed, bg_dapi, bg_ext,
                gm, tix, tiy, cx, cy, roi_um):
-    """分层: DAPI 背景 -> 灰色非谱系转录本 -> 掩膜着色 -> 谱系特异转录本"""
+    """Layers: DAPI background -> gray non-lineage transcripts -> mask fill -> lineage-specific transcripts"""
     mask = tab["mask"]
     scale = tab["scale"]
     half = roi_um / 2 / PX
@@ -214,11 +219,11 @@ def draw_panel(ax, name, tab, ident, confirmed, bg_dapi, bg_ext,
     y0, y1 = cy - half, cy + half
     ext = [(x0 + X0) * PX, (x1 + X0) * PX, (y1 + Y0) * PX, (y0 + Y0) * PX]
 
-    # --- L0: DAPI 背景 ---
+    # --- L0: DAPI background ---
     ax.imshow(bg_dapi, extent=bg_ext, cmap="gray_r", vmin=0, vmax=1,
               alpha=BG_ALPHA, interpolation="bilinear", zorder=0)
 
-    # 视野内转录本及其宿主/谱系
+    # transcripts in the field and their host/lineage
     inroi = (tix >= x0) & (tix < x1) & (tiy >= y0) & (tiy < y1)
     idx = np.nonzero(inroi)[0]
     px_ = (tix[idx] + X0) * PX
@@ -235,22 +240,23 @@ def draw_panel(ax, name, tab, ident, confirmed, bg_dapi, bg_ext,
         lin_of[gm[a][idx]] = a
     is_lin = lin_of != "other"
     host_lin = np.array([IDENT2LIN.get(h, "") for h in host_id], dtype=object)
-    # 只有"蛋白确证身份"的细胞才参与污染判定;
-    # 按假设归入 Epi/Tumor 的细胞不标橙点, 其转录本并入灰色背景层
+    # only protein-confirmed cells participate in contamination calls;
+    # cells folded into Epi/Tumor by assumption get no orange dots; their transcripts
+    # join the gray background layer
     host_conf = np.zeros(len(idx), bool)
     host_conf[ok] = confirmed[host[ok]]
     judgeable = (host_lin != "") & host_conf
     is_self = is_lin & judgeable & (lin_of == host_lin)
     is_frn = is_lin & judgeable & (lin_of != host_lin)
 
-    # --- L1: 灰色非谱系转录本(位于掩膜之下) ---
+    # --- L1: gray non-lineage transcripts (beneath the mask) ---
     if SHOW_OTHER_TX:
-        m = (~is_lin) | (is_lin & ~judgeable)   # 非谱系 + 身份未确证细胞内的
+        m = (~is_lin) | (is_lin & ~judgeable)   # non-lineage + those in identity-unconfirmed cells
         ax.scatter(px_[m], py_[m], s=PT_SIZE * 0.42, c=TX_OTHER, linewidths=0,
                    zorder=1, alpha=0.85)
 
-    # --- L2 + L3: 用轮廓多边形同时填充与描边 ---
-    # 填充与边界线共用同一组顶点, 因此严格贴合, 不受 mask 分辨率影响
+    # --- L2 + L3: fill and stroke with the same contour polygons ---
+    # fill and boundary share the same vertices, so they match exactly regardless of mask resolution
     mx0, my0 = max(int(x0 / scale), 0), max(int(y0 / scale), 0)
     mx1 = min(int(np.ceil(x1 / scale)), mask.shape[1])
     my1 = min(int(np.ceil(y1 / scale)), mask.shape[0])
@@ -262,7 +268,7 @@ def draw_panel(ax, name, tab, ident, confirmed, bg_dapi, bg_ext,
         has_sk = True
     except ImportError:
         has_sk = False
-        log("    (无 skimage, 退回像素填充)")
+        log("    (no skimage, falling back to pixel fill)")
 
     if has_sk:
         for lb in labs:
@@ -270,7 +276,7 @@ def draw_panel(ax, name, tab, ident, confirmed, bg_dapi, bg_ext,
             idt = ident[i] if i < len(ident) else LIN_TUMOR
             col = EDGE[idt if idt in EDGE else LIN_TUMOR]
             m = (sub == lb).astype(float)
-            # 边缘补零, 保证贴边细胞也能闭合
+            # zero-pad edges so border-touching cells still close
             mp = np.pad(m, 1, mode="constant")
             for c in find_contours(mp, 0.5):
                 gx = ((c[:, 1] - 1 + mx0 + 0.5) * scale + X0) * PX
@@ -290,8 +296,8 @@ def draw_panel(ax, name, tab, ident, confirmed, bg_dapi, bg_ext,
                                       alpha=FILL_ALPHA)
         ax.imshow(rgba, extent=sub_ext, interpolation="nearest", zorder=2)
 
-    # --- L4: 谱系特异转录本(最上层) ---
-    #   自身信号: 用宿主细胞同色;  外来信号: 统一橙色
+    # --- L4: lineage-specific transcripts (top layer) ---
+    #   self signal: same color as host cell;  foreign signal: uniform orange
     for idt in set(host_id[is_self]):
         m = is_self & (host_id == idt)
         if m.any():
@@ -304,7 +310,7 @@ def draw_panel(ax, name, tab, ident, confirmed, bg_dapi, bg_ext,
     ax.set_xlim(ext[0], ext[1])
     ax.set_ylim(ext[2], ext[3])
     ax.set_aspect("equal")
-    ax.set_box_aspect(1.0)          # 强制绘图框为正方形
+    ax.set_box_aspect(1.0)          # force a square plot box
     ax.set_xticks([]); ax.set_yticks([])
     ax.set_title(f"{DISPLAY.get(name, name)}   cells: {len(labs)}\n"
                  f"own {int(is_self.sum())}   foreign {int(is_frn.sum())}",
@@ -313,15 +319,15 @@ def draw_panel(ax, name, tab, ident, confirmed, bg_dapi, bg_ext,
 
 
 def main():
-    log("== 蛋白阳性区 ==")
+    log("== protein-positive region ==")
     posmap = {LIN_T: protein_pos(CH_T),
               LIN_MYE: protein_pos(CH_MYE),
               LIN_TUMOR: protein_pos(CH_TUMOR)}
 
-    log("\n== 转录本 ==")
+    log("\n== transcripts ==")
     g, tix, tiy, gm, expect = load_transcripts()
 
-    log("\n== 各方法细胞表与身份 ==")
+    log("\n== per-method cell table and identity ==")
     tabs, idents, confs = {}, {}, {}
     mode = ""
     for name in METHODS:
@@ -332,23 +338,23 @@ def main():
         confs[name] = confirmed
         log(f"    cells={tab['nl']}")
 
-    log("\n== 选取 ROI (以 %s 为准, 两图共用) ==" % METHODS[0])
+    log("\n== selecting ROI (based on %s, shared by both plots) ==" % METHODS[0])
     cx, cy = pick_roi(tabs[METHODS[0]], idents[METHODS[0]], gm, tix, tiy)
 
-    # 取选中 ROI 的一角作为最终视野
+    # take one corner of the selected ROI as the final field
     half_full = ROI_UM / 2 / PX
     roi_um = ROI_UM * SUB_FRAC
     half = roi_um / 2 / PX
-    dxs = -1 if SUB_CORNER in ("SW", "NW") else 1      # 左/右
-    dys = 1 if SUB_CORNER in ("SW", "SE") else -1      # 下/上 (y 向下为正)
+    dxs = -1 if SUB_CORNER in ("SW", "NW") else 1      # left/right
+    dys = 1 if SUB_CORNER in ("SW", "SE") else -1      # down/up (y grows downward)
     cx = cx + dxs * (half_full - half)
     cy = cy + dys * (half_full - half)
-    # 钳制中心, 保证整个视野落在图像范围内(否则背景被截断会出现留白)
+    # clamp the center so the whole field stays inside the image (otherwise the background is truncated, leaving whitespace)
     cx = float(np.clip(cx, half, SZ - half))
     cy = float(np.clip(cy, half, SZ - half))
-    log(f"  取 {SUB_CORNER} 角, 视野 {roi_um:.0f} um, 中心=({cx:.0f},{cy:.0f})px")
+    log(f"  take {SUB_CORNER} corner, field {roi_um:.0f} um, center=({cx:.0f},{cy:.0f})px")
 
-    log("\n== 读取 DAPI 背景 ==")
+    log("\n== loading DAPI background ==")
     dx0, dy0 = int(max(cx - half, 0)), int(max(cy - half, 0))
     dx1, dy1 = int(min(cx + half, SZ)), int(min(cy + half, SZ))
     dapi_full = read_ch("ch0000_dapi")
@@ -358,7 +364,7 @@ def main():
     bg_ext = [(dx0 + X0) * PX, (dx1 + X0) * PX,
               (dy1 + Y0) * PX, (dy0 + Y0) * PX]
 
-    log("\n== 绘图 ==")
+    log("\n== plotting ==")
     fig, axes = plt.subplots(1, len(METHODS), figsize=(6.0 * len(METHODS), 6.4),
                              constrained_layout=True)
     axes = np.atleast_1d(axes)

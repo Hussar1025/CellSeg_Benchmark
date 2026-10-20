@@ -1,27 +1,36 @@
 """
 merfish_run_cellotype.py
 ========================
-MERFISH (Vizgen 小鼠脑 Receptor Map) 上的 CelloType 分割 + benchmark。
-结构与 merfish_run_mesmer.py / merfish_run_stardist.py / merfish_seg_benchmark.py 一致，
-可独立运行，也可只产出 label mask 后丢进 merfish_seg_benchmark.py 的 EXTRA_METHOD_MASKS。
+CelloType segmentation + benchmark on MERFISH (Vizgen mouse brain Receptor Map).
+Same structure as merfish_run_mesmer.py / merfish_run_stardist.py /
+merfish_seg_benchmark.py; runs standalone or just produces a label mask that
+can be fed into merfish_seg_benchmark.py's EXTRA_METHOD_MASKS.
 
-关于 CelloType（Nature Methods 2024, tanlabcode/CelloType）：
-  * 基于 Detectron2 + MaskDINO 的 Transformer 检测/分割模型；这里用 TissueNet 预训练权重
-    做全细胞分割（给核+膜通道），输出与官方 Vizgen「全细胞」边界可比，无需扩张。
-  * 通道约定（务必遵守，否则结果全错）：输入为 RGB，其中
-        B(蓝)=核通道(DAPI)，G(绿)=膜/胞质通道(polyT)，R(红)=可选(置0)。
-    输入按 uint8[0,255]，本脚本对每通道做百分位归一化后转 uint8。
-  * 它是 query 数有限、max_det 上限的检测式模型，单次前向吃不下大图（官方建议用 SAHI 做
-    大图切片推理）。本脚本自带「切片推理 + 拼接」：把 ROI 切成 TILE_SIZE 小块逐块预测，
-    再按全局唯一 id 拼回；用重叠带 + 丢弃“贴内部边界”的检测 来避免细胞被割裂/重复计数
-    （要求 TILE_OVERLAP 大于最大细胞直径；本数据细胞 ~90px，默认 overlap=128 足够）。
+About CelloType (Nature Methods 2024, tanlabcode/CelloType):
+  * Detectron2 + MaskDINO transformer detect/segment model; TissueNet pretrained
+    weights do whole-cell segmentation (given nuclear + membrane channels) and
+    output is comparable to official Vizgen whole-cell boundaries with no dilation.
+  * Channel convention (must follow, otherwise results are entirely wrong):
+        B (blue) = nuclear channel (DAPI), G (green) = membrane/cytoplasm (polyT),
+        R (red) = optional (zero).
+    Input is uint8[0,255]; this script percentile-normalizes each channel to uint8.
+  * It is a detection model with a finite query count and a max_det cap, so a
+    single forward pass cannot handle a large image (official recipe uses SAHI
+    for sliced large-image inference). This script implements its own
+    "sliced inference + stitching": cut the ROI into TILE_SIZE patches, predict
+    each, then stitch back with globally unique ids; overlapping bands plus
+    dropping detections that touch an internal tile border avoid splitting /
+    double-counting cells (TILE_OVERLAP must exceed the largest cell diameter;
+    cells here are ~90px, default overlap=128 is enough).
 
-环境（CelloType 安装较重，建议单独 conda 环境，见官方 README）：
-  Python=3.8, PyTorch, Detectron2, Deformable-DETR CUDA ops, 然后 pip install cellotype；
-  另需 clone 仓库并 `cd models && sh download.sh` 下载权重与取得 configs/。
-  评测侧依赖同前：h5py tifffile scikit-image scipy pandas。
+Environment (CelloType install is heavy; use a dedicated conda env, see the
+official README): Python=3.8, PyTorch, Detectron2, Deformable-DETR CUDA ops,
+then pip install cellotype; also clone the repo and `cd models && sh download.sh`
+to download weights and obtain configs/. Evaluation-side dependencies as before:
+h5py tifffile scikit-image scipy pandas.
 
-用法：先设置下方 SEG_MODULES_DIR 与 CelloType 仓库/权重路径，改 CONFIG，再
+Usage: set SEG_MODULES_DIR and the CelloType repo/weights paths below, edit
+CONFIG, then
      python merfish_run_cellotype.py
 """
 
@@ -29,13 +38,14 @@ import argparse
 import os
 import sys
 import time
-import resource   # 标准库（Unix），替代 psutil：CelloType 环境 python 太低装不了 psutil
+import resource   # stdlib (Unix); replaces psutil since the CelloType env's Python is too old for psutil
 
-# ======================= 依赖模块路径（跨目录时必填）=======================
-# merfish_seg_utils.py 与 merfish_seg_benchmark.py 所在目录。
-# 三种方式任选其一（按顺序生效）：1) 改下面这行  2) 环境变量 MERFISH_SEG_MODULES_DIR
-#   3) 三个文件在同一目录则留空（自动用本文件所在目录）
-SEG_MODULES_DIR = "/data/qiuyijia/cellpose"
+# Dependency module paths (required when the files live in another directory)
+# Directory holding merfish_seg_utils.py and merfish_seg_benchmark.py.
+# Pick any one of three ways (evaluated in order): 1) edit the line below
+# 2) env var MERFISH_SEG_MODULES_DIR  3) leave empty if all three files are in
+# the same directory (then this file's directory is used).
+SEG_MODULES_DIR = "yourpath"
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 try:
@@ -54,93 +64,98 @@ import tifffile
 
 try:
     import merfish_utils as U
-    import merfish_seg_bench as BM   # 复用 load_metrics / evaluate_against_reference / run_benchmark
+    import merfish_seg_bench as BM   # reuse load_metrics / evaluate_against_reference / run_benchmark
 except ModuleNotFoundError as _e:
     raise ModuleNotFoundError(
-        f"找不到模块 {_e.name}。请把本文件顶部的 SEG_MODULES_DIR 设为存放 "
-        f"merfish_seg_utils.py 与 merfish_seg_benchmark.py 的目录，"
-        f"或设置环境变量 MERFISH_SEG_MODULES_DIR。"
+        f"cannot find module {_e.name}. Set SEG_MODULES_DIR at the top of this file "
+        f"to the directory holding merfish_seg_utils.py and merfish_seg_benchmark.py, "
+        f"or set the env var MERFISH_SEG_MODULES_DIR."
     ) from _e
 
 
 # ===========================================================================
 # ============================= CONFIG ======================================
 # ===========================================================================
-DATA_DIR = "/data/qiuyijia/dataset/merfish_prostate2"   # Liver1 数据集根目录
+DATA_DIR = "yourpath"
 
 DAPI_TIF   = os.path.join(DATA_DIR, "images",
     "mosaic_DAPI_z3.tif")
 # POLYT_TIF  = os.path.join(DATA_DIR, "images",
-#     "mosaic_PolyT_z3.tif")  # 原用polyT作为膜通道，但polyT是胞质信号，不如真正的膜染色
+#     "mosaic_PolyT_z3.tif")  # polyT as membrane channel originally; polyT is cytoplasmic signal, weaker than a real membrane stain
 POLYT_TIF  = os.path.join(DATA_DIR, "images",
-    "mosaic_Cellbound1_z3.tif")  # 改用真正的膜染色Cellbound1，Mesmer在清晰膜信号上表现更好
+    "mosaic_Cellbound1_z3.tif")  # real membrane stain Cellbound1; Mesmer performs better on clear membrane signal
 TRANSFORM_CSV = os.path.join(DATA_DIR, "images",
     "micron_to_mosaic_pixel_transform.csv")
 CELL_METADATA_CSV = os.path.join(DATA_DIR,
     "cell_metadata.csv")
 CELL_BOUNDARIES_DIR = os.path.join(DATA_DIR, "cell_boundaries")
 
-# 你的 test.py 路径（指标从这里加载，保证口径一致）
-TEST_PY_PATH = "/data/qiuyijia/eval/test.py"
+# Your test.py path (metrics loaded from here to keep the comparison consistent)
+TEST_PY_PATH = "yourpath"
 
-# 输出目录
-OUT_DIR = "/data/qiuyijia/cellotype/merfish_prostate2"
+# Output directory
+OUT_DIR = "yourpath"
 
-# ---- CelloType 仓库/权重/配置（来自 clone 仓库 + models/download.sh）----
-CELLOTYPE_REPO = "/data/qiuyijia/cellotype/CelloType"   # 改成你 clone 的 CelloType 仓库目录
+# ---- CelloType repo/weights/config (from clone + models/download.sh) ----
+CELLOTYPE_REPO = "yourpath"   # change to the clone of CelloType
 CELLOTYPE_MODEL_PATH  = os.path.join(CELLOTYPE_REPO, "models",
     "tissuenet_model_0019999.pth")
 CELLOTYPE_CONFIG_PATH = os.path.join(CELLOTYPE_REPO, "configs",
     "maskdino_R50_bs16_50ep_4s_dowsample1_2048.yaml")
 DEVICE = "cuda"                       # "cuda" | "cpu"
-CONFIDENCE_THRESH = 0.1               # 检测置信度阈值（README 示例值）
-MAX_DET = 1000                        # 每次前向最大检测数（每个小块，不是整幅）
+CONFIDENCE_THRESH = 0.1               # detection confidence threshold (README example value)
+MAX_DET = 1000                        # max detections per forward pass (per tile, not the whole image)
 
-# ---- 通道归一化（每通道百分位裁剪后 -> uint8[0,255]）----
+# ---- Channel normalization (per channel, percentile clip -> uint8[0,255]) ----
 NORM_LOW, NORM_HIGH = 1.0, 99.0
 
-# ---- 【关键修复】分辨率对齐：推理前把输入降采样到模型训练分辨率 ----
-# CelloType 用 TissueNet 预训练权重，训练/工作分辨率 ~0.5µm/px（细胞 ~20px）；
-# 本 mosaic ~0.108µm/px（细胞 ~90px），差 ~4.6× => 分布外 => 大量漏检 + 乱框（就是你日志里
-# 8740 GT 只分出 2657、且 1901 是 FP 的原因）。
-# 做法：推理前把 RGB 降采样到 TARGET_MPP，推理后把 label 最近邻上采样回原 ROI 尺寸再对 GT。
-# 这不是"调参/改方法"，等价于 Mesmer 的 image_mpp / Cellpose 的 diameter，是该方法应有的用法。
-TARGET_MPP = 0.5                      # 目标分辨率(µm/px)，TissueNet 标准；一般无需改
-SOURCE_MPP = None                     # 源分辨率(µm/px)。None=自动从 TRANSFORM_CSV 反推(推荐)
-RESCALE_TO_TARGET_MPP = True          # 设 False 回到原始(错误)的全分辨率推理，仅供对照
+# ---- Resolution alignment: downsample input to the model training resolution ----
+# CelloType with TissueNet pretrained weights operates at ~0.5um/px (cells ~20px);
+# this mosaic is ~0.108um/px (cells ~90px), a ~4.6x gap => out of distribution =>
+# many missed detections and spurious boxes (this is why the log showed 8740 GT
+# cells but only 2657 predicted, with 1901 of them FP).
+# So: downsample RGB to TARGET_MPP before inference, and upsample the label
+# nearest-neighbour back to the original ROI size before comparing with GT.
+# This is not "tuning/changing the method": it is equivalent to Mesmer's
+# image_mpp / Cellpose's diameter -- how the method is meant to be used.
+TARGET_MPP = 0.5                      # target resolution (um/px); TissueNet standard; usually no change
+SOURCE_MPP = None                     # source resolution (um/px). None = infer from TRANSFORM_CSV (recommended)
+RESCALE_TO_TARGET_MPP = True          # False reverts to the original (wrong) full-resolution inference; for comparison only
 
-# ---- 推理方式 ----
-# "sahi"  : CelloType 官方大图推理(sahi_predict.get_sliced_prediction)，跨块用 GREEDY-NMM 合并，
-#           benchmark 最该用它；需要 CELLOTYPE_REPO 指向 clone 的仓库(内含 sahi_predict.py)。
-# "tiled" : 你原来的自写切片+去重(现在跑在"降采样后"的图上，尺度正确才有意义)，无 sahi 环境时备选。
-# "single": 整幅一次前向，只适合很小的 ROI 调试。
+# ---- Inference mode ----
+# "sahi"  : CelloType's official large-image inference (sahi_predict.get_sliced_prediction),
+#           cross-tile merge via GREEDY-NMM; preferred for benchmark; needs CELLOTYPE_REPO
+#           pointing at the clone (which contains sahi_predict.py).
+# "tiled" : the original self-written slicing + dedup (now running on the downsampled
+#           image, which only makes sense at the correct scale); fallback when no sahi env.
+# "single": one forward pass over the whole image; only for very small ROIs for debugging.
 INFERENCE_MODE = "sahi"
-TILE_SIZE = 256                       # 小块边长（与 TissueNet 训练块大小一致）
-TILE_OVERLAP = 128                    # "tiled" 用；须 > 降采样后最大细胞直径(~20px)，128 足够
-SAHI_OVERLAP_RATIO = 0.2              # "sahi" 用；重叠比例(0.2 => 256*0.2≈51px > 细胞直径)
-SAHI_POSTPROCESS = "GREEDYNMM"        # 跨块合并策略: "GREEDYNMM" | "NMM" | "NMS"
-SAHI_MATCH_METRIC = "IOU"             # 合并匹配度量: "IOS"(小框交并) | "IOU"
-SAHI_MATCH_THRESH = 0.5               # 合并阈值
-MIN_CELL_PIXELS = 8                   # 丢弃过小碎片(按降采样分辨率计，≈原图 ~170px)
+TILE_SIZE = 256                       # tile edge (matches TissueNet training tile size)
+TILE_OVERLAP = 128                    # used by "tiled"; must exceed max downsampled cell diameter (~20px); 128 is enough
+SAHI_OVERLAP_RATIO = 0.2              # used by "sahi"; overlap ratio (0.2 => 256*0.2~51px > cell diameter)
+SAHI_POSTPROCESS = "GREEDYNMM"        # cross-tile merge: "GREEDYNMM" | "NMM" | "NMS"
+SAHI_MATCH_METRIC = "IOU"             # merge matching metric: "IOS" (intersection over smaller) | "IOU"
+SAHI_MATCH_THRESH = 0.5               # merge threshold
+MIN_CELL_PIXELS = 8                   # drop too-small fragments (counted at downsampled resolution, ~170px original)
 
-# ---- ROI：pixel (x0,y0,x1,y1)。None=整幅(极耗内存)。留空取中心 ROI_SIZE 窗口 ----
-# 注意：必须与 Cellpose / StarDist / Mesmer 那几次用的 ROI 完全一致，才能同表比较！
+# ---- ROI: pixel (x0,y0,x1,y1). None = whole image (very memory heavy). Empty = center ROI_SIZE window ----
+# NOTE: must be exactly the same ROI used by Cellpose / StarDist / Mesmer runs so the table is comparable!
 ROI = None
 ROI_SIZE = 10000
-Z_INDEX = 3                           # 官方边界取哪层 z，需与图像一致（本数据 z3）
+Z_INDEX = 3                           # which z-plane official boundaries use; must match the image (this data uses z3)
 
-# ---- benchmark 参数（与 test.py 对齐）----
+# ---- benchmark parameters (aligned with test.py) ----
 BOUNDARY_MODE = "thick"
 IOU_THRESHOLD = 0.5
 
-# ---- 阶段开关 ----
-DO_BUILD_GT     = True   # 若已由前面某份在同一 OUT_DIR/同一 ROI 生成过 GT，可设 False 直接复用
+# ---- stage switches ----
+DO_BUILD_GT     = True   # if GT was already produced under the same OUT_DIR/ROI, set False to reuse
 DO_RUN_CELLOTYPE = True
 DO_BENCHMARK    = True
 # ===========================================================================
 
 # --------------------------------------------------------------------------- #
-# 预处理：DAPI/polyT -> uint8 RGB (B=核, G=膜, R=0)
+# Preprocessing: DAPI/polyT -> uint8 RGB (B=nuclear, G=membrane, R=0)
 # --------------------------------------------------------------------------- #
 def _norm_uint8(chan, p_low, p_high):
     lo, hi = np.percentile(chan, [p_low, p_high])
@@ -151,65 +166,65 @@ def _norm_uint8(chan, p_low, p_high):
 
 
 def build_cellotype_rgb(roi):
-    """构造 CelloType 输入 RGB(uint8, HxWx3)：B=核(DAPI)，G=膜(polyT)，R=0。"""
+    """Build CelloType input RGB (uint8, HxWx3): B=nuclear (DAPI), G=membrane (polyT), R=0."""
     dapi = U.read_tif_crop(DAPI_TIF, roi).astype(np.float32)
     if os.path.exists(POLYT_TIF):
         polyt = U.read_tif_crop(POLYT_TIF, roi).astype(np.float32)
         if polyt.shape != dapi.shape:
-            raise ValueError(f"DAPI 与 polyT 尺寸不一致: {dapi.shape} vs {polyt.shape}")
+            raise ValueError(f"DAPI and polyT shapes differ: {dapi.shape} vs {polyt.shape}")
     else:
-        print("[CelloType][警告] 未找到 polyT 膜通道，全细胞分割质量会明显下降。")
+        print("[CelloType][warning] polyT membrane channel not found; whole-cell segmentation quality will drop noticeably.")
         polyt = np.zeros_like(dapi)
 
     H, W = dapi.shape
     rgb = np.zeros((H, W, 3), dtype=np.uint8)
-    rgb[..., 1] = _norm_uint8(polyt, NORM_LOW, NORM_HIGH)   # G = 膜/胞质
-    rgb[..., 2] = _norm_uint8(dapi, NORM_LOW, NORM_HIGH)    # B = 核
+    rgb[..., 1] = _norm_uint8(polyt, NORM_LOW, NORM_HIGH)   # G = membrane/cytoplasm
+    rgb[..., 2] = _norm_uint8(dapi, NORM_LOW, NORM_HIGH)    # B = nuclear
     return rgb
 
 
 # --------------------------------------------------------------------------- #
-# 分辨率对齐：降采样输入 / 最近邻上采样 label 回原尺寸
+# Resolution alignment: downsample input / nearest-neighbor upsample label back
 # --------------------------------------------------------------------------- #
 def _source_mpp():
-    """源图像 µm/px：优先用 SOURCE_MPP，否则从 micron->pixel 变换矩阵反推 (1 / px_per_µm)。"""
+    """Source image um/px: prefer SOURCE_MPP, else infer from the micron->pixel matrix (1 / px_per_um)."""
     if SOURCE_MPP is not None:
         return float(SOURCE_MPP)
     M = U.load_micron_to_mosaic_transform(TRANSFORM_CSV)
-    sx = float(np.hypot(M[0, 0], M[0, 1]))   # x 方向 px/µm
-    sy = float(np.hypot(M[1, 0], M[1, 1]))   # y 方向 px/µm
+    sx = float(np.hypot(M[0, 0], M[0, 1]))   # x px/um
+    sy = float(np.hypot(M[1, 0], M[1, 1]))   # y px/um
     px_per_um = 0.5 * (sx + sy)
     if px_per_um <= 0:
-        raise ValueError(f"从 {TRANSFORM_CSV} 反推分辨率失败 (px/µm={px_per_um})")
+        raise ValueError(f"could not infer resolution from {TRANSFORM_CSV} (px/um={px_per_um})")
     return 1.0 / px_per_um
 
 
 def _downsample_rgb(rgb):
-    """把 uint8 RGB 降采样到 TARGET_MPP。返回 (rgb_ds, scale)，scale=输出/输入(<1=缩小)。"""
+    """Downsample uint8 RGB to TARGET_MPP. Returns (rgb_ds, scale); scale=out/in (<1 = shrink)."""
     if not RESCALE_TO_TARGET_MPP:
         return rgb, 1.0
     src_mpp = _source_mpp()
-    scale = src_mpp / float(TARGET_MPP)          # <1: 降采样
+    scale = src_mpp / float(TARGET_MPP)          # <1: downsample
     H, W = rgb.shape[:2]
-    print(f"[Rescale] 源≈{src_mpp:.4f}µm/px, 目标={TARGET_MPP}µm/px, scale={scale:.4f} "
-          f"(细胞 ~90px -> ~{90 * scale:.0f}px，目标 ~20px)")
+    print(f"[Rescale] source~{src_mpp:.4f}um/px, target={TARGET_MPP}um/px, scale={scale:.4f} "
+          f"(cells ~90px -> ~{90 * scale:.0f}px, target ~20px)")
     if abs(scale - 1.0) < 0.02:
-        print("[Rescale] 分辨率已接近目标，跳过缩放")
+        print("[Rescale] resolution already close to target; skipping")
         return rgb, 1.0
     new_w, new_h = max(1, round(W * scale)), max(1, round(H * scale))
     try:
-        import cv2                               # cellotype 硬依赖，通常都在；INTER_AREA 是缩小最佳
+        import cv2                               # hard dependency of cellotype, usually present; INTER_AREA best for shrinking
         rgb_ds = cv2.resize(rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
     except Exception:
         from skimage.transform import resize
         rgb_ds = resize(rgb, (new_h, new_w), order=1, anti_aliasing=True, preserve_range=True)
         rgb_ds = np.clip(np.rint(rgb_ds), 0, 255).astype(np.uint8)
-    print(f"[Rescale] 输入 {(H, W)} -> 降采样 {rgb_ds.shape[:2]}")
+    print(f"[Rescale] input {(H, W)} -> downsampled {rgb_ds.shape[:2]}")
     return rgb_ds, float(new_h) / float(H)
 
 
 def _upsample_labels_nn(lbl, out_hw):
-    """label(实例 id 图)最近邻上采样到 out_hw=(H,W)，保持整数 id 不被插值破坏(纯 numpy，省内存)。"""
+    """Nearest-neighbor upsample label (instance id map) to out_hw=(H,W), keeping integer ids intact (pure numpy, memory-friendly)."""
     out_h, out_w = out_hw
     in_h, in_w = lbl.shape
     if (in_h, in_w) == (out_h, out_w):
@@ -222,22 +237,24 @@ def _upsample_labels_nn(lbl, out_hw):
 
 
 # --------------------------------------------------------------------------- #
-# 切片推理 + 拼接
+# Sliced inference + stitching
 # --------------------------------------------------------------------------- #
 def _tile_starts(length, tile, stride):
     if length <= tile:
         return [0]
     starts = list(range(0, length - tile + 1, stride))
-    if starts[-1] != length - tile:     # 保证最后一块贴到边缘
+    if starts[-1] != length - tile:     # ensure the last tile touches the edge
         starts.append(length - tile)
     return sorted(set(starts))
 
 
 def tiled_predict(model, rgb):
     """
-    对 uint8 RGB 做切片推理并拼成全局 label。
-    去重策略：丢弃“贴到小块内部边界（非全局边界）”的检测——这类细胞会被相邻重叠块
-    在更居中的位置完整捕获；只要 TILE_OVERLAP > 最大细胞直径，每个细胞都会被某一块完整收下。
+    Slice-predict a uint8 RGB and stitch into a global label.
+    Dedup strategy: drop detections that touch a "internal" tile border (a side
+    that is not the global image border). Such cells get fully captured at a more
+    central position by a neighbouring overlapping tile; as long as
+    TILE_OVERLAP > max cell diameter, every cell is fully received by some tile.
     """
     H, W = rgb.shape[:2]
     tile = TILE_SIZE
@@ -248,7 +265,7 @@ def tiled_predict(model, rgb):
     canvas = np.zeros((H, W), dtype=np.int32)
     next_id = 1
     n_tiles = len(ys) * len(xs)
-    print(f"[CelloType] 切片 {len(ys)}x{len(xs)}={n_tiles} 块, tile={tile}, overlap={TILE_OVERLAP}")
+    print(f"[CelloType] slicing {len(ys)}x{len(xs)}={n_tiles} tiles, tile={tile}, overlap={TILE_OVERLAP}")
 
     ti = 0
     for y in ys:
@@ -265,38 +282,40 @@ def tiled_predict(model, rgb):
                     continue
                 m = local == lid
                 ys_i, xs_i = np.where(m)
-                # 是否贴到“内部”边界（该边不是全局图像边界）
+                # Whether it touches an "internal" border (a side that is not the global image border)
                 touch_top    = ys_i.min() == 0     and y > 0
                 touch_left   = xs_i.min() == 0     and x > 0
                 touch_bottom = ys_i.max() == ph - 1 and y1 < H
                 touch_right  = xs_i.max() == pw - 1 and x1 < W
                 if touch_top or touch_left or touch_bottom or touch_right:
-                    continue  # 交给相邻重叠块处理
+                    continue  # let the neighbouring overlapping tile handle it
 
                 sub = canvas[y:y1, x:x1]
-                m &= sub == 0                       # 防御：只写空白处
+                m &= sub == 0                       # defensive: only write blank pixels
                 if int(m.sum()) < MIN_CELL_PIXELS:
                     continue
                 sub[m] = next_id
                 next_id += 1
 
             if ti % 20 == 0 or ti == n_tiles:
-                print(f"[CelloType] 已处理 {ti}/{n_tiles} 块，当前细胞数 {next_id - 1}")
+                print(f"[CelloType] processed {ti}/{n_tiles} tiles, current cell count {next_id - 1}")
 
     return canvas
 
 
 # --------------------------------------------------------------------------- #
-# CelloType 官方大图推理 (SAHI 切片 + GREEDY-NMM 跨块合并)
+# CelloType official large-image inference (SAHI slicing + GREEDY-NMM merge)
 # --------------------------------------------------------------------------- #
 def _predict_sahi(rgb_ds, work_dir):
     """
-    用 CelloType 仓库自带的 sahi_predict.get_sliced_prediction 做官方切片推理。
-    跨块重复由 SAHI 的 GREEDY-NMM 合并（而不是自写"丢弃贴边检测"），benchmark 更可辩护。
-    需要 CELLOTYPE_REPO 指向 clone 的仓库根（内含 sahi_predict.py），流程与官方 sahi_inference.py 一致。
+    Use the CelloType repo's own sahi_predict.get_sliced_prediction for official
+    sliced inference. Cross-tile duplicates are merged by SAHI's GREEDY-NMM (not
+    the self-written "drop border-touching detections"), which is more defensible
+    for a benchmark. Needs CELLOTYPE_REPO pointing at the clone root (which
+    contains sahi_predict.py); the flow matches the official sahi_inference.py.
     """
     if CELLOTYPE_REPO and CELLOTYPE_REPO not in sys.path:
-        sys.path.insert(0, CELLOTYPE_REPO)       # 让 `import sahi_predict` 可用(位于仓库根)
+        sys.path.insert(0, CELLOTYPE_REPO)       # makes `import sahi_predict` work (repo root)
     from cellotype.predict import Detectron2DetectionModel
     import sahi_predict as SP
 
@@ -310,7 +329,8 @@ def _predict_sahi(rgb_ds, work_dir):
         channels=3,
     )
 
-    # 写成临时 PNG 再传路径：与官方 sahi_inference.py 完全一致，消除 np 数组的通道/格式歧义
+    # Write a temp PNG and pass the path: identical to official sahi_inference.py,
+    # removing channel/format ambiguity for numpy arrays
     os.makedirs(work_dir, exist_ok=True)
     tmp_png = os.path.join(work_dir, "_cellotype_sahi_input.png")
     from PIL import Image
@@ -324,7 +344,7 @@ def _predict_sahi(rgb_ds, work_dir):
         slice_height=TILE_SIZE, slice_width=TILE_SIZE,
         overlap_height_ratio=SAHI_OVERLAP_RATIO,
         overlap_width_ratio=SAHI_OVERLAP_RATIO,
-        perform_standard_pred=False,             # 不在整幅再跑一遍(省显存，官方示例同款)
+        perform_standard_pred=False,             # do not re-run on the whole image (saves VRAM, same as official example)
         postprocess_type=SAHI_POSTPROCESS,
         postprocess_match_metric=SAHI_MATCH_METRIC,
         postprocess_match_threshold=SAHI_MATCH_THRESH,
@@ -335,10 +355,10 @@ def _predict_sahi(rgb_ds, work_dir):
     label = np.zeros((h, w), dtype=np.int32)
     next_id = 1
     for obj in result.object_prediction_list:
-        bm = np.asarray(obj.mask.bool_mask, dtype=bool)  # SAHI 已把 mask 移到整幅坐标
+        bm = np.asarray(obj.mask.bool_mask, dtype=bool)  # SAHI already moved masks to full-image coordinates
         if bm.shape != (h, w):
             continue
-        bm &= label == 0                          # 已占像素不覆盖
+        bm &= label == 0                          # do not overwrite occupied pixels
         if int(bm.sum()) < MIN_CELL_PIXELS:
             continue
         label[bm] = next_id
@@ -347,18 +367,18 @@ def _predict_sahi(rgb_ds, work_dir):
         os.remove(tmp_png)
     except OSError:
         pass
-    print(f"[CelloType][sahi] 合并后细胞数={next_id - 1}")
+    print(f"[CelloType][sahi] cells after merge={next_id - 1}")
     return label
 
 
 def run_cellotype(roi, out_tif):
-    """在 ROI 上运行 CelloType：降采样->推理->label 最近邻回投原尺寸，保存并返回 label mask。"""
+    """Run CelloType on the ROI: downsample -> infer -> nearest-neighbor label back to original size, save and return mask."""
     rgb_full = build_cellotype_rgb(roi)
     H, W = rgb_full.shape[:2]
-    print(f"[CelloType] 原始输入 shape={rgb_full.shape}, device={DEVICE}, "
+    print(f"[CelloType] original input shape={rgb_full.shape}, device={DEVICE}, "
           f"conf={CONFIDENCE_THRESH}, max_det={MAX_DET}, mode={INFERENCE_MODE}")
 
-    # 关键：降采样到训练分辨率再推理
+    # Key: downsample to the training resolution before inference
     rgb_ds, scale = _downsample_rgb(rgb_full)
     del rgb_full
 
@@ -378,26 +398,27 @@ def run_cellotype(roi, out_tif):
         else:  # "tiled"
             label_ds = tiled_predict(model, rgb_ds)
 
-    # label 从降采样尺寸最近邻回投到原 ROI 尺寸(与全分辨率 GT 对齐)，再落盘
+    # Nearest-neighbor label back from downsampled size to original ROI size (to align with full-res GT), then write
     mask = _upsample_labels_nn(label_ds, (H, W))
-    print(f"[CelloType] 细胞数={len(np.unique(mask)) - 1}  "
-          f"(label 回投 {tuple(label_ds.shape)} -> {tuple(mask.shape)})")
+    print(f"[CelloType] cells={len(np.unique(mask)) - 1}  "
+          f"(label back-projected {tuple(label_ds.shape)} -> {tuple(mask.shape)})")
     U.save_label_tif(mask, out_tif)
     return mask
 
 
 # --------------------------------------------------------------------------- #
-# 内存监控（纯标准库，不依赖 psutil）
-#   current_mem_mb : 当前 RSS，读 /proc/self/statm（Linux）
-#   peak_mem_mb    : 进程历史峰值 RSS，resource.getrusage 的高水位，比采样更可靠
+# Memory monitoring (pure stdlib, no psutil)
+#   current_mem_mb : current RSS, read from /proc/self/statm (Linux)
+#   peak_mem_mb    : historical peak RSS, the high-water mark of resource.getrusage,
+#                    more reliable than sampling
 # --------------------------------------------------------------------------- #
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
 
 
 def current_mem_mb():
-    """当前进程 RSS(MB)。非 Linux 或读取失败时回退到 getrusage 峰值。"""
+    """Current process RSS (MB). Falls back to the getrusage peak on non-Linux or read failure."""
     try:
-        with open("/proc/self/statm", "r") as f:
+        with open("yourpath", "r") as f:
             rss_pages = int(f.read().split()[1])
         return rss_pages * _PAGE_SIZE / 1024 / 1024
     except (OSError, IndexError, ValueError):
@@ -405,7 +426,7 @@ def current_mem_mb():
 
 
 def peak_mem_mb():
-    """进程历史峰值 RSS(MB)。Linux 的 ru_maxrss 单位是 KB，macOS 是 byte。"""
+    """Historical peak RSS (MB). Linux ru_maxrss is in KB; macOS is in bytes."""
     ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return ru / 1024.0 if sys.platform != "darwin" else ru / 1024.0 / 1024.0
 
@@ -414,17 +435,17 @@ _GPU_PEAK_RESERVED_MB = 0.0
 
 
 def gpu_status():
-    """返回 CelloType 使用的 PyTorch GPU 状态及进程显存（MB）。"""
+    """Return PyTorch GPU status for the CelloType device plus process VRAM (MB)."""
     global _GPU_PEAK_RESERVED_MB
     requested = str(DEVICE).lower().startswith("cuda")
     try:
         import torch
         available = bool(torch.cuda.is_available())
     except Exception:
-        return (f"请求使用GPU={requested}, GPU可用=False, 实际使用=False, "
-                "显存=不可用(torch 未安装或加载失败)")
+        return (f"GPU requested={requested}, GPU available=False, actually used=False, "
+                "VRAM=unavailable (torch not installed or failed to load)")
     if not available:
-        return f"请求使用GPU={requested}, GPU可用=False, 实际使用=False, 显存=N/A"
+        return f"GPU requested={requested}, GPU available=False, actually used=False, VRAM=N/A"
     try:
         device_index = torch.cuda.current_device()
         device_name = torch.cuda.get_device_name(device_index)
@@ -434,23 +455,23 @@ def gpu_status():
         peak_allocated = torch.cuda.max_memory_allocated(device_index) / 1024**2
         peak_reserved = torch.cuda.max_memory_reserved(device_index) / 1024**2
         _GPU_PEAK_RESERVED_MB = max(_GPU_PEAK_RESERVED_MB, peak_reserved)
-        return (f"请求使用GPU={requested}, GPU可用=True, 实际使用={requested}, "
-                f"设备=cuda:{device_index} ({device_name}), "
-                f"显存当前={allocated:.1f}/{reserved:.1f}/{total:.1f} MB(已分配/已保留/总量), "
-                f"显存峰值={peak_allocated:.1f}/{_GPU_PEAK_RESERVED_MB:.1f} MB(已分配/已保留)")
+        return (f"GPU requested={requested}, GPU available=True, actually used={requested}, "
+                f"device=cuda:{device_index} ({device_name}), "
+                f"VRAM current={allocated:.1f}/{reserved:.1f}/{total:.1f} MB (allocated/reserved/total), "
+                f"VRAM peak={peak_allocated:.1f}/{_GPU_PEAK_RESERVED_MB:.1f} MB (allocated/reserved)")
     except Exception as exc:
-        return (f"请求使用GPU={requested}, GPU可用=True, 实际使用={requested}, "
-                f"显存读取失败: {exc}")
+        return (f"GPU requested={requested}, GPU available=True, actually used={requested}, "
+                f"VRAM read failed: {exc}")
 
 
 # --------------------------------------------------------------------------- #
-# main：与前几份同款三阶段
+# main: same three stages as the earlier versions
 # --------------------------------------------------------------------------- #
 def main():
     start_time = time.time()
     initial_memory = current_mem_mb()
     print(f"\n{'='*80}")
-    print(f"[Performance] 开始运行 CelloType - 初始内存: {initial_memory:.2f} MB")
+    print(f"[Performance] starting CelloType - initial memory: {initial_memory:.2f} MB")
     print(f"[GPU] {gpu_status()}")
     print(f"{'='*80}\n")
 
@@ -462,9 +483,9 @@ def main():
     roi = ROI
     if roi is None and ROI_SIZE is not None:
         roi = U.make_center_roi(DAPI_TIF, size=ROI_SIZE)
-        print(f"[ROI] 自动取中心窗口: {roi}")
+        print(f"[ROI] automatically using center window: {roi}")
     elif roi is None:
-        print("[ROI] 整幅评测（注意内存占用）")
+        print("[ROI] whole-image evaluation (watch memory use)")
 
     gt_tif   = os.path.join(OUT_DIR, "gt_vizgen_official_roi.tif")
     pred_tif = os.path.join(OUT_DIR, "pred_cellotype_roi.tif")
@@ -485,22 +506,22 @@ def main():
         ).to_csv(os.path.join(OUT_DIR, "gt_label_to_cellid.csv"), index=False)
     else:
         gt_mask = np.squeeze(tifffile.imread(gt_tif)).astype(np.int32)
-        print(f"[GT] 复用已有 GT: {gt_tif} shape={gt_mask.shape}")
+        print(f"[GT] reusing existing GT: {gt_tif} shape={gt_mask.shape}")
 
     stage1_time = time.time() - stage1_start
     stage1_memory = current_mem_mb()
-    print(f"[Performance] Stage 1 完成 - 用时: {stage1_time:.2f}s, "
-          f"当前内存: {stage1_memory:.2f} MB, 峰值: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
+    print(f"[Performance] Stage 1 done - elapsed: {stage1_time:.2f}s, "
+          f"current memory: {stage1_memory:.2f} MB, peak: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
 
-    # -------- Stage 2: CelloType 分割 --------
+    # -------- Stage 2: CelloType segmentation --------
     stage2_start = time.time()
     if DO_RUN_CELLOTYPE:
         run_cellotype(roi, pred_tif)
 
     stage2_time = time.time() - stage2_start
     stage2_memory = current_mem_mb()
-    print(f"[Performance] Stage 2 完成 - 用时: {stage2_time:.2f}s, "
-          f"当前内存: {stage2_memory:.2f} MB, 峰值: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
+    print(f"[Performance] Stage 2 done - elapsed: {stage2_time:.2f}s, "
+          f"current memory: {stage2_memory:.2f} MB, peak: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
 
     # -------- Stage 3: benchmark --------
     stage3_start = time.time()
@@ -513,26 +534,26 @@ def main():
 
     stage3_time = time.time() - stage3_start
     stage3_memory = current_mem_mb()
-    print(f"[Performance] Stage 3 完成 - 用时: {stage3_time:.2f}s, "
-          f"当前内存: {stage3_memory:.2f} MB, 峰值: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
+    print(f"[Performance] Stage 3 done - elapsed: {stage3_time:.2f}s, "
+          f"current memory: {stage3_memory:.2f} MB, peak: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
 
-    # 总体统计
+    # Overall
     total_time = time.time() - start_time
-    peak_memory = peak_mem_mb()          # 真实历史高水位，不是收尾时的采样值
+    peak_memory = peak_mem_mb()          # real historical high-water mark, not a sampled end-of-run value
     memory_increase = peak_memory - initial_memory
 
     print(f"\n{'='*80}")
-    print(f"[Performance] CelloType 性能统计总结")
+    print(f"[Performance] CelloType performance summary")
     print(f"{'='*80}")
-    print(f"总运行时间: {total_time:.2f}s ({total_time/60:.2f}min)")
-    print(f"初始内存: {initial_memory:.2f} MB")
-    print(f"结束内存: {stage3_memory:.2f} MB")
-    print(f"峰值内存: {peak_memory:.2f} MB")
-    print(f"内存增量: {memory_increase:.2f} MB (峰值 - 初始)")
-    print(f"GPU统计: {gpu_status()}")
-    print(f"\n各阶段用时:")
-    print(f"  Stage 1 (GT构建): {stage1_time:.2f}s")
-    print(f"  Stage 2 (CelloType分割): {stage2_time:.2f}s")
+    print(f"Total runtime: {total_time:.2f}s ({total_time/60:.2f}min)")
+    print(f"Initial memory: {initial_memory:.2f} MB")
+    print(f"Final memory: {stage3_memory:.2f} MB")
+    print(f"Peak memory: {peak_memory:.2f} MB")
+    print(f"Memory increase: {memory_increase:.2f} MB (peak - initial)")
+    print(f"GPU summary: {gpu_status()}")
+    print(f"\nPer-stage time:")
+    print(f"  Stage 1 (GT build): {stage1_time:.2f}s")
+    print(f"  Stage 2 (CelloType segmentation): {stage2_time:.2f}s")
     print(f"  Stage 3 (Benchmark): {stage3_time:.2f}s")
     print(f"{'='*80}\n")
 

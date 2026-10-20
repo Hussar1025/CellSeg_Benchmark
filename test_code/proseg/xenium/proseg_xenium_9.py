@@ -43,9 +43,9 @@ import pandas as pd
 
 VERSION = "2026.08.14"
 
-DATA_ROOT = "/data/qiuyijia/dataset/xenium_colon"
+DATA_ROOT = "yourpath/dataset/xenium_colon"
 DATASET = "xenium_6"
-LABEL = "Xenium 小鼠结肠"
+LABEL = "Xenium mouse colon"
 PIXEL_SIZE = 0.2125
 ROI_SIZE = 10000
 ROI_Y0 = 12052
@@ -519,7 +519,7 @@ def qc(lab, geo: Geometry, tx: pd.DataFrame, n_platform: int, out: Path,
     rule("DONE")
 
 
-OUT_DEFAULT = "/data/qiuyijia/proseg_xenium_colon"
+OUT_DEFAULT = "yourpath/proseg_xenium_colon"
 STAGES = ["prep", "run", "post", "all"]
 METHOD = "Proseg"
 
@@ -578,7 +578,7 @@ def find_proseg(explicit=None):
     if p:
         return p
     for c in (Path.home() / ".cargo/bin/proseg",
-              Path("/data/qiuyijia/.cargo/bin/proseg")):
+              Path("yourpath/.cargo/bin/proseg")):
         if c.exists():
             return str(c)
     raise SystemExit("proseg is not on PATH; pass --proseg-bin")

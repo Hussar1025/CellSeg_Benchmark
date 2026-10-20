@@ -4,10 +4,12 @@ Resource benchmark matrix: runtime / CPU peak memory / GPU peak memory
 Rows = datasets (grouped by platform); columns = methods (ordered by median runtime)
 Colour: log scale, lower value = darker (P5 -> base colour, P95 -> light tint; clipped beyond)
 
-【适配新版 CSV】表头为 方法名 / 数据集名称 / 运行时间(s) / CPU内存峰值(GiB) / GPU内存峰值(GiB)，数值列不带单位；
-方法名与数据集名有多种写法（Proseg / CellposeSAM / Cellpose3-cyto3；xenium10 / xenium_10；
-cosmx_pancreas / Pancreas-CosMx-WTx-FlatFiles 等），统一成与结果表一致的名字后再作图。旧版"数值 + 单位"格式仍兼容。
-数据集按平台分组、组内按自然序（xenium_2 在 xenium_10 之前）排列。
+Adapted for the new CSV format: header is method name / dataset name / runtime (s) / CPU peak
+memory (GiB) / GPU peak memory (GiB); the numeric columns carry no units. Method and dataset names
+appear in several spellings (Proseg / CellposeSAM / Cellpose3-cyto3; xenium10 / xenium_10;
+cosmx_pancreas / Pancreas-CosMx-WTx-FlatFiles, etc.); normalize them to the result-table names before
+plotting. The legacy "value + unit" format is still supported.
+Datasets are grouped by platform and ordered naturally within each group (xenium_2 before xenium_10).
 """
 import re
 from pathlib import Path
@@ -18,17 +20,17 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, LinearSegmentedColormap
 from matplotlib.patches import Rectangle
 
-# ======================== 参数 ========================
-CSV = Path(r"C:\Users\阿飞\Desktop\segmentation_resources_all_methods_summary.csv")
+# ======================== Parameters ========================
+CSV = Path("yourpath/segmentation_resources_all_methods_summary.csv")
 OUT_STEM = CSV.with_name("fig_resources_matrix")
 
-FIG_W = 7.2            # inch，约 183 mm（Nature 双栏宽）
+FIG_W = 7.2            # inch; ~183 mm (Nature double-column width)
 FONT = 6               # pt
 
-ROBUST_PCT = (5, 95)   # 色标范围对应的百分位数
+ROBUST_PCT = (5, 95)   # percentiles that define the colorbar range
 BASE_RGB = {"time": (68, 144, 169), "cpu": (237, 125, 49), "gpu": (91, 155, 213)}
-LIGHT = 0.85           # 最浅色：基色与白色的混合比例（越大越浅）
-INVERT_SIZE = False    # False：数值越大方块越大；True：数值越小方块越大
+LIGHT = 0.85           # lightest tint: fraction of white mixed into the base colour (larger = lighter)
+INVERT_SIZE = False    # False: larger value = larger square; True: smaller value = larger square
 
 PLATFORM = {
     "xenium": "Xenium",
@@ -44,9 +46,9 @@ PLATFORM_COLOR = {
     "merfish": "#8DB3D6",
     "cosmx": "#F2B26B",
 }
-DATASET_LABEL = {}     # 如需美化数据集显示名，在此添加（键为统一后的名字，如 "xenium_2"）
+DATASET_LABEL = {}     # optional pretty display names, keyed by normalized dataset name (e.g. "xenium_2")
 
-# 方法名、数据集名统一（键为小写原名）
+# normalize method/dataset names (keys are lowercased original names)
 METHOD_NAME = {"proseg": "ProSeg", "cellposesam": "Cellpose-SAM", "cellpose-sam": "Cellpose-SAM",
                "cellpose3-cyto3": "Cellpose-3", "cellpose3": "Cellpose-3", "cellpose-3": "Cellpose-3",
                "baysor": "Baysor", "bering": "Bering", "boms": "BOMS", "comseg": "ComSeg", "dissect": "DISSECT",
@@ -65,9 +67,9 @@ DATASET_ALIAS = {
 
 MISS_C = "#9E9E9E"
 HOLLOW_C = "#9E9E9E"
-EDGE_LW = 0.25         # 方块黑色边框线宽（pt）
-SQ_MAX = 0.88          # 最大方块边长（单元格为 1）
-SQ_MIN = 0.36          # 最小方块边长
+EDGE_LW = 0.25         # black square border width (pt)
+SQ_MAX = 0.88          # max square side (cell = 1)
+SQ_MIN = 0.36          # min square side
 
 mpl.rcParams.update({
     "font.family": "sans-serif",
@@ -81,7 +83,7 @@ mpl.rcParams.update({
     "svg.fonttype": "none",
 })
 
-# ======================== 读取与解析 ========================
+# ======================== Load and parse ========================
 df = pd.read_csv(CSV, encoding="utf-8-sig").iloc[:, :5]
 df.columns = ["method", "dataset", "time", "cpu", "gpu"]
 df["method"] = df["method"].astype(str).str.strip().map(lambda m: METHOD_NAME.get(m.lower(), m))
@@ -90,24 +92,24 @@ df["dataset"] = df["dataset"].astype(str).str.strip().map(lambda s: DATASET_ALIA
 num_re = r"^\s*(\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*([A-Za-z]*)\s*$"
 for col, unit in [("time", "s"), ("cpu", "GiB"), ("gpu", "GiB")]:
     s = df[col]
-    if pd.api.types.is_numeric_dtype(s):          # 新版：纯数值
+    if pd.api.types.is_numeric_dtype(s):          # new format: plain numbers
         df[col] = s.astype(float)
         continue
-    ext = s.astype(str).str.extract(num_re)       # 旧版：数值 + 单位
+    ext = s.astype(str).str.extract(num_re)       # legacy format: value + unit
     bad = s.notna() & ext[0].isna()
     if bad.any():
-        raise ValueError(f"[{col}] 无法解析的条目: {s[bad].unique()[:10]}")
+        raise ValueError(f"[{col}] unparseable entries: {s[bad].unique()[:10]}")
     units = {u for u in ext[1].dropna() if u}
     if units - {unit}:
-        raise ValueError(f"[{col}] 单位不一致: {units}")
+        raise ValueError(f"[{col}] inconsistent units: {units}")
     df[col] = ext[0].astype(float)
 
 dup = df.duplicated(["method", "dataset"], keep=False)
 if dup.any():
-    print("[警告] 名字统一后存在重复的 方法-数据集 组合，仅保留第一条：")
+    print("[Warning] duplicate method-dataset combinations after name normalization; keeping only the first:")
     print(df[dup].sort_values(["method", "dataset"]))
 df = df.drop_duplicates(["method", "dataset"], keep="first")
-print(f"读取 {len(df)} 条记录：{df.method.nunique()} 个方法，{df.dataset.nunique()} 个数据集")
+print(f"Loaded {len(df)} records: {df.method.nunique()} methods, {df.dataset.nunique()} datasets")
 
 
 def plat_key(d):
@@ -116,7 +118,7 @@ def plat_key(d):
 
 unknown = {plat_key(d) for d in df["dataset"]} - set(PLATFORM)
 if unknown:
-    raise ValueError(f"未在 PLATFORM 中定义的数据集前缀: {unknown}")
+    raise ValueError(f"dataset prefixes undefined in PLATFORM: {unknown}")
 
 
 def nat_key(d):
@@ -138,10 +140,10 @@ n, m = T.shape
 
 gpu_methods = [mm for mm in methods if (G[mm] > 0).any()]
 Gp = G[gpu_methods]
-print(f"矩阵大小: {n} datasets x {m} methods")
-print("GPU panel 中不显示的方法（从未使用 GPU）:", [mm for mm in methods if mm not in gpu_methods])
+print(f"matrix size: {n} datasets x {m} methods")
+print("methods not shown in the GPU panel (never used GPU):", [mm for mm in methods if mm not in gpu_methods])
 
-# ======================== 汇总表 ========================
+# ======================== Summary table ========================
 summary = pd.DataFrame({
     "median_runtime_s": T.median(),
     "median_runtime_min": T.median() / 60,
@@ -155,9 +157,9 @@ summary.to_csv(OUT_STEM.with_name(OUT_STEM.name + "_summary.csv"), encoding="utf
 print(summary.round(2).to_string())
 
 
-# ======================== 工具函数 ========================
+# ======================== Utility functions ========================
 def seq_cmap(rgb):
-    """低值 = 基色（最深），高值 = 浅色；不在基色基础上加深"""
+    """Low value = base colour (darkest), high value = light tint; never darker than the base colour"""
     base = np.array(rgb, dtype=float) / 255
     light = base + (1 - base) * LIGHT
     return LinearSegmentedColormap.from_list("seq_r", [base, light], N=256)
@@ -168,8 +170,8 @@ def make_norm(M, label):
     lo, hi = np.percentile(v, ROBUST_PCT)
     ext = ("min" if v.min() < lo else "") + ("max" if v.max() > hi else "")
     ext = {"minmax": "both", "min": "min", "max": "max", "": "neither"}[ext]
-    print(f"[{label}] 色标范围: P{ROBUST_PCT[0]} = {lo:.4g}, P{ROBUST_PCT[1]} = {hi:.4g}"
-          f"（超出上限 {np.sum(v > hi)} 个，低于下限 {np.sum(v < lo)} 个）")
+    print(f"[{label}] colorbar range: P{ROBUST_PCT[0]} = {lo:.4g}, P{ROBUST_PCT[1]} = {hi:.4g}"
+          f" ({np.sum(v > hi)} above upper bound, {np.sum(v < lo)} below lower bound)")
     return LogNorm(lo, hi, clip=True), ext
 
 
@@ -220,7 +222,7 @@ def draw_panel(ax, M, norm, cmap, title, zero_hollow=False):
     ax.set_title(title, fontsize=FONT + 1, fontweight="bold", pad=4)
 
 
-# ======================== 版式（单位：inch） ========================
+# ======================== Layout (unit: inch) ========================
 L, SW, SG, GAP, R = 1.20, 0.08, 0.03, 0.20, 0.08
 T_M, B_M = 0.80, 0.55
 
@@ -255,7 +257,7 @@ def frac(x, y, w, h):
     return [x / FIG_W, y / FIG_H, w / FIG_W, h / FIG_H]
 
 
-# 左侧平台色条 + 数据集标签
+# left platform color bar + dataset labels
 sax = fig.add_axes(frac(L, B_M, SW, PH))
 for i, d in enumerate(datasets):
     sax.add_patch(Rectangle((0, i - 0.5), 1, 1, facecolor=PLATFORM_COLOR[plat_key(d)], lw=0))
@@ -268,7 +270,7 @@ sax.tick_params(pad=2)
 for sp in sax.spines.values():
     sp.set_visible(False)
 
-# 三个 panel + colorbar
+# three panels + colorbar
 xk = L + SW + SG
 for (M, norm, extend, cmap, title, cb_title, zero_hollow, (ticks, labels)), u in zip(panels, units):
     PW = u * cell
@@ -289,9 +291,9 @@ for (M, norm, extend, cmap, title, cb_title, zero_hollow, (ticks, labels)), u in
 
     xk += PW + GAP
 
-# ======================== 导出 ========================
+# ======================== Export ========================
 for ext, kw in [(".pdf", {}), (".svg", {}), (".png", {"dpi": 600})]:
     out = OUT_STEM.with_suffix(ext)
     fig.savefig(out, **kw)
-    print("已保存:", out)
+    print("Saved:", out)
 plt.close(fig)

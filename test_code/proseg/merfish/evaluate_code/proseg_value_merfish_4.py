@@ -28,7 +28,7 @@ import pandas as pd
 
 VERSION = "2026.08.13"
 
-DATA_ROOT = "/data/qiuyijia/dataset/MERFISH_Lung_cancer"
+DATA_ROOT = "yourpath/dataset/MERFISH_Lung_cancer"
 ROI_SIZE = 10000
 DATASET = "lung"
 
@@ -193,11 +193,11 @@ def load_gt_mask(root: Path, geo: Geometry, explicit=None) -> np.ndarray:
     import tifffile
     cands = [Path(explicit)] if explicit else []
     cands += [Path(p) / "platform_labels.tif" for p in
-              ("/data/qiuyijia/ucs_merfish_lung_nuc",
-               "/data/qiuyijia/proseg_merfish_lung_nuc",
-               "/data/qiuyijia/comseg_merfish_lung",
-               "/data/qiuyijia/ucs_merfish_lung",
-               "/data/qiuyijia/proseg_merfish_lung")]
+              ("yourpath/ucs_merfish_lung_nuc",
+               "yourpath/proseg_merfish_lung_nuc",
+               "yourpath/comseg_merfish_lung",
+               "yourpath/ucs_merfish_lung",
+               "yourpath/proseg_merfish_lung")]
     p = next((q for q in cands if q.exists()), None)
     if p is None:
         raise SystemExit(
@@ -529,7 +529,7 @@ METHOD = "Proseg"
 # ==========================================================================
 
 def add_args(ap):
-    ap.add_argument("--run-dir", default="/data/qiuyijia/proseg_merfish_lung_nuc")
+    ap.add_argument("--run-dir", default="yourpath/proseg_merfish_lung_nuc")
     ap.add_argument("--mask", default=None)
 
 
@@ -665,7 +665,7 @@ def main_loop(method: str, build):
     ap = argparse.ArgumentParser(
         description=f"Evaluate {method} on the MERFISH lung ROI")
     ap.add_argument("--root", default=DATA_ROOT)
-    ap.add_argument("--out-dir", default="/data/qiuyijia/eval_merfish_lung")
+    ap.add_argument("--out-dir", default="yourpath/eval_merfish_lung")
     ap.add_argument("--roi-size", type=int, default=ROI_SIZE)
     ap.add_argument("--gt-mask", default=None,
                     help="platform_labels.tif built with --prior polygon")

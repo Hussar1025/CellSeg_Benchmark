@@ -48,9 +48,9 @@ import pandas as pd
 
 VERSION = "2026.08.14"
 
-DATA_ROOT = "/data/qiuyijia/dataset/xenium_colon"
+DATA_ROOT = "yourpath/dataset/xenium_colon"
 DATASET = "xenium_6"
-LABEL = "Xenium 小鼠结肠"
+LABEL = "Xenium mouse colon"
 PIXEL_SIZE = 0.2125
 ROI_SIZE = 10000
 ROI_Y0 = 12052
@@ -585,7 +585,7 @@ def qc(lab, geo: Geometry, tx: pd.DataFrame, n_platform: int, out: Path,
     rule("DONE")
 
 
-OUT_DEFAULT = "/data/qiuyijia/ucs_xenium_colon"
+OUT_DEFAULT = "yourpath/ucs_xenium_colon"
 STAGES = ["prep", "run", "post", "all"]
 METHOD = "UCS"
 
@@ -593,7 +593,7 @@ METHOD = "UCS"
 def add_args(ap):
     ap.add_argument("--bin-factor", type=int, default=10,
                     help="native px per grid pixel; 10 = 2.125 um")
-    ap.add_argument("--ucs-repo", default="/data/qiuyijia/ucs/UCS")
+    ap.add_argument("--ucs-repo", default="yourpath/ucs/UCS")
     ap.add_argument("--gpu", default="auto")
     ap.add_argument("--min-free-mb", type=int, default=4000)
     ap.add_argument("--mem-fraction", type=float, default=0.30)

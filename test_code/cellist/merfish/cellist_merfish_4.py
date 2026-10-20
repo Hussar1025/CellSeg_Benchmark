@@ -4,25 +4,18 @@
 
 Cellist on the MERFISH lung ROI.
 
-Cellist finds its own nuclei with Cellpose, so it is the one method here that
-does not consume the platform segmentation.  Two things learned on the earlier
-datasets are built in:
-
-  * the number of cells Cellist can return is bounded by the number of nuclei
-    that contain at least ~20 in-nucleus transcripts, so --stage nucleus reports
-    that count and not just the raw nucleus count.  On Xenium liver the raw
-    count was 16,886 while only 2,943 were usable, and 2,942 cells came out.
-  * Cellist labels spots rather than pixels, so the raster is grown by
-    --fill-um before area is measured; without it a 34 um cell reads as 9 um.
+Cellist finds its own nuclei with Cellpose, so it does not consume the platform
+segmentation. Key points:
+  * usable nuclei = those with >= ~20 in-nucleus transcripts; --stage nucleus
+    reports that count, which bounds the cell count.
+  * Cellist labels spots, not pixels, so labels are grown by --fill-um before
+    area is measured.
 
   conda activate Cellist
   python cellist_merfish_lung.py --stage prep
   python cellist_merfish_lung.py --stage nucleus --nucleus-diameter-um 6.5
   python cellist_merfish_lung.py --stage seg --nucleus-diameter-um 6.5 --cell-radius-um 6.0
-
-This file is self-contained.
 """
-
 
 from __future__ import annotations
 
@@ -42,7 +35,7 @@ import pandas as pd
 
 VERSION = "2026.08.13"
 
-DATA_ROOT = "/data/qiuyijia/dataset/MERFISH_Lung_cancer"
+DATA_ROOT = "yourpath"
 ROI_SIZE = 10000                 # mosaic px, centred -> 1080 x 1080 um
 DAPI_HINT = "dapi"
 
@@ -92,10 +85,7 @@ def write_tab(df: pd.DataFrame, path: Path):
         return alt
 
 
-# ---------------------------------------------------------------------------
 # geometry
-# ---------------------------------------------------------------------------
-
 
 @dataclass
 class Geometry:
@@ -168,7 +158,7 @@ def load_geometry(root: Path, roi_size=ROI_SIZE, dapi_override=None) -> tuple:
 
 
 def read_dapi_roi(dapi: Path, geo: Geometry) -> np.ndarray:
-    """The mosaics are uncompressed, so a memmap crop costs nothing."""
+    """Mosaics are uncompressed, so a memmap crop costs nothing."""
     import tifffile
     y0, x0, s = geo.y0, geo.x0, geo.size
     try:
@@ -194,10 +184,7 @@ def normalise8(a, lo=None, hi=None):
     return np.clip((a - lo) / max(hi - lo, 1e-6), 0, 1)
 
 
-# ---------------------------------------------------------------------------
 # transcripts
-# ---------------------------------------------------------------------------
-
 
 def load_roi_transcripts(root: Path, geo: Geometry, cache: Path,
                          force=False) -> pd.DataFrame:
@@ -242,10 +229,7 @@ def load_roi_transcripts(root: Path, geo: Geometry, cache: Path,
     return df
 
 
-# ---------------------------------------------------------------------------
 # platform prior
-# ---------------------------------------------------------------------------
-
 
 def platform_cells(root: Path, geo: Geometry) -> pd.DataFrame:
     md = find(root, "cell_metadata.csv*", "*cell_metadata*.csv*")
@@ -262,7 +246,7 @@ def platform_cells(root: Path, geo: Geometry) -> pd.DataFrame:
 
 
 def _fill_polygon(mask, pts, cid):
-    """cv2 drawing rejects int32/uint32 label images, so fill a uint8 stamp."""
+    """cv2 rejects int32/uint32 label images, so fill a uint8 stamp."""
     import cv2
     y0 = max(int(np.floor(pts[:, 1].min())), 0)
     y1 = min(int(np.ceil(pts[:, 1].max())) + 1, mask.shape[0])
@@ -279,7 +263,7 @@ def _fill_polygon(mask, pts, cid):
 
 
 def nucleus_diameter(cells: pd.DataFrame, frac: float, explicit=None) -> float:
-    """Nucleus size, in micron, from the platform cell size."""
+    """Nucleus size in micron from the platform cell size."""
     if explicit:
         log.info(f"nucleus     {explicit:.2f} um (given)")
         return float(explicit)
@@ -306,15 +290,10 @@ def build_prior(root: Path, geo: Geometry, cells: pd.DataFrame, out: Path,
     """
     Label mask of the prior, in ROI-local mosaic pixels.
 
-    centroid  a nucleus-sized disk on each platform cell centroid.  This is the
-              analogue of the Xenium nucleus_boundaries and the CosMx NucArea
-              priors, so it belongs in the same reference-assisted column.
-    dapi      nuclei segmented from the DAPI channel, with no platform input at
-              all -- the clean variant.
-    polygon   the platform cell outlines.  Handing UCS a cell boundary leaves it
-              almost nothing to expand into (it measured 1.17x on this ROI), so
-              this is an upper bound rather than a comparable result.
-    disk      a disk sized from cell_metadata volume.
+    centroid  nucleus-sized disk on each platform centroid.
+    dapi      nuclei from DAPI with no platform input (clean variant).
+    polygon   platform cell outlines; leaves little room for expansion.
+    disk      disk sized from cell_metadata volume.
     """
     rule("PLATFORM PRIOR")
     import tifffile
@@ -485,10 +464,7 @@ def expand_labels(lab, radius_px):
     return out
 
 
-# ---------------------------------------------------------------------------
 # reporting
-# ---------------------------------------------------------------------------
-
 
 def qc(lab: np.ndarray, geo: Geometry, tx: pd.DataFrame, n_platform: int,
        out: Path, method: str, px_per_cell=1.0, gt_label=None):
@@ -552,12 +528,9 @@ STAGES = ['prep', 'nucleus', 'seg', 'all']
 PRIOR_DEFAULT = "polygon"
 PRIOR_CHOICES = ['polygon', 'centroid', 'disk']
 
-# ==========================================================================
 # Cellist
-# ==========================================================================
 
-
-OUT_DEFAULT = "/data/qiuyijia/cellist_merfish_lung"
+OUT_DEFAULT = "yourpath"
 
 
 def add_args(ap):
@@ -570,17 +543,17 @@ def add_args(ap):
     ap.add_argument("--alpha", type=float, default=None)
     ap.add_argument("--gene-use", default=None, choices=[None, "HVG", "Frequent"])
     ap.add_argument("--nworkers", type=int, default=3,
-                    help="this is the number of patches held in RAM at once, not "
-                         "a CPU count; 16 once needed 515 GiB")
+                    help="number of patches held in RAM at once, not a CPU count; "
+                         "16 once needed 515 GiB")
     ap.add_argument("--fill-um", type=float, default=1.0)
     ap.add_argument("--cellist-bin", default="cellist")
     ap.add_argument("--use-local-threshold", action="store_true",
-                    help="the sweeps on the other datasets favoured "
-                         "no_local_threshold=True, which is the default here")
+                    help="sweeps on other datasets favoured "
+                         "no_local_threshold=True, the default here")
     ap.add_argument("--model-type", default="nuclei")
     ap.add_argument("--expansion", action="store_true",
-                    help="on Xenium liver this changed nothing at all: 2.0 and "
-                         "3.0 um gave byte-identical output. Left in, off.")
+                    help="on Xenium liver this changed nothing: 2.0 and 3.0 um "
+                         "gave byte-identical output. Left in, off.")
     ap.add_argument("--expansion-dist-um", type=float, default=0.0)
     ap.add_argument("--force-nucleus", action="store_true")
     ap.add_argument("--force-seg", action="store_true")
@@ -654,8 +627,8 @@ def stage_nucleus(root, out, args):
         log.info(f"cache       {nd}")
     else:
         if nd.exists():
-            log.info(f"            clearing {nd} (no DONE flag, so the previous "
-                     "attempt did not finish)")
+            log.info(f"            clearing {nd} (no DONE flag, previous attempt "
+                     "did not finish)")
             shutil.rmtree(nd)
         nd.mkdir(parents=True)
         from Cellist.Cellpose import Cellpose
@@ -666,8 +639,8 @@ def stage_nucleus(root, out, args):
         log.info(f"diameter    {args.nucleus_diameter_um} um = {diam:.2f} units "
                  f"(1 unit = {unit:.4f} um)")
 
-        # The parameter names differ between Cellist builds, so map our paths
-        # onto whatever this one declares rather than guessing.
+        # Parameter names differ between Cellist builds; map our paths onto
+        # whatever this build declares.
         want = {
             ("gem_path", "spot_file", "gem", "gem_file", "spot_expr_file",
              "spot_expr", "spot"): str(out / "input" / "gem.tsv.gz"),
@@ -758,7 +731,7 @@ def stage_seg(root, out, args):
             raise SystemExit(f"{pat} not found under {nd}")
         return str(h[0])
 
-    r_units = int(round(args.cell_radius_um / unit))     # the CLI wants an int
+    r_units = int(round(args.cell_radius_um / unit))     # CLI wants an int
     log.info(f"cell radius {args.cell_radius_um} um / {unit:.4f} = "
              f"{args.cell_radius_um/unit:.2f} -> {r_units} units "
              f"(= {r_units*unit:.2f} um after rounding)")
@@ -818,9 +791,6 @@ def stage_seg(root, out, args):
     tx = load_roi_transcripts(root, geo, root / "_roi_cache")
     qc(lab, geo, tx, meta["platform_cells"], out, "Cellist",
        px_per_cell=meta["gem_bin"])
-
-
-# ---------------------------------------------------------------------------
 
 
 def main():

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Cellist 评估 —— 自包含。读 *_Cellist_segmentation_cell_coord.txt (质心, 工作网格px)
-+ *_cell_count.h5 (10x CSC 基因矩阵)，换算到微米后与 platform GT 匹配，输出 19 指标。
+"""Cellist evaluation - self-contained. Reads *_Cellist_segmentation_cell_coord.txt (centroids, working grid px)
+and *_cell_count.h5 (10x CSC gene matrix), converts to micrometers, matches platform GT, and outputs 19 metrics.
 
-坐标换算: cellist coord 的 x/y 是【工作网格像素】(网格 = ROI微米 / resolution)。
-  µm = 坐标 * resolution + ROI微米原点
-  ⚠ cellist 存在轴序交换(编排器注释: centroid-0 当 x)，用 --swap-xy 开关处理。
+Coordinate conversion: cellist coord x/y are in working grid pixels (grid = ROI um / resolution).
+  um = coord * resolution + ROI um origin
+  Cellist has an axis-order swap; use --swap-xy to handle it.
 
-用法(merfish mouse_brain, ROI x[3589,5761] y[2327,4499], res 0.5):
+Usage:
   python cellist_value_merfish_1.py --dataset merfish_1 \
-    --root /data/qiuyijia/dataset/merfish_mouse_brain \
-    --coord ".../merfish_s1r1_Cellist_segmentation_cell_coord.txt" \
-    --count-h5 ".../merfish_s1r1_Cellist_segmentation_cell_count.h5" \
+    --root yourpath \
+    --coord "yourpath" \
+    --count-h5 "yourpath" \
     --roi-um 3589 5761 2327 4499 --resolution 0.5 [--swap-xy]
 """
 import argparse, glob
@@ -47,11 +47,11 @@ def load_h5(path):
     h = h5py.File(path, "r")
     g = h["matrix"]
     data = g["data"][:]; indices = g["indices"][:]; indptr = g["indptr"][:]
-    shape = tuple(g["shape"][:])            # (n_features, n_cells) 10x 约定
+    shape = tuple(g["shape"][:])            # (n_features, n_cells), 10x convention
     names = [x.decode() for x in g["features"]["name"][:]]
     barcodes = [x.decode() for x in g["barcodes"][:]]
     M = csc_matrix((data, indices, indptr), shape=shape)  # feature x cell
-    return M.T.toarray().astype(np.float32), names, barcodes  # cell x gene + cell_id顺序
+    return M.T.toarray().astype(np.float32), names, barcodes  # cell x gene + cell_id order
 
 
 def load_gt(root, roi):
@@ -146,7 +146,7 @@ def main():
 
     px,py,pids = load_coord(a.coord, roi, a.resolution, a.swap_xy)
     gm_p, pgenes, pbarcodes = load_h5(a.count_h5)
-    # 按 coord 的 cell_id(pids) 对齐 h5 的 barcodes 行顺序(barcodes乱序,不能按位置)
+    # Align h5 barcode row order to coord cell_id (pids); barcodes are unordered.
     bc2row = {str(b): i for i, b in enumerate(pbarcodes)}
     order = [bc2row.get(str(int(float(c))), bc2row.get(str(c), -1)) for c in pids]
     order = np.array(order)
@@ -154,18 +154,17 @@ def main():
     gm_full = np.zeros((len(pids), gm_p.shape[1]), np.float32)
     gm_full[valid_cell] = gm_p[order[valid_cell]]
     gm_p = gm_full
-    # coord 与 h5 行数应一致
-    # px/py/gm_p 均已按 pids(coord)对齐,无需再截断
+    # px/py/gm_p are already aligned to pids(coord); no truncation needed.
     gx,gy = load_gt(a.root, roi)
     tx_x,tx_y,tx_g,genes = load_tx(a.root)
     print(f"pred={len(px)}  GT={len(gx)}  roi_um={roi}  res={a.resolution}  swap={a.swap_xy}")
 
-    # GT 基因向量
+    # GT gene vectors
     from scipy.spatial import cKDTree
     dd,jj=cKDTree(np.c_[gx,gy]).query(np.c_[tx_x,tx_y],k=1)
     rad=max(np.median(dd)*2,3.0); ok=dd<=rad
     gm_gt=np.zeros((len(gx),len(genes)),np.float32); np.add.at(gm_gt,(jj[ok],tx_g[ok]),1.0)
-    # pred 基因向量对齐基因表
+    # Align pred gene vectors to gene table
     gi={x:i for i,x in enumerate(genes)}; col=np.array([gi.get(x,-1) for x in pgenes])
     gm_pred=np.zeros((len(px),len(genes)),np.float32); v=col>=0
     gm_pred[:,col[v]]=gm_p[:,np.where(v)[0]]
@@ -194,7 +193,7 @@ def main():
     print("="*56)
     for k,v in R.items(): print(f"  {k:18s} {v}")
     print("="*56)
-    out=a.out or f"/data/qiuyijia/cellist_value_{a.dataset}.csv"
+    out=a.out or f"yourpath/cellist_value_{a.dataset}.csv"
     pd.DataFrame([R]).to_csv(out,index=False); print("written ->",out)
 
 

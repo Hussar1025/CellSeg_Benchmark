@@ -44,17 +44,17 @@ VERSION = "2026.08.12-centerroi"
 
 DATASETS = {
     "liver1": dict(
-        root="/data/qiuyijia/dataset/merfish_liver1",
-        out="/data/qiuyijia/genesegnet_merfish_liver/liver1",
+        root="yourpath/dataset/merfish_liver1",
+        out="yourpath/genesegnet_merfish_liver/liver1",
     ),
     "liver2": dict(
-        root="/data/qiuyijia/dataset/merfish_liver2",
-        out="/data/qiuyijia/genesegnet_merfish_liver/liver2",
+        root="yourpath/dataset/merfish_liver2",
+        out="yourpath/genesegnet_merfish_liver/liver2",
     ),
 }
 
-DEFAULT_REPO = "/data/qiuyijia/GeneSegNet/GeneSegNet"
-DEFAULT_TRAIN_DIR = "/data/qiuyijia/genesegnet_merfish_brain_train"
+DEFAULT_REPO = "yourpath/GeneSegNet/GeneSegNet"
+DEFAULT_TRAIN_DIR = "yourpath/genesegnet_merfish_brain_train"
 
 ORIENTS = ["normal", "flip_y", "flip_x", "flip_xy",
            "transpose", "transpose_flip_y", "transpose_flip_x", "transpose_flip_xy"]

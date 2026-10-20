@@ -6,7 +6,7 @@
 #   4. D05103C4D4 registered-image center 3000x3000 native-pixel ROI
 #
 # Default: submit one detached worker with nohup.
-#   /data/qiuyijia/bering/run_bering_stereo_same_regions_nohup.sh
+#   yourpath/bering/run_bering_stereo_same_regions_nohup.sh
 #
 # Useful alternatives:
 #   BERING_CUDA_VISIBLE_DEVICES=1 ./run_bering_stereo_same_regions_nohup.sh
@@ -20,15 +20,15 @@
 set -u -o pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-/data/qiuyijia/anaconda3/envs/bering/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-yourpath/anaconda3/envs/bering/bin/python}"
 PREPARER="${SCRIPT_DIR}/prepare_stereoseq_bering.py"
 RUNNER="${SCRIPT_DIR}/bering_xenium_benchmark.py"
 CONFIG_DIR="${SCRIPT_DIR}/configs"
 PREPARED_DIR="${SCRIPT_DIR}/prepared_stereoseq"
 OUTPUT_DIR="${SCRIPT_DIR}/stereo_outputs"
 LOG_DIR="${SCRIPT_DIR}/logs"
-STEREO_DIR="/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all"
-MOUSE_DIR="/data/qiuyijia/dataset/stereo_mouse_embryo"
+STEREO_DIR="yourpath/dataset/stereoseq/stereo-seq_data_all"
+MOUSE_DIR="yourpath/dataset/stereo_mouse_embryo"
 CUDA_DEVICE="${BERING_CUDA_VISIBLE_DEVICES:-auto}"
 LAUNCH_LOG="${LOG_DIR}/bering_stereo_same_regions_launcher.log"
 PID_FILE="${LOG_DIR}/bering_stereo_same_regions.pid"
@@ -247,7 +247,7 @@ PY
   "${PYTHON_BIN}" - <<'PY'
 import gzip
 from pathlib import Path
-root = Path('/data/qiuyijia/dataset/stereoseq/stereo-seq_data_all')
+root = Path('yourpath/dataset/stereoseq/stereo-seq_data_all')
 for name in [
     'E14.5_E1S3_Dorsal_Midbrain_GEM_CellBin.tsv.gz',
     'E16.5_E1S3_Dorsal_Midbrain_GEM_CellBin.tsv.gz',
@@ -259,7 +259,7 @@ for name in [
     assert required.issubset(header) and ({'MIDCount', 'MIDCounts'} & set(header)), (name, header)
     print('[OK schema]', name, header)
 import h5py
-mouse = Path('/data/qiuyijia/dataset/stereo_mouse_embryo')
+mouse = Path('yourpath/dataset/stereo_mouse_embryo')
 with h5py.File(str(mouse / 'D05103C4D4.tissue.gef'), 'r') as f:
     assert 'geneExp/bin1/expression' in f and 'geneExp/bin1/gene' in f
 with h5py.File(str(mouse / 'D05103C4D4.adjusted.cellbin.gef'), 'r') as f:

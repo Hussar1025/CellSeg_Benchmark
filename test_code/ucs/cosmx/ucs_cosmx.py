@@ -1,26 +1,27 @@
 """
 UCS — Pancreas CosMx WTx — Full Image
 ======================================
-服务器  : 4090-02
-环境    : ucs_env (Python 3.9)
-GPU     : 运行时自动选择最空闲的卡
-运行方式: python ucs_pancreas_full.py
+Server  : 4090-02
+Env     : ucs_env (Python 3.9)
+GPU     : auto-select the most idle GPU at runtime
+Run     : python ucs_pancreas_full.py
 
-nuclei_mask : CellLabels TIF（官方核分割，18个FOV拼图）
+nuclei_mask : CellLabels TIF (official nuclear segmentation, 18-FOV mosaic)
 BIN_FACTOR  : 25  →  3.0 µm/bin
-TOP_N_GENES : 1000（覆盖63.4%转录本）
-  → 全量推理内存: 468×48×48×1000×4 bytes = 4.3 GB ✅
-  → 5000基因时: 21.6 GB → OOM ❌
+TOP_N_GENES : 1000 (covers 63.4% transcripts)
+  → full inference memory: 468×48×48×1000×4 bytes = 4.3 GB ✅
+  → 5000 genes: 21.6 GB → OOM ❌
 
-GPU 修复说明：
-  UCS 内部执行 os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
-  所以必须把物理 GPU 号直接传给 --gpu，不能在外部设 CUDA_VISIBLE_DEVICES
+GPU fix notes:
+  UCS internally sets os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
+  so pass the physical GPU index directly to --gpu; do not set
+  CUDA_VISIBLE_DEVICES externally.
 """
 
 import os, glob, re, sys, shutil, subprocess
 
 
-# ── 动态选择最空闲的 GPU ────────────────────────────────────────────────────
+# ── Auto-select the most idle GPU ─────────────────────────────────────────────
 def pick_best_gpu(min_free_gb=10.0):
     try:
         result = subprocess.check_output(
@@ -33,24 +34,24 @@ def pick_best_gpu(min_free_gb=10.0):
         for line in result.strip().splitlines():
             idx, free_mb, util = [x.strip() for x in line.split(",")]
             free_gb = int(free_mb) / 1024
-            print(f"  GPU {idx}: {free_gb:.1f} GB 空闲  {util}% 负载")
+            print(f"  GPU {idx}: {free_gb:.1f} GB free  {util}% load")
             if free_gb > best_free:
                 best_free, best_idx = free_gb, int(idx)
         if best_free < min_free_gb:
             raise RuntimeError(
-                f"没有 GPU 超过 {min_free_gb} GB 空闲（最大 {best_free:.1f} GB）")
-        print(f"  → 选择 GPU {best_idx}（{best_free:.1f} GB 空闲）")
+                f"No GPU exceeds {min_free_gb} GB free (max {best_free:.1f} GB)")
+        print(f"  → selected GPU {best_idx} ({best_free:.1f} GB free)")
         return str(best_idx)
     except FileNotFoundError:
-        print("  nvidia-smi 不可用，使用 GPU 0")
+        print("  nvidia-smi unavailable, using GPU 0")
         return "0"
 
 print("=" * 50)
-print("自动选择 GPU（要求 ≥ 10 GB 空闲）")
+print("Auto-select GPU (requires ≥ 10 GB free)")
 _GPU_ID = pick_best_gpu(min_free_gb=10.0)
-# 注意：不在此处设 CUDA_VISIBLE_DEVICES
-# UCS 内部会执行 os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
-# 必须把物理 GPU 号直接传给 --gpu
+# Note: do not set CUDA_VISIBLE_DEVICES here
+# UCS internally runs os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
+# pass the physical GPU index directly to --gpu
 print("=" * 50)
 
 import numpy as np
@@ -62,26 +63,26 @@ from natsort import natsorted
 # ══════════════════════════════════════════════════════════════════════════════
 #  CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
-DATA_DIR       = "/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles"
+DATA_DIR       = "yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles"
 CELL_LABEL_DIR = os.path.join(DATA_DIR, "CellLabels")
 UCS_DIR        = os.path.dirname(os.path.abspath(__file__))
-WORK_DIR       = "/data/qiuyijia/ucs_cosmx"
+WORK_DIR       = "yourpath/ucs_cosmx"
 
 TX_FILE   = os.path.join(DATA_DIR, "Pancreas_tx_file.csv")
 META_FILE = os.path.join(DATA_DIR, "Pancreas_metadata_file.csv")
 
 PIXEL_SIZE  = 0.1203
 BIN_FACTOR  = 25
-TOP_N_GENES = 1000   # 覆盖63.4%转录本；全量推理显存 4.3 GB（5000基因=21.6 GB OOM）
+TOP_N_GENES = 1000   # covers 63.4% transcripts; full inference GPU memory 4.3 GB (5000 genes = 21.6 GB OOM)
 
 PATCH_SIZE           = 48
 DILATION_KERNEL_SIZE = 10
 DILATION_ITER_NUM    = 4
 TAU                  = 5
 FG_NET_EPOCH         = 1
-FG_NET_BATCH_SIZE    = 32    # batch 训练显存 0.9 GB
+FG_NET_BATCH_SIZE    = 32    # batch training GPU memory 0.9 GB
 CELL_NET_EPOCH       = 1
-GPU                  = _GPU_ID   # 物理 GPU 号，直接传给 UCS
+GPU                  = _GPU_ID   # physical GPU index, passed directly to UCS
 # ══════════════════════════════════════════════════════════════════════════════
 
 GENE_MAP_PATH    = os.path.join(WORK_DIR, "gene_map.tif")
@@ -97,7 +98,7 @@ os.makedirs(WORK_DIR, exist_ok=True)
 def compute_fov_offsets():
     meta     = pd.read_csv(META_FILE, usecols=["fov"])
     all_fovs = set(int(f) for f in meta["fov"].unique())
-    print(f"[1A] 预期 FOV: {sorted(all_fovs)}")
+    print(f"[1A] expected FOVs: {sorted(all_fovs)}")
 
     found = {}
     for chunk in pd.read_csv(TX_FILE,
@@ -113,7 +114,7 @@ def compute_fov_offsets():
                 found[fid] = (int(round(ox)), int(round(oy)))
         print(f"[1A]   {len(found)}/{len(all_fovs)} FOVs")
         if set(found.keys()) >= all_fovs:
-            print("[1A] 所有 FOV 已找到，提前退出。")
+            print("[1A] all FOVs found, exiting early.")
             break
 
     all_ox = [ox for ox,_ in found.values()]
@@ -123,7 +124,7 @@ def compute_fov_offsets():
     canvas_h = max(all_oy) + 4256 - gy_min
     map_w    = canvas_w // BIN_FACTOR
     map_h    = canvas_h // BIN_FACTOR
-    print(f"[1A] 画布: {canvas_w}×{canvas_h} px  →  gene map: {map_w}×{map_h} bins")
+    print(f"[1A] canvas: {canvas_w}×{canvas_h} px  →  gene map: {map_w}×{map_h} bins")
     return found, gx_min, gy_min, canvas_w, canvas_h
 
 
@@ -133,29 +134,29 @@ def compute_fov_offsets():
 def generate_nuclei_mask(fov_offsets, gx_min, gy_min,
                          canvas_w, canvas_h, map_h, map_w):
     if os.path.exists(NUCLEI_MASK_PATH):
-        print(f"[2] 已有 nuclei mask，直接加载: {NUCLEI_MASK_PATH}")
+        print(f"[2] nuclei mask exists, loading: {NUCLEI_MASK_PATH}")
         mask = tifffile.imread(NUCLEI_MASK_PATH)
-        print(f"[2] shape={mask.shape}  细胞数={len(np.unique(mask))-1}")
+        print(f"[2] shape={mask.shape}  cells={len(np.unique(mask))-1}")
         return mask
 
     try:
         import imagecodecs
     except ImportError:
-        raise ImportError("请先运行: pip install imagecodecs")
+        raise ImportError("run first: pip install imagecodecs")
 
     label_files  = natsorted(glob.glob(
         os.path.join(CELL_LABEL_DIR, "CellLabels_F*.tif")))
     fov_re       = re.compile(r"F(\d+)", re.IGNORECASE)
     fov_file_map = {int(fov_re.search(os.path.basename(f)).group(1)): f
                     for f in label_files if fov_re.search(os.path.basename(f))}
-    print(f"[2] 找到 {len(fov_file_map)} 个 CellLabels TIF")
+    print(f"[2] found {len(fov_file_map)} CellLabels TIFs")
 
     label_canvas     = np.zeros((canvas_h, canvas_w), dtype=np.int32)
     global_id_offset = 0
 
     for fov_id, (ox, oy) in sorted(fov_offsets.items()):
         if fov_id not in fov_file_map:
-            print(f"[2]   WARNING: FOV {fov_id} 无 CellLabels，跳过")
+            print(f"[2]   WARNING: FOV {fov_id} has no CellLabels, skipping")
             continue
         tile = tifffile.imread(fov_file_map[fov_id]).astype(np.int32)
         h, w = tile.shape
@@ -167,19 +168,19 @@ def generate_nuclei_mask(fov_offsets, gx_min, gy_min,
         region[fov_mask] = tile[fov_mask]
         label_canvas[cy:cy+h, cx:cx+w] = region
         n_cells = len(np.unique(tile[fov_mask]))
-        print(f"[2]   FOV {fov_id:3d}  细胞数={n_cells}  全局ID上限={global_id_offset}")
+        print(f"[2]   FOV {fov_id:3d}  cells={n_cells}  max global ID={global_id_offset}")
 
     total_cells = len(np.unique(label_canvas)) - 1
-    print(f"[2] 全图细胞总数: {total_cells}  （预期约 48944）")
+    print(f"[2] total cells: {total_cells}  (expected ~48944)")
 
     trimmed     = label_canvas[:map_h*BIN_FACTOR, :map_w*BIN_FACTOR]
     nuclei_mask = trimmed[BIN_FACTOR//2::BIN_FACTOR,
                           BIN_FACTOR//2::BIN_FACTOR].astype(np.int32)
     n_unique = len(np.unique(nuclei_mask)) - 1
-    print(f"[2] Binned mask: {nuclei_mask.shape}  唯一细胞 ID: {n_unique}")
+    print(f"[2] Binned mask: {nuclei_mask.shape}  unique cell IDs: {n_unique}")
 
     tifffile.imwrite(NUCLEI_MASK_PATH, nuclei_mask)
-    print(f"[2] 已保存: {NUCLEI_MASK_PATH}")
+    print(f"[2] Saved: {NUCLEI_MASK_PATH}")
     return nuclei_mask
 
 
@@ -188,12 +189,12 @@ def generate_nuclei_mask(fov_offsets, gx_min, gy_min,
 # ─────────────────────────────────────────────────────────────────────────────
 def generate_gene_map(gx_min, gy_min, map_h, map_w):
     if os.path.exists(GENE_MAP_PATH):
-        print(f"[3] 已有 gene map，直接加载: {GENE_MAP_PATH}")
+        print(f"[3] gene map exists, loading: {GENE_MAP_PATH}")
         gm = tifffile.imread(GENE_MAP_PATH)
         print(f"[3] Shape: {gm.shape}")
         return gm
 
-    print(f"[3] 第一轮：统计基因转录本数量 ...")
+    print(f"[3] pass 1: count transcripts per gene ...")
     gene_counts = {}
     for chunk in pd.read_csv(TX_FILE, usecols=["target"], chunksize=5_000_000):
         for gene, cnt in chunk["target"].value_counts().items():
@@ -201,7 +202,7 @@ def generate_gene_map(gx_min, gy_min, map_h, map_w):
 
     counts_series = pd.Series(gene_counts).sort_values(ascending=False)
     total_tx      = counts_series.sum()
-    print(f"[3] 总基因数: {len(counts_series)}  总转录本: {total_tx:,}")
+    print(f"[3] total genes: {len(counts_series)}  total transcripts: {total_tx:,}")
 
     top_genes   = counts_series.iloc[:TOP_N_GENES]
     coverage    = top_genes.sum() / total_tx * 100
@@ -209,9 +210,9 @@ def generate_gene_map(gx_min, gy_min, map_h, map_w):
     num_genes   = len(gene_to_idx)
     mem_gb      = map_h * map_w * num_genes / 1e9
     infer_gb    = 468 * 48 * 48 * num_genes * 4 / 1e9
-    print(f"[3] Top {TOP_N_GENES} 基因，覆盖 {coverage:.1f}% 转录本")
+    print(f"[3] Top {TOP_N_GENES} genes, cover {coverage:.1f}% transcripts")
     print(f"[3] gene map uint8: {mem_gb:.2f} GB")
-    print(f"[3] 全量推理 float32: {infer_gb:.1f} GB  （显存需求）")
+    print(f"[3] full inference float32: {infer_gb:.1f} GB  (GPU memory required)")
 
     pd.DataFrame({
         "gene"    : top_genes.index,
@@ -221,7 +222,7 @@ def generate_gene_map(gx_min, gy_min, map_h, map_w):
 
     gene_map = np.zeros((map_h, map_w, num_genes), dtype=np.uint8)
 
-    print(f"[3] 第二轮：bin 转录本 ...")
+    print(f"[3] pass 2: bin transcripts ...")
     total_read = total_kept = total_filtered = 0
     for chunk in pd.read_csv(TX_FILE,
                               usecols=["x_global_px","y_global_px","target"],
@@ -241,12 +242,12 @@ def generate_gene_map(gx_min, gy_min, map_h, map_w):
         np.add.at(gene_map.ravel(), flat, 1)
 
         total_kept += valid.sum()
-        print(f"[3]   已读 {total_read:,}  →  已 bin {total_kept:,}"
-              f"  （过滤 {total_filtered:,}）")
+        print(f"[3]   read {total_read:,}  →  binned {total_kept:,}"
+              f"  (filtered {total_filtered:,})")
 
-    print(f"[3] 非零 bin 数: {(gene_map > 0).sum():,}")
+    print(f"[3] nonzero bins: {(gene_map > 0).sum():,}")
     tifffile.imwrite(GENE_MAP_PATH, gene_map, photometric="minisblack")
-    print(f"[3] 已保存: {GENE_MAP_PATH}")
+    print(f"[3] Saved: {GENE_MAP_PATH}")
     return gene_map
 
 
@@ -256,11 +257,11 @@ def generate_gene_map(gx_min, gy_min, map_h, map_w):
 def run_ucs():
     run_py = os.path.join(UCS_DIR, "run.py")
     if not os.path.exists(run_py):
-        raise FileNotFoundError(f"run.py 未找到: {run_py}")
+        raise FileNotFoundError(f"run.py not found: {run_py}")
 
     if os.path.exists(LOG_DIR):
         shutil.rmtree(LOG_DIR)
-        print(f"[4] 已清除旧 log_dir: {LOG_DIR}")
+        print(f"[4] removed old log_dir: {LOG_DIR}")
 
     cmd = [
         sys.executable, run_py,
@@ -274,15 +275,15 @@ def run_ucs():
         "--fg_net_epoch",           str(FG_NET_EPOCH),
         "--fg_net_batch_size",      str(FG_NET_BATCH_SIZE),
         "--cell_net_epoch",         str(CELL_NET_EPOCH),
-        "--gpu",                    GPU,   # 物理 GPU 号，UCS 内部会设 CUDA_VISIBLE_DEVICES
+        "--gpu",                    GPU,   # physical GPU index; UCS sets CUDA_VISIBLE_DEVICES internally
     ]
 
-    print(f"\n[4] 运行 UCS （GPU {GPU}）:")
+    print(f"\n[4] run UCS (GPU {GPU}):")
     print("    " + " \\\n    ".join(cmd))
     result = subprocess.run(cmd, cwd=UCS_DIR)
     if result.returncode != 0:
-        raise RuntimeError(f"UCS 退出码: {result.returncode}")
-    print(f"\n[4] UCS 完成，结果在: {LOG_DIR}")
+        raise RuntimeError(f"UCS exit code: {result.returncode}")
+    print(f"\n[4] UCS Done, results in: {LOG_DIR}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -291,43 +292,43 @@ def run_ucs():
 def main():
     print("=" * 65)
     print("UCS — Pancreas CosMx WTx — Full Image")
-    print(f"GPU        : {GPU}  （自动选择）")
+    print(f"GPU        : {GPU}  (auto-selected)")
     print(f"BIN_FACTOR : {BIN_FACTOR}  ({BIN_FACTOR * PIXEL_SIZE:.2f} µm/bin)")
-    print(f"TOP_N_GENES: {TOP_N_GENES}  （覆盖63.4%转录本）")
-    print(f"batch_size : {FG_NET_BATCH_SIZE}  （训练显存 ≈ 0.9 GB）")
-    print(f"infer 显存 : ≈ {468*48*48*TOP_N_GENES*4/1e9:.1f} GB  （全量推理）")
-    print(f"nuclei_mask: CellLabels 官方核分割")
+    print(f"TOP_N_GENES: {TOP_N_GENES}  (covers 63.4% transcripts)")
+    print(f"batch_size : {FG_NET_BATCH_SIZE}  (training GPU memory ≈ 0.9 GB)")
+    print(f"infer GPU memory : ≈ {468*48*48*TOP_N_GENES*4/1e9:.1f} GB  (full inference)")
+    print(f"nuclei_mask: CellLabels official nuclear segmentation")
     print("=" * 65)
 
-    print("\n── Step 1A: FOV 偏移 ──")
+    print("\n── Step 1A: FOV offsets ──")
     fov_offsets, gx_min, gy_min, canvas_w, canvas_h = compute_fov_offsets()
     map_h = canvas_h // BIN_FACTOR
     map_w = canvas_w // BIN_FACTOR
 
-    print("\n── Step 2: Nuclei mask（CellLabels）──")
+    print("\n── Step 2: Nuclei mask (CellLabels) ──")
     nuclei_mask = generate_nuclei_mask(
         fov_offsets, gx_min, gy_min, canvas_w, canvas_h, map_h, map_w)
 
     assert nuclei_mask.shape == (map_h, map_w), \
-        f"nuclei_mask {nuclei_mask.shape} ≠ 预期 ({map_h},{map_w})"
+        f"nuclei_mask {nuclei_mask.shape} != expected ({map_h},{map_w})"
 
     print("\n── Step 3: Gene map ──")
     gene_map = generate_gene_map(gx_min, gy_min, map_h, map_w)
 
     assert gene_map.shape[:2] == nuclei_mask.shape, \
-        f"gene_map {gene_map.shape[:2]} ≠ nuclei_mask {nuclei_mask.shape}"
+        f"gene_map {gene_map.shape[:2]} != nuclei_mask {nuclei_mask.shape}"
 
-    print(f"\n输入汇总:")
+    print(f"\nInput summary:")
     print(f"  gene_map    : {gene_map.shape}  → {GENE_MAP_PATH}")
-    print(f"  nuclei_mask : {nuclei_mask.shape}  细胞数={nuclei_mask.max()}")
+    print(f"  nuclei_mask : {nuclei_mask.shape}  cells={nuclei_mask.max()}")
     print(f"  GPU         : {GPU}")
     print(f"  batch_size  : {FG_NET_BATCH_SIZE}")
 
-    print("\n── Step 4: 运行 UCS ──")
+    print("\n── Step 4: Run UCS ──")
     run_ucs()
 
     print("\n" + "=" * 65)
-    print(f"完成！结果在: {LOG_DIR}")
+    print(f"Done! Results in: {LOG_DIR}")
     print("=" * 65)
 
 

@@ -54,11 +54,11 @@ import pandas as pd
 
 VERSION = "2026.08.22-cosmx2-fovholdout-v1"
 
-ROOT_DEFAULT = Path("/data/qiuyijia/dataset/cosmx_lymph_node")
-OUT_DEFAULT = Path("/data/qiuyijia/genesegnet_cosmx_2_train")
-REPO_DEFAULT = Path("/data/qiuyijia/GeneSegNet/GeneSegNet")
+ROOT_DEFAULT = Path("yourpath/dataset/cosmx_lymph_node")
+OUT_DEFAULT = Path("yourpath/genesegnet_cosmx_2_train")
+REPO_DEFAULT = Path("yourpath/GeneSegNet/GeneSegNet")
 PRETRAINED_DEFAULT = Path(
-    "/data/qiuyijia/GeneSegNet/"
+    "yourpath/GeneSegNet/"
     "GeneSegNet_NSCLC_residual_on_style_on_concatenation_off.544278_epoch_499"
 )
 

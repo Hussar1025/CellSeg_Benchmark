@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """
-GeneSegNet × Stereo-seq — CLEAN independent version
+GeneSegNet x Stereo-seq -- CLEAN independent version
 
-只读取：
-  1. 原始 Stereo ssDNA TIFF
-  2. 原始 Dorsal_Midbrain_GEM_CellBin.tsv.gz
-  3. E12.5 训练得到的 GeneSegNet 权重
+Reads only:
+  1. raw Stereo ssDNA TIFF
+  2. raw Dorsal_Midbrain_GEM_CellBin.tsv.gz
+  3. GeneSegNet weights trained on E12.5
 
-不读取 Cellist / UCS / ComSeg / ProSeg 的任何输出。
+Does not read any output from Cellist / UCS / ComSeg / ProSeg.
 
-关键修正：
-  - E12.5 模型固定 nchan=4
-  - Stereo 坐标方向和 scale 由本脚本从原始数据独立推导
-  - 不再错误地用局部 GEM bbox 去拟合整幅 TIFF 的两个维度
+Key fixes:
+  - E12.5 model fixed at nchan=4
+  - Stereo coordinate orientation and scale derived independently by this script from the raw data
+  - no longer wrongly fits the two TIFF dimensions with a local GEM bbox
 """
 
 import os
@@ -34,21 +34,21 @@ from scipy.ndimage import gaussian_filter
 from skimage.measure import regionprops_table
 
 
-BASE = "/data/qiuyijia/GeneSegNet"
+BASE = "yourpath/GeneSegNet"
 CORE = os.path.join(BASE, "GeneSegNet")
 
 DATA = (
-    "/data/qiuyijia/dataset/stereoseq/"
+    "yourpath/dataset/stereoseq/"
     "stereo-seq_data_all"
 )
 
 MODEL_PATH = (
-    "/data/qiuyijia/genesegnet_e12_5_train/model/models/"
+    "yourpath/genesegnet_e12_5_train/model/models/"
     "GeneSegNet_residual_on_style_off_concatenation_off_model_"
     "2026_08_05_10_58_40.809564"
 )
 
-OUT_BASE = "/data/qiuyijia/genesegnet_stereo_e12_clean"
+OUT_BASE = "yourpath/genesegnet_stereo_e12_clean"
 
 
 DATASETS = {
@@ -193,7 +193,7 @@ def detect_orientation_scale(
 ):
 
     """
-    对 normal / transpose 两种方向分别计算：
+    For each of the normal / transpose orientations, compute:
 
       required_scale =
           max(
@@ -202,16 +202,16 @@ def detect_orientation_scale(
               1.0
           )
 
-    因为 GEM 只是一个局部 ROI：
-      - 某个维度没接近图像边缘完全正常
-      - 所以不能拿 scale_w / scale_h 的一致性做判断
-      - 更不能取二者平均
+    Because GEM is only a local ROI:
+      - a dimension not reaching the image edge is completely normal
+      - so scale_w / scale_h consistency cannot be used for the decision
+      - and certainly not their average
 
-    我们只要求：
-      所有 GEM 坐标在同一个 uniform scale 下能落入图像。
+    We only require:
+      all GEM coordinates fit inside the image under the same uniform scale.
 
-    选择所需 scale 最小的方向。
-    如果两者都刚好 scale=1，则优先 normal。
+    Choose the orientation with the smallest required scale.
+    If both have scale=1, prefer normal.
     """
 
     candidates = []
@@ -420,8 +420,8 @@ def load_clean_crop(
     if whole_ok.mean() < 0.995:
 
         raise RuntimeError(
-            "\n坐标变换后仍有超过0.5%的 GEM "
-            "落在 TIFF 之外，停止推理。"
+            "\nAfter the coordinate transform, more than 0.5% of GEM "
+            "still falls outside the TIFF; stopping inference."
         )
 
 
@@ -588,7 +588,7 @@ def load_clean_crop(
     if ok.mean() < 0.995:
 
         raise RuntimeError(
-            "\n完整 crop 没有覆盖至少99.5%的 GEM。"
+            "\nThe full crop does not cover at least 99.5% of GEM."
         )
 
 
@@ -1601,9 +1601,9 @@ def main():
     ):
 
         raise RuntimeError(
-            "\n完整 Dorsal Midbrain crop "
-            "没有覆盖至少99.5%的 GT，"
-            "停止模型运行。"
+            "\nThe full Dorsal Midbrain crop "
+            "does not cover at least 99.5% of GT; "
+            "stopping the model run."
         )
 
 

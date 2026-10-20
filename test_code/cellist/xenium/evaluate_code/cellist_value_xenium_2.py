@@ -1,23 +1,23 @@
 #!/usr/bin/env python
 """
-Cellist × Xenium 乳腺 评估
+Cellist x Xenium breast evaluation
 
-ROI 与 ProSeg / BOMS / UCS 完全一致（否则不可比）：
-  CX=53994/2×0.2125  CY=27420/2×0.2125  HALF=5000×0.2125/2
-  → x[5205.6,6268.1]  y[2382.1,3444.6] µm    GT 8,809
-  匹配半径 12.0 µm（乳腺细胞 ~11-13µm，与 ProSeg 评估同值）
+ROI identical to ProSeg / BOMS / UCS (otherwise not comparable):
+  CX=53994/2*0.2125  CY=27420/2*0.2125  HALF=5000*0.2125/2
+  -> x[5205.6,6268.1]  y[2382.1,3444.6] um    GT 8,809
+  match radius 12.0 um (breast cells ~11-13um, same as ProSeg evaluation)
 
-===== 两个已修的关键点 =====
-① cell_count.h5 的 barcodes 是【乱序】cell ID 字符串（'1034.0'）
-   而 cell_coord.txt 的 Cellist 列是有序 [1,2,3,...]
-   → 必须建 {cell_id: 列号} 映射，用位置索引会把基因向量随机配对
-   （淋巴结上这个 bug 让 vec_cosine 从 0.777 掉到 0.199）
-② 10X h5 是 CSC 布局：matrix 为 genes×cells，indptr 长度 = n_cells+1
-   取细胞向量要取【列】
+Two critical issues already fixed:
+(1) cell_count.h5 barcodes are unordered cell ID strings ('1034.0') while
+    cell_coord.txt's Cellist column is ordered [1,2,3,...]
+    -> a {cell_id: column} mapping is required; positional indexing randomly
+    pairs gene vectors (on lymph node this bug dropped vec_cosine from 0.777 to 0.199)
+(2) 10X h5 uses CSC layout: matrix is genes x cells, indptr length = n_cells+1;
+    a cell vector is a column
 
-用法：
-  python eval_cellist_breast.py                 # 评估所有 seg_*/alpha* 目录
-  python eval_cellist_breast.py --dir <某目录>   # 只评一个
+Usage:
+  python eval_cellist_breast.py                 # evaluate all seg_*/alpha* dirs
+  python eval_cellist_breast.py --dir <dir>     # evaluate only one
 """
 import os, glob, argparse, warnings
 import numpy as np
@@ -32,9 +32,9 @@ warnings.filterwarnings("ignore")
 SEP = "=" * 68
 P = lambda *a: print(*a, flush=True)
 
-CELLIST_BASE = "/data/qiuyijia/cellist/xenium_breast"
-DATA_DIR     = "/data/qiuyijia/dataset/xenium_breast"
-OUT_CSV      = "/data/qiuyijia/eval_results/cellist/xenium_breast.csv"
+CELLIST_BASE = "yourpath"
+DATA_DIR     = "yourpath"
+OUT_CSV      = "yourpath"
 
 PIXEL_SIZE = 0.2125
 CX_UM = 53994 / 2 * PIXEL_SIZE
@@ -45,16 +45,14 @@ ROI_Y0, ROI_Y1 = CY_UM - HALF, CY_UM + HALF
 MATCH_RADIUS = 12.0
 
 
-# ══════════════════════════════════════════════════════════════════════════
-#  加载
-# ══════════════════════════════════════════════════════════════════════════
+# Loading
 def load_gt():
-    gt = pd.read_parquet(f"{DATA_DIR}/cells.parquet",
+    gt = pd.read_parquet("yourpath",
                          columns=["cell_id", "x_centroid", "y_centroid"])
     gt = gt[(gt.x_centroid >= ROI_X0) & (gt.x_centroid < ROI_X1) &
             (gt.y_centroid >= ROI_Y0) & (gt.y_centroid < ROI_Y1)
             ].reset_index(drop=True)
-    tx = pd.read_parquet(f"{DATA_DIR}/transcripts.parquet",
+    tx = pd.read_parquet("yourpath",
                          columns=["cell_id", "feature_name",
                                   "x_location", "y_location", "qv"])
     tx = tx[(tx.qv >= 20) &
@@ -82,9 +80,9 @@ def load_pred(d):
 
 def load_expr(d):
     """
-    读 cell_count.h5 → (CSC 矩阵 genes×cells, 基因名, {cell_id: 列号})
+    Read cell_count.h5 -> (CSC genes x cells, gene names, {cell_id: column}).
 
-    ★ barcodes 乱序（'1034.0','870.0',...），必须建 ID→列号 映射
+    Barcodes are unordered ('1034.0','870.0',...); an ID -> column mapping is required.
     """
     f = glob.glob(f"{d}/**/*Cellist_segmentation_cell_count.h5", recursive=True)
     if not f:
@@ -92,7 +90,7 @@ def load_expr(d):
     with tables.open_file(f[0], "r") as h:
         g = h.root.matrix
         mat = csc_matrix((g.data[:], g.indices[:], g.indptr[:]),
-                         shape=tuple(g.shape[:]))          # genes × cells
+                         shape=tuple(g.shape[:]))          # genes x cells
         bcs = [b.decode() if isinstance(b, bytes) else str(b)
                for b in g.barcodes[:]]
         genes = [b.decode() if isinstance(b, bytes) else str(b)
@@ -106,9 +104,7 @@ def load_expr(d):
     return mat, genes, id2col
 
 
-# ══════════════════════════════════════════════════════════════════════════
-#  评估
-# ══════════════════════════════════════════════════════════════════════════
+# Evaluation
 def evaluate(d, gt, tx, vec_sample=3000):
     pred, coord_file = load_pred(d)
     if pred is None or pred.empty:
@@ -119,7 +115,7 @@ def evaluate(d, gt, tx, vec_sample=3000):
     pxy = pred[["x_um", "y_um"]].values
     gxy = gt[["x_centroid", "y_centroid"]].values
 
-    # ── 一对一贪心匹配 ──────────────────────────────────────────────────
+    # One-to-one greedy matching
     tree = cKDTree(gxy)
     dd, gi = tree.query(pxy, k=1, distance_upper_bound=R)
     best = {}
@@ -136,13 +132,13 @@ def evaluate(d, gt, tx, vec_sample=3000):
     f1   = 2*prec*rec/(prec+rec) if prec + rec else 0.0
     shifts = np.array([p[2] for p in pairs]) if pairs else np.array([np.nan])
 
-    # ── 转录本最近邻分配（pred 侧）──────────────────────────────────────
+    # Transcript nearest-neighbour assignment (pred side)
     txy = tx[["x_location", "y_location"]].values
     td, tpi = cKDTree(pxy).query(txy, k=1, distance_upper_bound=AR)
     ok = np.isfinite(td) & (td < AR)
     tx = tx.assign(pred_row=np.where(ok, tpi, -1))
 
-    # ── 计数一致性 ──────────────────────────────────────────────────────
+    # Count agreement
     pred_cnt = tx[tx.pred_row >= 0].pred_row.value_counts()
     gt_cnt = tx[tx.cell_id.notna() &
                 (tx.cell_id != "UNASSIGNED")].cell_id.value_counts()
@@ -157,7 +153,7 @@ def evaluate(d, gt, tx, vec_sample=3000):
     else:
         cp = cs = cm = cr = np.nan
 
-    # ── 基因向量（★ 用 id2col 映射，不是位置索引）────────────────────────
+    # Gene vectors (use id2col mapping, not positional indexing)
     vc = vj = vp = np.nan
     n_valid = 0
     mat, genes, id2col = load_expr(d)
@@ -174,7 +170,7 @@ def evaluate(d, gt, tx, vec_sample=3000):
                                               replace=False)]
             cos_l, js_l, pr_l = [], [], []
             for pi, gj, _ in samp:
-                col = id2col.get(float(pred.cell.iloc[pi]))   # ★ ID→列号
+                col = id2col.get(float(pred.cell.iloc[pi]))   # ID -> column
                 if col is None:
                     continue
                 gid = gt.cell_id.iloc[gj]
@@ -195,7 +191,7 @@ def evaluate(d, gt, tx, vec_sample=3000):
                 vj = float(np.nanmean(js_l))
                 vp = float(np.mean(pr_l)) if pr_l else np.nan
 
-    # ── 分配一致性 ──────────────────────────────────────────────────────
+    # Assignment consistency
     row2gt = {p[0]: gt.cell_id.iloc[p[1]] for p in pairs}
     sub = tx[(tx.pred_row >= 0) & tx.cell_id.notna() &
              (tx.cell_id != "UNASSIGNED")]
@@ -225,7 +221,7 @@ def evaluate(d, gt, tx, vec_sample=3000):
     )
     P(f"\n  {res['result_dir'][:56]}")
     P(f"    pred {n_pred:,}/GT {n_gt:,}  matched {n_match:,}  "
-      f"F1={f1:.4f}  loc_med={res['loc_median_um']}µm")
+      f"F1={f1:.4f}  loc_med={res['loc_median_um']}um")
     P(f"    cnt_r={res['count_pearson']}  vec_cos={res['vec_cosine']} "
       f"(valid {n_valid:,}/{n_match:,})  assign_acc={res['assign_accuracy']}")
     return res
@@ -233,17 +229,17 @@ def evaluate(d, gt, tx, vec_sample=3000):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dir", default=None, help="只评这一个目录")
+    ap.add_argument("--dir", default=None, help="evaluate only this directory")
     ap.add_argument("--out", default=OUT_CSV)
     ap.add_argument("--vec-sample", type=int, default=3000)
     a = ap.parse_args()
 
-    P(SEP); P("Cellist × Xenium 乳腺 评估"); P(SEP)
-    P(f"  ROI x[{ROI_X0:.1f},{ROI_X1:.1f}] y[{ROI_Y0:.1f},{ROI_Y1:.1f}] µm")
-    P(f"  匹配半径 {MATCH_RADIUS} µm（与 ProSeg/BOMS 评估同值）")
-    P(f"\n  加载 GT 与转录本（1-2 分钟）...")
+    P(SEP); P("Cellist x Xenium breast evaluation"); P(SEP)
+    P(f"  ROI x[{ROI_X0:.1f},{ROI_X1:.1f}] y[{ROI_Y0:.1f},{ROI_Y1:.1f}] um")
+    P(f"  match radius {MATCH_RADIUS} um (same as ProSeg/BOMS evaluation)")
+    P(f"\n  Loading GT and transcripts (1-2 min)...")
     gt, tx = load_gt()
-    P(f"  GT {len(gt):,} 细胞   ROI 内转录本 {len(tx):,}")
+    P(f"  GT {len(gt):,} cells   transcripts in ROI {len(tx):,}")
 
     if a.dir:
         dirs = [a.dir]
@@ -258,17 +254,17 @@ def main():
     dirs = [d for d in dirs if glob.glob(
         f"{d}/**/*Cellist_segmentation_cell_coord.txt", recursive=True)]
     if not dirs:
-        P("  ✘ 找不到 Cellist 结果"); return
-    P(f"  待评估 {len(dirs)} 个目录")
+        P("  FAIL: no Cellist results found"); return
+    P(f"  {len(dirs)} directories to evaluate")
 
     rows = [r for r in (evaluate(d, gt, tx, a.vec_sample) for d in dirs) if r]
     if not rows:
-        P("  ✘ 无有效结果"); return
+        P("  FAIL: no valid results"); return
     df = pd.DataFrame(rows).sort_values("f1", ascending=False)
 
     if len(df) > 1:
-        P(f"\n{SEP}\n汇总（F1 降序）\n{SEP}")
-        P(f"  {'F1':>7} {'pred':>8} {'ratio':>7} {'vec_cos':>8}  目录")
+        P(f"\n{SEP}\nSummary (F1 descending)\n{SEP}")
+        P(f"  {'F1':>7} {'pred':>8} {'ratio':>7} {'vec_cos':>8}  dir")
         P("  " + "-" * 62)
         for _, r in df.iterrows():
             P(f"  {r.f1:>7.4f} {int(r.pred_cells):>8,} {r.cell_ratio:>7.3f} "
@@ -280,13 +276,14 @@ def main():
     if len(df) > 1:
         df.to_csv(a.out.replace(".csv", "_all_params.csv"), index=False)
 
-    P(f"\n{SEP}\n最优结果 (Cellist × Xenium 乳腺)\n{SEP}")
+    P(f"\n{SEP}\nBest result (Cellist x Xenium breast)\n{SEP}")
     for k, v in best.iloc[0].items():
         if k not in ("method", "dataset", "result_dir"):
             P(f"  {k:22} {v}")
-    P(f"\n  已写 → {a.out}")
-    P(f"  注：核先验用 10X nucleus_boundaries（ROI 内 8,390 核 = GT 95%），")
-    P(f"      非 Cellist 自带 Cellpose（后者只出 3,000 多核）")
+    P(f"\n  written -> {a.out}")
+    P(f"  note: nucleus prior uses 10X nucleus_boundaries "
+      f"({int(8390):,} nuclei in ROI = 95% of GT), not Cellist's built-in "
+      f"Cellpose (which only yields ~3,000 nuclei)")
 
 
 if __name__ == "__main__":

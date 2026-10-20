@@ -5,9 +5,9 @@
 GeneSegNet inference-only for Xenium2 / breast.
 
 Prepared input:
-  /data/qiuyijia/genesegnet_xenium_2_infer/tiles/images
-  /data/qiuyijia/genesegnet_xenium_2_infer/tiles/heatmaps
-  /data/qiuyijia/genesegnet_xenium_2_infer/tile_manifest.tsv
+  yourpath/genesegnet_xenium_2_infer/tiles/images
+  yourpath/genesegnet_xenium_2_infer/tiles/heatmaps
+  yourpath/genesegnet_xenium_2_infer/tile_manifest.tsv
 
 Model:
   existing Xenium GeneSegNet checkpoint
@@ -34,7 +34,7 @@ import pandas as pd
 import tifffile
 
 
-HERE = Path("/data/qiuyijia/GeneSegNet")
+HERE = Path("yourpath/GeneSegNet")
 
 GENESEG_REPO = HERE / "GeneSegNet"
 
@@ -44,17 +44,17 @@ HELPER_PATH = (
 )
 
 PREP_ROOT = Path(
-    "/data/qiuyijia/"
+    "yourpath/"
     "genesegnet_xenium_2_infer"
 )
 
 DEFAULT_OUT = Path(
-    "/data/qiuyijia/"
+    "yourpath/"
     "genesegnet_xenium_2_prediction"
 )
 
 DEFAULT_MODEL = Path(
-    "/data/qiuyijia/"
+    "yourpath/"
     "genesegnet_xenium/"
     "pancreas_cancer_cell/"
     "model/models/"

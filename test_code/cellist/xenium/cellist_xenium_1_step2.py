@@ -19,19 +19,19 @@ import torch
 from Cellist.Cellpose import Cellpose
 
 
-base = Path("/home/data/vip232152/Cosmx_6k_COAD_data")
+base = Path("yourpath")
 
-input_dir = base / "cellist_result" / "input" / "userdata"
+input_dir = base / "yourpath"
 tif_file = input_dir / "DAPI_tiled_uncompressed.tif"
 
-# 旧 Step1A 目录：只读取 metadata 和 GEM
-old_tile_root = base / "cellist_result" / "cellpose_tiles_cosmx_noswap_step1"
+# Old Step1A directory: read metadata and GEM only
+old_tile_root = base / "yourpath"
 old_tile_meta_file = old_tile_root / "tile_metadata.tsv"
 
-# 新 Step1B v2 输出目录：所有 Cellpose / Cellist 输出都写这里
-new_tile_root = base / "cellist_result" / "cellpose_tiles_cosmx_noswap_step1b_v2_clean"
+# New Step1B v2 output directory: all Cellpose / Cellist outputs go here
+new_tile_root = base / "yourpath"
 
-log_dir = base / "cellist_result" / "logs"
+log_dir = base / "yourpath"
 log_dir.mkdir(parents=True, exist_ok=True)
 new_tile_root.mkdir(parents=True, exist_ok=True)
 
@@ -40,7 +40,7 @@ summary_file = log_dir / "step1b_v2_clean_run_cellpose_tiles_summary.tsv"
 
 out_prefix_base = "Cosmx_6k_COAD_noswap_v2_tile"
 
-# Cellpose 参数保持不变
+# Cellpose parameters unchanged
 diameter = 20
 model_type = "nuclei"
 flow_threshold = 0.4
@@ -48,12 +48,12 @@ cellprob_threshold = 0.0
 expansion = False
 expansion_dist = 8
 
-# 全量运行保持 None；测试可设 130, 135
+# Full run keeps None; testing can set 130, 135
 start_tile_id = None
 end_tile_id = None
 
-# 低信号 tile 跳过阈值：避免明显背景区域耗时并报空矩阵
-# 这些不会改变有效组织区域结果，只是跳过几乎无 DAPI 的 tile
+# Low-signal tile skip thresholds: skip near-empty DAPI tiles to save time
+# and avoid empty-matrix errors; does not change results on real tissue
 min_dapi_nonzero_fraction = 0.05
 min_dapi_mean = 5.0
 
@@ -149,7 +149,7 @@ if start_tile_id is not None:
 if end_tile_id is not None:
     tile_meta = tile_meta[tile_meta["tile_id"] <= end_tile_id]
 
-# 保存一份新的 metadata，指向新输出目录，但保留旧 GEM 路径
+# Save a new metadata file pointing at the new output dir, keeping old GEM paths
 new_meta_file = new_tile_root / "tile_metadata_step1b_v2_clean.tsv"
 tile_meta.to_csv(new_meta_file, sep="\t", index=False)
 
@@ -181,10 +181,10 @@ for _, meta in tile_meta.iterrows():
 
     n_tx = int(meta.get("n_transcripts_with_overlap", 0))
 
-    # 旧 GEM，只读
+    # Old GEM, read-only
     old_gem = Path(meta["gem_file"])
 
-    # 新 tile 输出目录
+    # New tile output directory
     new_tile_dir = new_tile_root / tile_name
     new_tile_dir.mkdir(parents=True, exist_ok=True)
 
@@ -205,7 +205,7 @@ for _, meta in tile_meta.iterrows():
     nucleus_count_h5 = new_tile_dir / f"{out_prefix}_Cellpose_segmentation_cell_count.h5"
     bin1_h5 = new_tile_dir / f"{out_prefix}_bin1.h5"
 
-    # 只检查新目录里的结果，不看旧目录
+    # Check results in the new directory only, not the old one
     if done_flag.exists():
         is_valid, reason, n_prop, n_coord, n_cells = validate_outputs(
             nucleus_prop,
@@ -332,7 +332,7 @@ for _, meta in tile_meta.iterrows():
             gc.collect()
             continue
 
-        # 写入新目录里的临时 tile 图像，Cellist 只会看到新文件
+        # Write the temporary tile image into the new directory so Cellist sees only new files
         tifffile.imwrite(
             tile_img,
             tile_array,

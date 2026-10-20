@@ -30,7 +30,7 @@ Evaluate the finished ComSeg run on the Xenium liver ROI (xenium_4).
 
 The segmentation is already on disk:
 
-    /data/qiuyijia/comseg_xenium_liver_roi10000/comseg_segmentation.tif
+    yourpath/comseg_xenium_liver_roi10000/comseg_segmentation.tif
     25/25 tiles DONE, written 2026-08-11 19:45
 
 so this only scores it.  Self-contained, and the metric code is the same block
@@ -67,27 +67,27 @@ VERSION = "2026.08.13"
 # ROI windows shared by every method on each dataset
 DATASETS = {
     "xenium9": dict(
-        data_root="/data/qiuyijia/dataset/xenium9",
+        data_root="yourpath/dataset/xenium9",
         y0=5147, x0=16374,
         label="xenium_9",
         tissue="Xenium benchmark ROI 9"),
     "xenium10": dict(
-        data_root="/data/qiuyijia/dataset/xenium10",
+        data_root="yourpath/dataset/xenium10",
         y0=13750, x0=20564,
         label="xenium_10",
         tissue="Xenium benchmark ROI 10"),
-    "xenium7": dict(data_root="/data/qiuyijia/dataset/xenium7/outs",
+    "xenium7": dict(data_root="yourpath/dataset/xenium7/outs",
                   y0=10210, x0=22080, label="xenium_7",
-                  tissue="Xenium 人前列腺"),
-    "liver": dict(data_root="/data/qiuyijia/dataset/xenium_liver",
+                  tissue="Xenium human prostate"),
+    "liver": dict(data_root="yourpath/dataset/xenium_liver",
                   y0=13704, x0=21974, label="xenium_4",
-                  tissue="Xenium 肝"),
-    "mouse_brain": dict(data_root="/data/qiuyijia/dataset/xenium_mouse_brain",
+                  tissue="Xenium liver"),
+    "mouse_brain": dict(data_root="yourpath/dataset/xenium_mouse_brain",
                         y0=6956, x0=12077, label="xenium_5",
-                        tissue="Xenium 小鼠脑"),
-    "colon": dict(data_root="/data/qiuyijia/dataset/xenium_colon",
+                        tissue="Xenium mouse brain"),
+    "colon": dict(data_root="yourpath/dataset/xenium_colon",
                   y0=12052, x0=9241, label="xenium_6",
-                  tissue="Xenium 小鼠结肠"),
+                  tissue="Xenium mouse colon"),
 }
 ROI_SIZE = 10000
 PIXEL_SIZE = 0.2125
@@ -303,11 +303,11 @@ USES_PRIOR = True
 # ==========================================================================
 
 DEFAULT_RUN = {
-               "xenium9": "/data/qiuyijia/proseg_xenium_9",
-               "xenium10": "/data/qiuyijia/proseg_xenium_10",
-               "liver": "/data/qiuyijia/proseg_xenium_liver_roi10000",
-               "mouse_brain": "/data/qiuyijia/proseg_xenium_mouse_brain_roi10000",
-               "colon": "/data/qiuyijia/proseg_xenium_colon"}
+               "xenium9": "yourpath/proseg_xenium_9",
+               "xenium10": "yourpath/proseg_xenium_10",
+               "liver": "yourpath/proseg_xenium_liver_roi10000",
+               "mouse_brain": "yourpath/proseg_xenium_mouse_brain_roi10000",
+               "colon": "yourpath/proseg_xenium_colon"}
 
 
 def add_args(ap):
@@ -343,7 +343,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="liver", choices=list(DATASETS))
     ap.add_argument("--mask", default=None)
-    ap.add_argument("--out-dir", default="/data/qiuyijia/eval_results_qv20")
+    ap.add_argument("--out-dir", default="yourpath/eval_results_qv20")
     ap.add_argument("--qv-min", type=float, default=20.0,
                     help="0 disables; 20 matches what the pipelines were given")
     ap.add_argument("--pixel-size", type=float, default=PIXEL_SIZE)

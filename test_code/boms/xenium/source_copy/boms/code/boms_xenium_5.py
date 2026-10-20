@@ -24,8 +24,8 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 
-IN="/data/qiuyijia/boms_xenium_5_hs9_g3000/boms_xenium_5_hs9_g3000.npz"
-OUT="/data/qiuyijia/boms_xenium_5_hs9_g3000/boms_xenium_5_hs9_g3000_rescued.npz"
+IN="yourpath/boms_xenium_5_hs9_g3000/boms_xenium_5_hs9_g3000.npz"
+OUT="yourpath/boms_xenium_5_hs9_g3000/boms_xenium_5_hs9_g3000_rescued.npz"
 
 def summary(c,gt):
     c=np.asarray(c)

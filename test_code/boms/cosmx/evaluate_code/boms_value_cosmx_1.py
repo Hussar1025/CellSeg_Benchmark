@@ -20,11 +20,11 @@ from sklearn.neighbors import NearestNeighbors
 EPS = 1e-12
 SCRIPT_VERSION = "2026-06-08-genesegnet-label-image-eval-input-layer-v1"
 
-DATA_DIR         = "~/Pancreas_extracted"
+DATA_DIR         = "yourpath/Pancreas_extracted"
 GT_METADATA_PATH = os.path.join(DATA_DIR, "Pancreas_metadata_file.csv")
 TX_FILE          = os.path.join(DATA_DIR, "Pancreas_tx_file.csv")
 
-BOMS_DIR         = "~/boms_cosmx_pancreas_full"
+BOMS_DIR         = "yourpath/boms_cosmx_pancreas_full"
 BOMS_SUMMARY     = os.path.join(BOMS_DIR, "cell_summary.csv")
 BOMS_PARQUET     = os.path.join(BOMS_DIR, "result.parquet")
 
@@ -41,7 +41,7 @@ class EvaluationConfig:
     boms_summary_path:    str  = BOMS_SUMMARY
     boms_parquet_path:    str  = BOMS_PARQUET
     pixel_size_um:        float = PIXEL_SIZE_UM
-    output_dir:           str  = "~/eval_results/boms"
+    output_dir:           str  = "yourpath/eval_results/boms"
     method_name:          str  = "BOMS"
     cell_id_col:          str  = "cell_id"
     x_col:                str  = "x"
@@ -61,10 +61,10 @@ class EvaluationConfig:
 
 
 # =============================================================================
-# GT 加载
+# GT loading
 # =============================================================================
 def load_gt(cfg: EvaluationConfig) -> pd.DataFrame:
-    print(f"[GT] 加载: {cfg.gt_path}")
+    print(f"[GT] loading: {cfg.gt_path}")
     df = pd.read_csv(cfg.gt_path, usecols=[
         "cell_id","CenterX_global_px","CenterY_global_px","nCount_RNA","Area","fov"
     ])
@@ -72,20 +72,20 @@ def load_gt(cfg: EvaluationConfig) -> pd.DataFrame:
     df["y"]           = df["CenterY_global_px"] * cfg.pixel_size_um
     df["total_counts"]= df["nCount_RNA"]
     df["cell_id"]     = df["cell_id"].astype(str)
-    print(f"[GT] 细胞数: {len(df):,}  "
+    print(f"[GT] cells: {len(df):,}  "
           f"x=[{df['x'].min():.1f},{df['x'].max():.1f}]µm  "
           f"y=[{df['y'].min():.1f},{df['y'].max():.1f}]µm")
     return df
 
 
 # =============================================================================
-# BOMS 细胞表加载
-# center_x/y 是 x_global_px/y_global_px，× pixel_size → µm
+# BOMS cell table loading
+# center_x/y = x_global_px/y_global_px * pixel_size -> um
 # =============================================================================
 def load_boms_cells(cfg: EvaluationConfig) -> pd.DataFrame:
-    print(f"[Pred] 加载 BOMS cell_summary: {cfg.boms_summary_path}")
+    print(f"[Pred] loading BOMS cell_summary: {cfg.boms_summary_path}")
     df = pd.read_csv(cfg.boms_summary_path)
-    # 过滤有效细胞（cell=0 通常是背景）
+    # filter valid cells (cell=0 is usually background)
     valid_cells = set(df["cell"].values)
     df = df[df["cell"] > 0].copy() if 0 in valid_cells else df.copy()
 
@@ -94,16 +94,16 @@ def load_boms_cells(cfg: EvaluationConfig) -> pd.DataFrame:
     df["y"]            = df["center_y"] * cfg.pixel_size_um
     df["n_transcripts"]= df["n_transcripts"]
 
-    print(f"[Pred] BOMS 细胞数: {len(df):,}")
-    print(f"[Pred] 质心 x=[{df['x'].min():.1f},{df['x'].max():.1f}]µm  "
+    print(f"[Pred] BOMS cells: {len(df):,}")
+    print(f"[Pred] centroid x=[{df['x'].min():.1f},{df['x'].max():.1f}]µm  "
           f"y=[{df['y'].min():.1f},{df['y'].max():.1f}]µm")
     return df
 
 
 # =============================================================================
-# 转录本指标
-# result.parquet x,y = x_global_px/y_global_px → round 整数直接匹配 tx_file
-# 使用 set-based dict 避免坐标碰撞（多 z 层）
+# Transcript metrics
+# result.parquet x,y = x_global_px/y_global_px; round to integers to match tx_file
+# set-based dict avoids coordinate collisions (multiple z-layers)
 # =============================================================================
 def compute_all_transcript_metrics(
     cfg:     EvaluationConfig,
@@ -125,15 +125,15 @@ def compute_all_transcript_metrics(
     meta["_key"] = meta["fov"].astype(str) + "_" + meta["cell_ID"].astype(str)
     fov_cell_to_str = dict(zip(meta["_key"], meta["cell_id"].astype(str)))
 
-    # Step 1: 从 result.parquet 构建坐标→cell 映射（set-based 避免覆盖）
-    print("[TX] Step 1: 读取 BOMS result.parquet...")
+    # Step 1: build coordinate->cell map from result.parquet (set-based to avoid overwrites)
+    print("[TX] Step 1: reading BOMS result.parquet...")
     boms_coord: Dict[Tuple[int,int], set] = {}
     pred_gene_counts: Dict[str, Dict[str,int]] = {}
     total_pred = 0
 
     df_par = pd.read_parquet(cfg.boms_parquet_path,
                               columns=["x","y","gene","cell"])
-    # 过滤背景（cell=0）
+    # filter background (cell=0)
     df_par = df_par[df_par["cell"] > 0].copy()
     df_par["cell"] = df_par["cell"].astype(str)
     total_pred = len(df_par)
@@ -153,11 +153,11 @@ def compute_all_transcript_metrics(
             if cell not in pred_gene_counts: pred_gene_counts[cell] = {}
             pred_gene_counts[cell][gene] = pred_gene_counts[cell].get(gene,0) + 1
 
-    print(f"[TX] BOMS 坐标映射: {len(boms_coord):,} 个唯一坐标  "
-          f"分配转录本={total_pred:,}")
+    print(f"[TX] BOMS coordinate map: {len(boms_coord):,} unique coordinates  "
+          f"assigned transcripts={total_pred:,}")
 
-    # Step 2: 扫描 GT tx_file
-    print("[TX] Step 2: 扫描 GT tx_file...")
+    # Step 2: scan GT tx_file
+    print("[TX] Step 2: scanning GT tx_file...")
     gt_gene_counts: Dict[str, Dict[str,int]] = {}
     total_gt = 0; gt_assigned = 0; both = 0
     in_matched = 0; correct = 0; gt_read = 0
@@ -197,7 +197,7 @@ def compute_all_transcript_metrics(
                     correct += 1
                     break
 
-        # GT 基因向量
+        # GT gene vector
         df_gt = pd.DataFrame({"gt": gt_str, "gene": genes_gt, "gt_id": gt_id_v})
         gt_m  = df_gt[(df_gt["gt_id"]>0) & df_gt["gt"].isin(matched_gt_set)]
         if not gt_m.empty:
@@ -206,11 +206,11 @@ def compute_all_transcript_metrics(
                 gt_gene_counts[cell][gene] = gt_gene_counts[cell].get(gene,0) + int(cnt)
 
         if verbose and gt_read % 10_000_000 == 0:
-            print(f"  GT 已读 {gt_read:,}  in_matched={in_matched:,}  "
+            print(f"  GT read {gt_read:,}  in_matched={in_matched:,}  "
                   f"correct={correct:,}  both={both:,}")
 
-    # Step 3: 基因向量相似度
-    print("[TX] Step 3: 基因向量相似度...")
+    # Step 3: gene vector similarity
+    print("[TX] Step 3: gene vector similarity...")
     cosine_sims, js_dists, pearsons = [], [], []
     valid_pairs = 0
     for pred_str, gt_str in pred_to_gt.items():
@@ -229,7 +229,7 @@ def compute_all_transcript_metrics(
 
     accuracy  = float(correct/max(in_matched,1))
     pred_rate = float(total_pred/max(total_gt,1))
-    print(f"[TX] 完成: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  "
+    print(f"[TX] done: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  "
           f"pred_rate={pred_rate:.4f}  both={both:,}")
 
     return {
@@ -248,7 +248,7 @@ def compute_all_transcript_metrics(
 
 
 # =============================================================================
-# 以下函数与参考代码完全一致
+# The functions below are identical to the reference code
 # =============================================================================
 def expand_path(path): return Path(os.path.expanduser(path)).resolve()
 
@@ -266,7 +266,7 @@ def normalize_columns(df, cfg, table_name):
             if a in existing: rename[a]=canonical; break
     out=df.rename(columns=rename).copy()
     missing=[c for c in [cfg.cell_id_col,cfg.x_col,cfg.y_col] if c not in out.columns]
-    if missing: raise ValueError(f"{table_name} 缺少列 {missing}")
+    if missing: raise ValueError(f"{table_name} missing columns {missing}")
     return out
 
 def collapse_to_cell_level(df, cfg, table_name):
@@ -274,7 +274,7 @@ def collapse_to_cell_level(df, cfg, table_name):
     for col in [cfg.x_col,cfg.y_col]: df[col]=pd.to_numeric(df[col],errors="coerce")
     bad=df[[cfg.x_col,cfg.y_col]].isna().any(axis=1)
     if bad.any(): df=df.loc[~bad].copy()
-    if df.empty: raise ValueError(f"{table_name}: 无有效行")
+    if df.empty: raise ValueError(f"{table_name}: no valid rows")
     grouped=df.groupby(cfg.cell_id_col,sort=False,observed=True)
     base=grouped[[cfg.x_col,cfg.y_col]].mean().reset_index()
     qc={f"{table_name}_n_cells":int(base.shape[0])}
@@ -440,7 +440,7 @@ def _json_default(obj):
 
 
 # =============================================================================
-# 主评估流程
+# Main evaluation flow
 # =============================================================================
 def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     if cfg.numeric_pairs is None: cfg.numeric_pairs=[("n_transcripts","total_counts")]
@@ -458,12 +458,12 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
           f"y=[{pred_cells['y'].min():.1f},{pred_cells['y'].max():.1f}]")
 
     radius=cfg.match_radius or infer_match_radius(gt_cells,cfg)
-    print(f"[INFO] 匹配半径: {radius:.4f} µm  GT={len(gt_cells):,}  Pred={len(pred_cells):,}")
+    print(f"[INFO] match radius: {radius:.4f} µm  GT={len(gt_cells):,}  Pred={len(pred_cells):,}")
 
     matches,match_qc=match_sparse_hungarian(pred_cells,gt_cells,cfg,radius=radius)
-    print(f"[INFO] 匹配细胞数: {len(matches):,}")
+    print(f"[INFO] matched cells: {len(matches):,}")
 
-    # 合并 n_transcripts
+    # merge n_transcripts
     if not matches.empty:
         nt=pred_cells[[cfg.cell_id_col,"n_transcripts"]].rename(
             columns={cfg.cell_id_col:"pred_cell_id","n_transcripts":"pred_n_transcripts"})
@@ -474,7 +474,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         if "gt_total_counts" not in matches.columns:
             matches=matches.merge(gt_nt,on="gt_cell_id",how="left")
 
-    print("\n[INFO] 计算转录本指标（约 15-25 分钟）...")
+    print("\n[INFO] computing transcript metrics (~15-25 min)...")
     tx_result=compute_all_transcript_metrics(cfg=cfg,matches=matches,verbose=cfg.verbose)
 
     metrics:Dict[str,Any]={"method":cfg.method_name,"script_version":SCRIPT_VERSION,
@@ -517,7 +517,7 @@ def parse_args():
     p.add_argument("--gt-transcripts-path",default=TX_FILE)
     p.add_argument("--boms-summary",       default=BOMS_SUMMARY)
     p.add_argument("--boms-parquet",       default=BOMS_PARQUET)
-    p.add_argument("--output-dir",         default="/home/data/vip232152/eval_results/boms")
+    p.add_argument("--output-dir",         default="yourpath/eval_results/boms")
     p.add_argument("--method-name",        default="BOMS")
     p.add_argument("--match-radius",       type=float,default=None)
     p.add_argument("--no-save-matched-table",     action="store_true")

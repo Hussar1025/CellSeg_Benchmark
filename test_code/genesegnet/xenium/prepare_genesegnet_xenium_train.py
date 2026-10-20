@@ -73,28 +73,28 @@ VERSION = "2026.08.16-cellprep"
 
 DATASETS = {
     "pancreas_cancer": dict(
-        root="/data/qiuyijia/dataset/xenium_pancreas_cancer",
-        label="xenium_1 胰腺癌", role="train",
+        root="yourpath/dataset/xenium_pancreas_cancer",
+        label="xenium_1 pancreatic cancer", role="train",
         roi_size=20000, roi_y0=None, roi_x0=None,   # None -> centred
     ),
     "liver": dict(
-        root="/data/qiuyijia/dataset/xenium_liver",
-        label="xenium_4 肝", role="test",
+        root="yourpath/dataset/xenium_liver",
+        label="xenium_4 liver", role="test",
         roi_size=10000, roi_y0=13704, roi_x0=21974,
     ),
     "mouse_brain": dict(
-        root="/data/qiuyijia/dataset/xenium_mouse_brain",
-        label="xenium_5 小鼠脑", role="test",
+        root="yourpath/dataset/xenium_mouse_brain",
+        label="xenium_5 mouse brain", role="test",
         roi_size=10000, roi_y0=6956, roi_x0=12077,
     ),
     "colon": dict(
-        root="/data/qiuyijia/dataset/xenium_colon",
-        label="xenium_6 小鼠结肠", role="test",
+        root="yourpath/dataset/xenium_colon",
+        label="xenium_6 mouse colon", role="test",
         roi_size=10000, roi_y0=12052, roi_x0=9241,
     ),
 }
 
-OUT_ROOT = "/data/qiuyijia/genesegnet_xenium"
+OUT_ROOT = "yourpath/genesegnet_xenium"
 
 log = logging.getLogger("gsn")
 
@@ -977,7 +977,7 @@ def main():
                     choices=["prep", "flows", "split", "check", "train",
                              "status", "all"])
     ap.add_argument("--out", default=None)
-    ap.add_argument("--repo", default="/data/qiuyijia/GeneSegNet/GeneSegNet")
+    ap.add_argument("--repo", default="yourpath/GeneSegNet/GeneSegNet")
 
     ap.add_argument("--label-source", default="cell", choices=["cell", "nucleus"],
                     help="cell_boundaries gives a whole-cell target; nucleus "

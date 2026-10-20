@@ -1,26 +1,26 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-BOMS 评估 —— 19 指标（与 UCS 同框架，适配 BOMS 的输出格式）
+BOMS evaluation -- 19 metrics (same framework as UCS, adapted to BOMS output)
 =========================================================================
-BOMS 输出和 UCS 不同：
-  UCS  → segmentation_mask.tif（像素 label 图）
-  BOMS → seg（每条转录本的细胞标签）+ cell_loc（质心）+ count_mat（细胞×基因）
+BOMS output differs from UCS:
+  UCS  -> segmentation_mask.tif (pixel label image)
+  BOMS -> seg (per-transcript cell label) + cell_loc (centroid) + count_mat (cells x genes)
 
-所以 pred 归属直接来自 seg，不需要"转录本落在哪个像素"这一步。
-其余 19 指标定义与 eval_ucs_xenium.py 完全一致，便于横向比较。
+So pred assignment comes directly from seg; no "which pixel a transcript falls in" step.
+The other 19 metrics are identical to eval_ucs_xenium.py for cross-method comparison.
 
-坑位对齐：
-  * BOMS 用了 top-N HVG 子集 → GT 基因向量也只在这 N 个基因上比，否则维度不一致
-  * valid_pairs 仍单独打印（防坐标/匹配错位虚高）
-  * BOMS 坐标就是 µm（和 GT 同系），无需 bin 换算
-  * assign_accuracy 有效（GT cell_id 独立于 BOMS）
+Caveats:
+  * BOMS uses a top-N HVG subset -> GT gene vectors are also compared only on these N genes, otherwise dimensions mismatch
+  * valid_pairs is still printed separately (guards against inflated scores from coordinate/match misalignment)
+  * BOMS coordinates are already µm (same as GT), no bin conversion needed
+  * assign_accuracy is valid (GT cell_id is independent of BOMS)
 
-用法
+Usage
 -----
 python eval_boms_xenium.py \
-    --npz      /data/qiuyijia/boms_xenium_roi/boms_xenium_roi.npz \
-    --data-dir /data/qiuyijia/dataset/xenium_roi_crop
+    --npz      yourpath/boms_xenium_roi/boms_xenium_roi.npz \
+    --data-dir yourpath/dataset/xenium_roi_crop
 """
 
 import os, json, glob, argparse
@@ -95,26 +95,26 @@ def match_cells(gt_xy, pred_xy, max_dist):
 
 # ══════════════════════════════════════════════════════════════════════════════
 def evaluate(cfg):
-    print(SEP); print(f"BOMS 评估  {cfg.dataset}"); print(SEP)
+    print(SEP); print(f"BOMS evaluation  {cfg.dataset}"); print(SEP)
 
     d = np.load(cfg.npz, allow_pickle=True)
-    seg      = d["seg"]                 # (N,) 每条转录本的细胞标签
+    seg      = d["seg"]                 # (N,) per-transcript cell label
     tx_x     = d["x"]; tx_y = d["y"]
     gene_idx = d["gene_idx"]
     gene_names = d["gene_names"]
     cell_loc = d["cell_loc"]            # (n_cell, 2) µm
     n_gene = len(gene_names)
     hvg_set = set(gene_names.tolist())
-    print(f"  BOMS: {len(seg):,} 转录本  "
-          f"{int(seg.max()) if len(cell_loc)==0 else len(cell_loc):,} 细胞  "
-          f"{n_gene} 基因(HVG)  h_s={float(d['h_s'])}")
+    print(f"  BOMS: {len(seg):,} transcripts  "
+          f"{int(seg.max()) if len(cell_loc)==0 else len(cell_loc):,} cells  "
+          f"{n_gene} genes(HVG)  h_s={float(d['h_s'])}")
 
     base = cfg.data_dir
-    f_tx    = find_one(base, ["transcripts.parquet"], "转录本")
-    f_cells = find_one(base, ["cells.parquet", "cells.csv"], "GT 细胞")
+    f_tx    = find_one(base, ["transcripts.parquet"], "transcripts")
+    f_cells = find_one(base, ["cells.parquet", "cells.csv"], "GT cells")
     f_roi   = find_one(base, ["experiment_roi.json"], "ROI", required=False)
 
-    # GT 转录本归属（cell_id）—— 只在 HVG 上，和 BOMS 对齐
+    # GT transcript assignment (cell_id) -- HVG only, aligned with BOMS
     gt_tx = read_table(f_tx, columns=["x_location", "y_location",
                                       "feature_name", "qv", "is_gene", "cell_id"])
     gt_tx = gt_tx[(gt_tx.is_gene == True) & (gt_tx.qv >= cfg.qv_min)]
@@ -124,18 +124,18 @@ def evaluate(cfg):
     g2i = {g: i for i, g in enumerate(gene_names)}
     gt_tx["gi"] = gt_tx.feature_name.map(g2i).values
 
-    # GT 细胞质心
+    # GT cell centroids
     cells = read_table(f_cells)
     cells["cell_id"] = cells["cell_id"].astype(str)
     diam = 2*np.sqrt(cells["cell_area"].median()/np.pi) if \
         "cell_area" in cells.columns else 7.0
     max_dist = cfg.match_dist if cfg.match_dist else diam
-    print(f"  GT {len(cells):,} 细胞  直径 {diam:.1f}µm  匹配阈值 {max_dist:.1f}µm")
+    print(f"  GT {len(cells):,} cells  diameter {diam:.1f} µm  match threshold {max_dist:.1f} µm")
 
-    # pred 细胞质心（BOMS 直接给）
+    # pred cell centroids (given directly by BOMS)
     n_cell = len(cell_loc) if len(cell_loc) else int(seg.max())
     if len(cell_loc) == 0:
-        # 从 seg 现算质心
+        # recompute centroid from seg
         cell_loc = np.zeros((n_cell, 2))
         for c in range(1, n_cell+1):
             m = seg == c
@@ -143,7 +143,7 @@ def evaluate(cfg):
                 cell_loc[c-1] = [tx_x[m].mean(), tx_y[m].mean()]
 
     gt_xy = cells[["x_centroid", "y_centroid"]].values
-    print(f"\n  匹配 GT {len(gt_xy):,} × pred {len(cell_loc):,} ...")
+    print(f"\n  match GT {len(gt_xy):,} × pred {len(cell_loc):,} ...")
     pairs = match_cells(gt_xy, cell_loc, max_dist)
     n_match = len(pairs)
 
@@ -156,12 +156,12 @@ def evaluate(cfg):
                                   float(np.percentile(dists, 95))) if n_match \
                                  else (np.nan, np.nan, np.nan)
 
-    # ── 每个匹配细胞的基因向量 ──────────────────────────────────────────────
-    # pred: 从 seg 聚合
+    # ── gene vector per matched cell ────────────────────────────────────────
+    # pred: aggregate from seg
     pred_df = pd.DataFrame({"cell": seg, "gi": gene_idx})
     pred_df = pred_df[pred_df.cell > 0]
     pred_grp = pred_df.groupby(["cell", "gi"]).size()
-    # GT: 从 cell_id 聚合
+    # GT: aggregate from cell_id
     gt_df = gt_tx[gt_tx.gt_cell != "0"]
     gt_grp = gt_df.groupby(["gt_cell", "gi"]).size()
 
@@ -176,7 +176,7 @@ def evaluate(cfg):
     valid_vec = 0
     for gi, pi, _ in pairs:
         vg = vec(gt_grp, gt_ids[gi])
-        vp = vec(pred_grp, pi+1)                 # seg 是 1-based
+        vp = vec(pred_grp, pi+1)                 # seg is 1-based
         cg, cp = vg.sum(), vp.sum()
         gt_counts.append(cg); pred_counts.append(cp)
         if cg > 0 and cp > 0:
@@ -204,13 +204,13 @@ def evaluate(cfg):
     vec_pear = float(pearsonr(gt_tot[mk], pred_tot[mk])[0]) if mk.sum() >= 2 \
                else np.nan
 
-    # ── 分配指标（逐转录本，最近邻把 GT RNA 映射到 pred 细胞标签）──────────
-    #   BOMS 的 seg 是按转录本的，但 GT 转录本集合和 BOMS 的可能顺序不同，
-    #   用坐标最近邻把两套转录本对上（同一批 RNA，坐标唯一）
+    # ── assignment metrics (per transcript; NN maps GT RNA to pred cell label) ──
+    #   BOMS seg is per-transcript; GT and BOMS transcript sets may be ordered
+    #   differently, so align the two via coordinate NN (same RNA, unique coords)
     tree = cKDTree(np.stack([tx_x, tx_y], 1))
     gx = gt_tx.x_location.values; gy = gt_tx.y_location.values
     dd, ii = tree.query(np.stack([gx, gy], 1), k=1)
-    matched_rna = dd < 0.5                       # 0.5µm 内视为同一条
+    matched_rna = dd < 0.5                       # within 0.5 µm counts as the same RNA
     gt_tx = gt_tx.copy()
     gt_tx["boms_cell"] = 0
     gt_tx.loc[matched_rna, "boms_cell"] = seg[ii[matched_rna]]
@@ -225,8 +225,8 @@ def evaluate(cfg):
 
     tot_asg = ((gt_tx.gt_cell != "0") | (gt_tx.boms_cell > 0)).sum()
     print(f"  valid_pairs = {valid_pairs:,} / {tot_asg:,}   "
-          f"RNA 坐标匹配率 {matched_rna.mean()*100:.1f}%")
-    print(f"  逐细胞向量 valid = {valid_vec:,} / {n_match:,}")
+          f"RNA coordinate match rate {matched_rna.mean()*100:.1f}%")
+    print(f"  per-cell vector valid = {valid_vec:,} / {n_match:,}")
 
     R = {
         "method": cfg.method, "dataset": cfg.dataset,
@@ -241,30 +241,30 @@ def evaluate(cfg):
         "_valid_pairs": valid_pairs, "_n_hvg": n_gene,
     }
 
-    print(f"\n{SEP}\n结果 (top-{n_gene} HVG)\n{SEP}")
+    print(f"\n{SEP}\nResults (top-{n_gene} HVG)\n{SEP}")
     for gname, keys in [
-        ("基础", ["gt_cells", "pred_cells", "cell_ratio"]),
-        ("检测", ["matched", "precision", "recall", "f1"]),
-        ("定位", ["loc_mean_um", "loc_median_um", "loc_p95_um"]),
-        ("计数", ["count_pearson", "count_spearman", "count_mae", "count_rmse"]),
-        ("向量", ["vec_cosine", "vec_js_dist", "vec_pearson"]),
-        ("分配", ["assign_overlap", "assign_accuracy"]),
+        ("basic", ["gt_cells", "pred_cells", "cell_ratio"]),
+        ("detection", ["matched", "precision", "recall", "f1"]),
+        ("location", ["loc_mean_um", "loc_median_um", "loc_p95_um"]),
+        ("counts", ["count_pearson", "count_spearman", "count_mae", "count_rmse"]),
+        ("vector", ["vec_cosine", "vec_js_dist", "vec_pearson"]),
+        ("assignment", ["assign_overlap", "assign_accuracy"]),
     ]:
-        print(f"\n  【{gname}】")
+        print(f"\n  [{gname}]")
         for k in keys:
             v = R[k]
             print(f"    {k:<18s} "
                   f"{v:,.4f}" if isinstance(v, float) else f"    {k:<18s} {v:,}")
 
-    print(f"\n  ⚠ BOMS 用 top-{n_gene} HVG 子集（内存所限，全 4495 基因会 OOM）")
-    print(f"     基因向量/计数指标仅在这 {n_gene} 个基因上计算，"
-          f"与其他方法比较时需注意口径")
+    print(f"\n  ⚠ BOMS uses a top-{n_gene} HVG subset (memory-limited; all 4495 genes would OOM)")
+    print(f"     gene vector / count metrics are computed on these {n_gene} genes only,"
+          f" note the scope when comparing with other methods")
 
-    out = cfg.out or f"/data/qiuyijia/eval_results/{cfg.method.lower()}/" \
+    out = cfg.out or f"yourpath/eval_results/{cfg.method.lower()}/" \
                      f"{cfg.dataset}.csv"
     os.makedirs(os.path.dirname(out), exist_ok=True)
     pd.DataFrame([R]).to_csv(out, index=False)
-    print(f"\n  已写 → {out}")
+    print(f"\n  Saved → {out}")
     return R
 
 

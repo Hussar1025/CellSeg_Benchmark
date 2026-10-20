@@ -6,7 +6,7 @@ import warnings
 import re
 
 # ============================================================
-# 0-A. 日志重定向
+# 0-A. Log redirection
 # ============================================================
 
 _LOG_DIR = "./bering_logs"
@@ -37,7 +37,7 @@ print(f"[LOG] stderr -> {_stderr_log.name}")
 
 
 # ============================================================
-# 0-B. 强制禁用 GPU，必须在 import torch 前
+# 0-B. Force-disable GPU; must run before importing torch
 # ============================================================
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -51,7 +51,7 @@ import numpy as np
 import pandas as pd
 
 # ============================================================
-# 0-B-2. torch CUDA 兜底补丁
+# 0-B-2. torch CUDA fallback patch
 # ============================================================
 
 torch.Tensor.cuda = lambda self, *args, **kwargs: self
@@ -66,14 +66,14 @@ torch.cuda.max_memory_allocated = lambda *args, **kwargs: 0
 
 
 # ============================================================
-# 0-C. 修复 Bering 源码中的 CUDA 硬编码
+# 0-C. Fix CUDA hardcoding in the Bering source
 # ============================================================
 
 def _patch_bering_cuda(verbose: bool = True):
     """
-    强制把 Bering 源码里的 CUDA 写法全部替换为 CPU。
+    Force-replace every CUDA construct in the Bering source with CPU.
 
-    处理内容：
+    Patterns handled:
       device='cuda'
       device = 'cuda'
       device="cuda"
@@ -84,7 +84,7 @@ def _patch_bering_cuda(verbose: bool = True):
       .to("cuda")
       .cuda()
       .cuda(non_blocking=True)
-      torch.cuda.FloatTensor 等
+      torch.cuda.FloatTensor, etc.
     """
 
     try:
@@ -113,7 +113,7 @@ def _patch_bering_cuda(verbose: bool = True):
 
             new_src = src
 
-            # device = 'cuda' / device="cuda"，允许中间有空格
+            # device = 'cuda' / device="cuda", with optional spaces
             new_src = re.sub(
                 r"device\s*=\s*['\"]cuda['\"]",
                 "device='cpu'",
@@ -158,7 +158,7 @@ def _patch_bering_cuda(verbose: bool = True):
                     rel = os.path.relpath(fpath, pkg_root)
                     print(f"  [PATCH] CUDA -> CPU fixed in Bering/{rel}")
 
-    # 删除 Bering 已加载模块，避免 Python 继续用旧缓存
+    # Remove loaded Bering modules so Python does not reuse stale cache
     for mod_name in list(sys.modules.keys()):
         if mod_name.startswith("Bering"):
             del sys.modules[mod_name]
@@ -171,7 +171,7 @@ _patch_bering_cuda()
 
 
 # ============================================================
-# 现在再 import Bering
+# Now import Bering
 # ============================================================
 
 import Bering as br
@@ -185,7 +185,7 @@ print("Running on CPU only. CUDA disabled and Bering patched.")
 
 
 # ============================================================
-# 内存监控工具
+# Memory monitoring helpers
 # ============================================================
 
 def _mem_gb() -> str:
@@ -201,7 +201,7 @@ def _log_mem(tag: str = ""):
 
 
 # ============================================================
-# 1. 参数
+# 1. Parameters
 # ============================================================
 
 XENIUM_DIR = "./Xenium_1"
@@ -219,7 +219,7 @@ CELL_GROUPS_FILE = os.path.join(XENIUM_DIR, "cell_groups.csv")
 USE_IMAGE = False
 MIN_QV = 20
 
-# ---------- 训练窗口 ----------
+# ---------- training window ----------
 N_CELLS_PER_CLASS = 10
 WINDOW_WIDTH = 100.0
 WINDOW_HEIGHT = 100.0
@@ -227,17 +227,17 @@ TRAIN_N_NEIGHBORS = 10
 BATCH_SIZE = 4
 TRAINING_RATIO = 0.8
 
-# ---------- 训练超参 ----------
+# ---------- training hyperparameters ----------
 NODE_EPOCHES = 50
 EDGE_EPOCHES = 50
 NODE_LR = 1e-3
 EDGE_LR = 1e-3
 
-# ---------- Node classifier 网络 ----------
+# ---------- Node classifier network ----------
 NODE_GCN_HIDDEN = [64, 32, 16]
 NODE_MLP_HIDDEN = [16, 16]
 
-# ---------- Edge classifier 超参 ----------
+# ---------- Edge classifier hyperparameters ----------
 EDGE_DECODER_MLP = [16, 8]
 EDGE_RBF_START = 0
 EDGE_RBF_STOP = 64
@@ -246,7 +246,7 @@ EDGE_NUM_POS_EDGES = 1000
 EDGE_NUM_NEG_EDGES = 1000
 EDGE_SUBIMAGE_BIN = 5
 
-# ---------- Inference 超参 ----------
+# ---------- Inference hyperparameters ----------
 NODE_N_NEIGHBORS = 30
 NODE_PROB_THRESHOLD = 0.3
 MAX_NUM_SPOTS = 1_500_000
@@ -260,7 +260,7 @@ NUM_ITERS = 100
 
 
 # ============================================================
-# 2. 读取数据
+# 2. Load data
 # ============================================================
 
 print("\n[1] Reading Xenium files...")
@@ -276,7 +276,7 @@ _log_mem("after read")
 
 
 # ============================================================
-# 3. 标准化列名
+# 3. Standardize column names
 # ============================================================
 
 print("\n[2] Standardizing columns...")
@@ -296,16 +296,16 @@ if "z" not in tx.columns:
 required_tx_cols = ["cell_id", "features", "x", "y", "z"]
 missing = [c for c in required_tx_cols if c not in tx.columns]
 if missing:
-    raise ValueError(f"transcripts 缺少必要列: {missing}")
+    raise ValueError(f"transcripts missing required columns: {missing}")
 
 required_group_cols = ["cell_id", "group"]
 missing = [c for c in required_group_cols if c not in cell_groups.columns]
 if missing:
-    raise ValueError(f"cell_groups.csv 缺少必要列: {missing}")
+    raise ValueError(f"cell_groups.csv missing required columns: {missing}")
 
 
 # ============================================================
-# 4. QC 过滤
+# 4. QC filtering
 # ============================================================
 
 print("\n[3] QC filtering...")
@@ -336,7 +336,7 @@ print("transcripts after  QC:", tx.shape[0])
 
 
 # ============================================================
-# 5. 合并 cell type labels
+# 5. Merge cell type labels
 # ============================================================
 
 print("\n[4] Merging labels from cell_groups.csv...")
@@ -417,14 +417,14 @@ _log_mem("after del tx")
 
 
 # ============================================================
-# 6. 图像加载
+# 6. Image loading
 # ============================================================
 
 print("\n[5] Image loading skipped. USE_IMAGE = False.")
 
 
 # ============================================================
-# 7. 创建 BrGraph
+# 7. Create BrGraph
 # ============================================================
 
 print("\n[6] Creating BrGraph...")
@@ -439,7 +439,7 @@ _log_mem("after BrGraph")
 
 
 # ============================================================
-# 8. 构建训练窗口图
+# 8. Build training window graphs
 # ============================================================
 
 print("\n[7] Building training window graphs...")
@@ -457,7 +457,7 @@ _log_mem("after BuildWindowGraphs")
 
 
 # ============================================================
-# 9. 创建训练数据
+# 9. Create training data
 # ============================================================
 
 print("\n[8] Creating training data...")
@@ -473,7 +473,7 @@ _log_mem("after CreateData")
 
 
 # ============================================================
-# 10. 训练
+# 10. Training
 # ============================================================
 
 NODE_CKPT = os.path.join(CKPT_DIR, "node_classifier.pt")
@@ -540,7 +540,7 @@ else:
         )
 
     except MemoryError:
-        print("FATAL: MemoryError in _trainNode — 内存不足，请降低 N_CELLS_PER_CLASS 或 BATCH_SIZE")
+        print("FATAL: MemoryError in _trainNode — out of memory; lower N_CELLS_PER_CLASS or BATCH_SIZE")
         traceback.print_exc()
         sys.exit(1)
 
@@ -625,7 +625,7 @@ else:
         )
 
     except MemoryError:
-        print("FATAL: MemoryError in _trainEdge — 内存不足，请降低 EDGE_NUM_POS_EDGES、EDGE_NUM_NEG_EDGES 或 BATCH_SIZE")
+        print("FATAL: MemoryError in _trainEdge — out of memory; lower EDGE_NUM_POS_EDGES, EDGE_NUM_NEG_EDGES or BATCH_SIZE")
         traceback.print_exc()
         sys.exit(1)
 
@@ -651,7 +651,7 @@ _log_mem("after training cleanup")
 
 
 # ============================================================
-# 11. 全片 node classification
+# 11. Whole-slide node classification
 # ============================================================
 
 print("\n[10] Running node classification...")
@@ -676,7 +676,7 @@ _log_mem("after node_classification")
 
 
 # ============================================================
-# 12. 全片 cell segmentation
+# 12. Whole-slide cell segmentation
 # ============================================================
 
 print("\n[11] Running cell segmentation...")
@@ -702,7 +702,7 @@ _log_mem("after cell_segmentation")
 
 
 # ============================================================
-# 13. cell annotation + 输出
+# 13. Cell annotation + output
 # ============================================================
 
 print("\n[12] Running cell annotation and saving outputs...")

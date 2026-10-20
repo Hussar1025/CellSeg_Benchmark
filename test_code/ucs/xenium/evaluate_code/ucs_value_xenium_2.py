@@ -1,20 +1,20 @@
 """
 eval_ucs_xenium.py — UCS vs Xenium Human Breast Cancer GT
 ==========================================================
-参考代码: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
+Reference code: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
 
-数据特点：
-  坐标单位：µm（直接用 round(µm) 作为 mask 像素索引）
-  ROI：5000×5000 px，以图像中心为中心
-    x: [5205, 6269] µm，y: [2382, 3445] µm
+Data notes:
+  coordinate unit: um (round(um) is used directly as the mask pixel index)
+  ROI: 5000x5000 px, centered on the image center
+    x: [5205, 6269] um, y: [2382, 3445] um
   mask[row, col] → x_um = col + ROI_IX0,  y_um = row + ROI_IY0
-  GT cell_id：字符串（'aaaafije-1'）
-  UCS pred_id：整数（1~8809）
-  pred 转录本数：从 transcripts.parquet 逐个查 mask 得到真实计数
+  GT cell_id: string ('aaaafije-1')
+  UCS pred_id: integer (1~8809)
+  pred transcript count: query the mask per transcript in transcripts.parquet to get true counts
 
-运行：
+Run:
   conda activate genesegnet_env
-  python eval_ucs_xenium.py --output-dir /data/qiuyijia/eval_results/ucs_xenium
+  python eval_ucs_xenium.py --output-dir yourpath/eval_results/ucs_xenium
 """
 from __future__ import annotations
 
@@ -35,12 +35,12 @@ from sklearn.neighbors import NearestNeighbors
 EPS = 1e-12
 SCRIPT_VERSION = "2026-06-08-genesegnet-label-image-eval-input-layer-v1"
 
-DATA_DIR   = "/data/qiuyijia/dataset/xenium_breast"
-MASK_PATH  = "/data/qiuyijia/ucs_xenium_breast/ucs_log/pred/segmentation_mask.tif"
+DATA_DIR   = "yourpath/dataset/xenium_breast"
+MASK_PATH  = "yourpath/ucs_xenium_breast/ucs_log/pred/segmentation_mask.tif"
 TX_PARQUET = os.path.join(DATA_DIR, "transcripts.parquet")
 CELLS_PQ   = os.path.join(DATA_DIR, "cells.parquet")
 
-# ROI 坐标参数
+# ROI coordinate parameters
 PIXEL_SIZE = 0.2125
 CX_UM  = 53994 / 2 * PIXEL_SIZE
 CY_UM  = 27420 / 2 * PIXEL_SIZE
@@ -58,7 +58,7 @@ class EvaluationConfig:
     gt_cells_path:        str   = CELLS_PQ
     gt_transcripts_path:  str   = TX_PARQUET
     pixel_size_um:        float = PIXEL_SIZE
-    output_dir:           str   = "/data/qiuyijia/eval_results/ucs_xenium"
+    output_dir:           str   = "yourpath/eval_results/ucs_xenium"
     method_name:          str   = "UCS"
     cell_id_col:          str   = "cell_id"
     x_col:                str   = "x"
@@ -76,7 +76,7 @@ class EvaluationConfig:
 
 
 def load_gt(cfg: EvaluationConfig) -> pd.DataFrame:
-    print(f"[GT] 加载: {cfg.gt_cells_path}")
+    print(f"[GT] loading: {cfg.gt_cells_path}")
     cells = pd.read_parquet(cfg.gt_cells_path,
                             columns=["cell_id","x_centroid","y_centroid",
                                      "total_counts","cell_area"])
@@ -85,17 +85,17 @@ def load_gt(cfg: EvaluationConfig) -> pd.DataFrame:
     cells = cells[mask].copy()
     cells.rename(columns={"x_centroid":"x","y_centroid":"y"}, inplace=True)
     cells["cell_id"] = cells["cell_id"].astype(str)
-    print(f"[GT] ROI 内细胞数: {len(cells):,}")
+    print(f"[GT] cells in ROI: {len(cells):,}")
     return cells
 
 
 def load_pred(cfg: EvaluationConfig):
-    print(f"[Pred] 加载 UCS mask: {cfg.mask_path}")
+    print(f"[Pred] loading UCS mask: {cfg.mask_path}")
     mask = tifffile.imread(cfg.mask_path)
     ids  = np.unique(mask); ids = ids[ids > 0]
-    print(f"[Pred] 细胞数: {len(ids):,}")
+    print(f"[Pred] cells: {len(ids):,}")
 
-    print("[Pred] 计算质心...")
+    print("[Pred] computing centroids...")
     centroids = ndimage.center_of_mass(mask > 0, mask, ids.tolist())
     records   = []
     for cell_id, (row, col) in zip(ids.tolist(), centroids):
@@ -105,7 +105,7 @@ def load_pred(cfg: EvaluationConfig):
             "y"      : row + ROI_IY0,
         })
     pred_df = pd.DataFrame(records)
-    print(f"[Pred] 质心完成: {len(pred_df):,} 个细胞")
+    print(f"[Pred] centroids done: {len(pred_df):,} cells")
     return pred_df, mask
 
 
@@ -127,7 +127,7 @@ def compute_all_transcript_metrics(
     MAP_H, MAP_W = mask.shape
     print(f"[TX] Matched pred={len(matched_pred_set):,}  GT={len(matched_gt_set):,}")
 
-    print(f"[TX] 加载 ROI 转录本...")
+    print(f"[TX] loading ROI transcripts...")
     pq = pd.read_parquet(cfg.gt_transcripts_path,
                          columns=["cell_id","x_location","y_location",
                                   "feature_name","is_gene","qv"])
@@ -136,9 +136,9 @@ def compute_all_transcript_metrics(
              (pq["y_location"] >= ROI_Y0) & (pq["y_location"] <= ROI_Y1))
     tx = pq[roi_m].copy(); del pq
     total_gt = len(tx)
-    print(f"[TX] ROI 内转录本: {total_gt:,}")
+    print(f"[TX] transcripts in ROI: {total_gt:,}")
 
-    # 坐标转换 → mask 查询
+    # coordinate conversion -> mask lookup
     tx["col"] = (tx["x_location"].round().astype(int) - ROI_IX0).clip(0, MAP_W-1)
     tx["row"] = (tx["y_location"].round().astype(int) - ROI_IY0).clip(0, MAP_H-1)
     pred_ids  = mask[tx["row"].values, tx["col"].values]
@@ -159,14 +159,14 @@ def compute_all_transcript_metrics(
     print(f"[TX] gt_assigned={gt_assigned:,}  pred_assigned={total_pred_assigned:,}  "
           f"both={both:,}  in_matched={in_matched:,}  correct={correct:,}")
 
-    # ── per-cell 真实转录本数（用于 Pearson/Spearman）────────────────────────
+    # ---- per-cell true transcript count (for Pearson/Spearman) ----
     pred_tx_count: Dict[str,int] = {}
     for pid in tx["pred_id"].values:
         if pid == "": continue
         pred_tx_count[pid] = pred_tx_count.get(pid, 0) + 1
 
-    # ── 基因向量 ──────────────────────────────────────────────────────────────
-    print("[TX] 计算基因向量...")
+    # ---- gene vectors ----
+    print("[TX] computing gene vectors...")
     pred_gene_counts: Dict[str, Dict[str,int]] = {}
     gt_gene_counts:   Dict[str, Dict[str,int]] = {}
 
@@ -198,7 +198,7 @@ def compute_all_transcript_metrics(
 
     accuracy  = float(correct / max(in_matched,1))
     pred_rate = float(total_pred_assigned / max(total_gt,1))
-    print(f"[TX] 完成: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  pred_rate={pred_rate:.4f}")
+    print(f"[TX] done: valid_pairs={valid_pairs:,}  accuracy={accuracy:.4f}  pred_rate={pred_rate:.4f}")
 
     return {
         "pred_transcript_rows"                            : total_pred_assigned,
@@ -216,7 +216,7 @@ def compute_all_transcript_metrics(
     }
 
 
-# ── 参考代码函数（不变）──────────────────────────────────────────────────────
+# ---- reference-code functions (unchanged) ----
 def expand_path(path): return Path(os.path.expanduser(path)).resolve()
 
 def collapse_to_cell_level(df, cfg, table_name):
@@ -399,30 +399,30 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     gt_raw = load_gt(cfg)
     pred_raw, mask = load_pred(cfg)
 
-    # n_transcripts 在 tx_result 后填入，先用空列占位
+    # n_transcripts is filled after tx_result; use an empty placeholder column for now
     pred_raw["n_transcripts"] = 0
 
     gt_cells,  gt_qc   = collapse_to_cell_level(gt_raw,   cfg, "gt")
     pred_cells,pred_qc = collapse_to_cell_level(pred_raw, cfg, "pred")
 
     radius = cfg.match_radius or infer_match_radius(gt_cells, cfg)
-    print(f"[INFO] 匹配半径: {radius:.4f} µm  GT={len(gt_cells):,}  Pred={len(pred_cells):,}")
+    print(f"[INFO] match radius: {radius:.4f} um  GT={len(gt_cells):,}  Pred={len(pred_cells):,}")
 
     matches, match_qc = match_sparse_hungarian(pred_cells, gt_cells, cfg, radius=radius)
-    print(f"[INFO] 匹配细胞数: {len(matches):,}")
+    print(f"[INFO] matched cells: {len(matches):,}")
 
-    # GT total_counts 加入 matches
+    # add GT total_counts to matches
     if not matches.empty:
         tc_df = gt_cells[[cfg.cell_id_col,"total_counts"]].rename(
             columns={cfg.cell_id_col:"gt_cell_id","total_counts":"gt_total_counts"})
         matches = matches.merge(tc_df, on="gt_cell_id", how="left")
 
-    print(f"\n[INFO] 计算转录本指标（约 3-5 分钟）...")
+    print(f"\n[INFO] computing transcript metrics (about 3-5 min)...")
     tx_result = compute_all_transcript_metrics(
         cfg=cfg, mask=mask, matches=matches, verbose=cfg.verbose,
     )
 
-    # 将真实 per-cell 转录本数加入 pred_cells 和 matches
+    # add the true per-cell transcript count to pred_cells and matches
     pred_tx_count = tx_result.pop("_pred_tx_count", {})
     pred_cells["n_transcripts"] = pred_cells[cfg.cell_id_col].map(pred_tx_count).fillna(0).astype(int)
 
@@ -431,7 +431,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
             columns={cfg.cell_id_col:"pred_cell_id","n_transcripts":"pred_n_transcripts"})
         matches = matches.merge(nt_df, on="pred_cell_id", how="left")
 
-    # 汇总指标
+    # summary metrics
     metrics: Dict[str,Any] = {"method":cfg.method_name,"script_version":SCRIPT_VERSION,
                                "pixel_size_um":cfg.pixel_size_um}
     metrics.update(gt_qc); metrics.update(pred_qc); metrics.update(match_qc)
@@ -440,7 +440,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     metrics.update(numeric_pair_metrics(matches, cfg))
     metrics["transcript_matched_cell_pairs_n"] = int(matches.shape[0])
 
-    # 统一 key 名（n_transcripts_vs_total_counts → 标准名）
+    # unify key names (n_transcripts_vs_total_counts -> canonical name)
     for s in ["pearson","spearman","mae","rmse"]:
         val = metrics.get(f"matched_pair_n_transcripts_vs_total_counts_{s}", np.nan)
         metrics[f"matched_cell_transcript_count_{s}"] = val
@@ -448,7 +448,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
 
     for k,v in tx_result.items(): metrics[k] = v
 
-    # 保存
+    # save
     prefix  = f"{cfg.method_name.lower()}_xenium_sparse_hungarian_qc_metrics"
     pd.DataFrame([metrics]).to_csv(outdir/f"{prefix}_full.csv", index=False)
     with open(outdir/f"{prefix}_full.json","w",encoding="utf-8") as f:
@@ -476,7 +476,7 @@ def parse_args():
     p.add_argument("--mask-path",           default=MASK_PATH)
     p.add_argument("--gt-cells-path",       default=CELLS_PQ)
     p.add_argument("--gt-transcripts-path", default=TX_PARQUET)
-    p.add_argument("--output-dir",          default="/data/qiuyijia/eval_results/ucs_xenium")
+    p.add_argument("--output-dir",          default="yourpath/eval_results/ucs_xenium")
     p.add_argument("--method-name",         default="UCS")
     p.add_argument("--match-radius",        type=float, default=None)
     p.add_argument("--quiet",               action="store_true")

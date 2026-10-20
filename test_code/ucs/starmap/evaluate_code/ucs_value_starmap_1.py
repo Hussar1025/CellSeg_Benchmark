@@ -26,10 +26,10 @@ from scipy.spatial import cKDTree
 from scipy.stats import pearsonr, spearmanr
 from scipy.spatial.distance import jensenshannon
 
-ROOT="/data/qiuyijia/dataset/starmap_BY1"
+ROOT="yourpath/dataset/starmap_BY1"
 SPOTS=os.path.join(ROOT,"spots_all.csv")
-DEFAULT_MASK="/data/qiuyijia/ucs_starmap_BY1_clean/ucs_log/pred/segmentation_mask.tif"
-DEFAULT_OUT="/data/qiuyijia/eval_results/ucs/starmap_BY1_clean.csv"
+DEFAULT_MASK="yourpath/ucs_starmap_BY1_clean/ucs_log/pred/segmentation_mask.tif"
+DEFAULT_OUT="yourpath/eval_results/ucs/starmap_BY1_clean.csv"
 
 METRICS=[
  "gt_cells","pred_cells","cell_ratio","matched","precision","recall","f1",

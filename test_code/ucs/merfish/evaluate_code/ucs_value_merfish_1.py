@@ -1,29 +1,31 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-eval_ucs_merfish.py — UCS 在 MERFISH 小鼠脑（Slice1 Replicate1）上的分割评估
-                       【v2：修复大连通分量被静默丢弃的匹配 bug】
+eval_ucs_merfish.py — segmentation evaluation of UCS on MERFISH mouse brain (Slice1 Replicate1)
+                       [v2: fixed the matching bug that silently dropped large connected components]
 
-v1 → v2 唯一改动：match_bipartite()
-  v1 对 len(gsub)*len(psub) > 36,000,000 的连通分量直接 continue，
-  MERFISH 细胞密度低导致 8448×8390 的巨型分量被整块丢弃 → 只匹配到 18 个。
-  v2 改为：小分量走匈牙利求最优，大分量走按距离升序的贪心，绝不丢弃任何分量。
+Only change v1 → v2: match_bipartite()
+  v1 directly `continue`d on connected components with len(gsub)*len(psub) > 36,000,000;
+  MERFISH's low cell density produced a giant 8448×8390 component that was dropped
+  entirely → only 18 matched. v2: small components use Hungarian optimal matching,
+  large components use greedy by ascending distance; never drop any component.
 
-其余逻辑（ROI 校验、GT 加载、转录本扫描、指标口径）与 v1 完全一致。
+The rest (ROI check, GT loading, transcript scan, metric definitions) is identical to v1.
 
-MERFISH 的两点特殊处理：
-  1. detected_transcripts.csv 没有 cell_id 列（Vizgen 不提供逐转录本官方分配），
-     GT 侧的转录本归属改为查 nuclei_mask.tif —— 它是从官方 cell_boundaries
-     HDF5 栅格化来的，即 Vizgen 官方分割在 1 µm/bin 空间的表示。
-  2. cell_metadata.csv 的 cell_id（39 位数字）与 nuclei_mask 的顺序 ID 无对应关系，
-     通过质心最近邻建立 {nuclei_mask_id: gt_cell_id} 映射把两者打通。
+Two MERFISH-specific treatments:
+  1. detected_transcripts.csv has no cell_id column (Vizgen provides no per-transcript
+     official assignment), so GT-side transcript assignment instead looks up
+     nuclei_mask.tif — rasterized from the official cell_boundaries HDF5, i.e. Vizgen's
+     official segmentation in 1 µm/bin space.
+  2. cell_metadata.csv cell_id (39-digit) has no relation to nuclei_mask sequential IDs,
+     so a centroid nearest-neighbor map {nuclei_mask_id: gt_cell_id} links the two.
 
-注意：UCS 把 nuclei_mask 当作 prior 使用，因此转录本级指标对 UCS 略有偏向
-      （与 CosMx 版本用 CellLabels 当 prior 是同一情况，口径一致）。
+Note: UCS uses nuclei_mask as a prior, so transcript-level metrics slightly favor UCS
+      (same situation as the CosMx version using CellLabels as prior; consistent definition).
 
-用法：
-  python eval_ucs_merfish.py --output-dir /data/qiuyijia/eval_results/ucs_merfish
-  python eval_ucs_merfish.py --match-radius 15        # 手动指定更严格的匹配半径
+Usage:
+  python eval_ucs_merfish.py --output-dir yourpath/eval_results/ucs_merfish
+  python eval_ucs_merfish.py --match-radius 15        # manually set a stricter match radius
 """
 import os
 import sys
@@ -44,14 +46,14 @@ from scipy.stats import pearsonr, spearmanr
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-DATA_DIR = "/data/qiuyijia/dataset/merfish_mouse_brain"
+DATA_DIR = "yourpath/dataset/merfish_mouse_brain"
 _PFX     = "datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1"
 
 DEF_META_CSV  = os.path.join(DATA_DIR, f"{_PFX}_cell_metadata_S1R1.csv")
 DEF_TX_CSV    = os.path.join(DATA_DIR, f"{_PFX}_detected_transcripts_S1R1.csv")
 
-DEF_PRED_MASK = "/data/qiuyijia/ucs_merfish_brain/ucs_log/pred/segmentation_mask.tif"
-DEF_NUC_MASK  = "/data/qiuyijia/ucs_merfish_brain/nuclei_mask.tif"
+DEF_PRED_MASK = "yourpath/ucs_merfish_brain/ucs_log/pred/segmentation_mask.tif"
+DEF_NUC_MASK  = "yourpath/ucs_merfish_brain/nuclei_mask.tif"
 
 SCALE_X   = 9.205861091613770       # px per µm
 SCALE_Y   = 9.205849647521973
@@ -72,7 +74,7 @@ def hr(title):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  ROI 参数（与分割脚本同一套公式 + 硬校验）
+#  ROI params (same formula as the segmentation script + hard check)
 # ─────────────────────────────────────────────────────────────────────────────
 def compute_roi(cx_um, cy_um, roi_px, mask_shape):
     half_x = roi_px / 2.0 / SCALE_X
@@ -84,26 +86,26 @@ def compute_roi(cx_um, cy_um, roi_px, mask_shape):
     map_w = int(np.ceil(x1)) - ix0
     map_h = int(np.ceil(y1)) - iy0
 
-    log(f"[ROI] 中心 ({cx_um:.1f}, {cy_um:.1f}) µm   边长 {roi_px} px")
-    log(f"[ROI] µm 范围  x=[{x0:.2f},{x1:.2f}]  y=[{y0:.2f},{y1:.2f}]")
-    log(f"[ROI] bin 原点 ({ix0}, {iy0})   推算 map = {map_h}×{map_w}")
-    log(f"[ROI] 实际 mask shape        = {mask_shape[0]}×{mask_shape[1]}")
+    log(f"[ROI] center ({cx_um:.1f}, {cy_um:.1f}) µm   side {roi_px} px")
+    log(f"[ROI] µm range  x=[{x0:.2f},{x1:.2f}]  y=[{y0:.2f},{y1:.2f}]")
+    log(f"[ROI] bin origin ({ix0}, {iy0})   derived map = {map_h}×{map_w}")
+    log(f"[ROI] actual mask shape       = {mask_shape[0]}×{mask_shape[1]}")
 
     if (map_h, map_w) != tuple(mask_shape):
-        log("\n  ✘ ROI 推算尺寸与 mask 不符，评估会全错，已中止。")
-        log("    请用 --cx-um / --cy-um / --roi-px 传入分割时实际参数，")
-        log("    或用 --roi-ix0 / --roi-iy0 直接覆盖 bin 原点。")
+        log("\n  ✘ ROI derived size does not match mask; evaluation would be wrong, aborting.")
+        log("    pass the actual segmentation params via --cx-um / --cy-um / --roi-px,")
+        log("    or override the bin origin directly via --roi-ix0 / --roi-iy0.")
         sys.exit(1)
 
-    log("[ROI] ✓ 尺寸校验通过")
+    log("[ROI] ✓ size check passed")
     return ix0, iy0, map_w, map_h, x0, x1, y0, y1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  GT 细胞（cell_metadata.csv）
+#  GT cells (cell_metadata.csv)
 # ─────────────────────────────────────────────────────────────────────────────
 def load_gt_cells(meta_csv, x0, x1, y0, y1):
-    log(f"[GT] 加载: {meta_csv}")
+    log(f"[GT] loading: {meta_csv}")
     df = pd.read_csv(meta_csv)
     df = df.rename(columns={df.columns[0]: "cell_id"})
     df["cell_id"] = df["cell_id"].astype(str)
@@ -113,19 +115,19 @@ def load_gt_cells(meta_csv, x0, x1, y0, y1):
     roi = df[m].copy().reset_index(drop=True)
     roi = roi.rename(columns={"center_x": "x", "center_y": "y"})
 
-    log(f"[GT] 全图 {len(df):,} 个 → ROI 内 {len(roi):,} 个")
+    log(f"[GT] full image {len(df):,} → in ROI {len(roi):,}")
     log(f"[GT] x=[{roi.x.min():.1f},{roi.x.max():.1f}]µm  "
         f"y=[{roi.y.min():.1f},{roi.y.max():.1f}]µm")
     return roi[["cell_id", "x", "y", "volume"]]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  mask → 细胞质心（bin → µm）
+#  mask → cell centroids (bin → µm)
 # ─────────────────────────────────────────────────────────────────────────────
 def mask_to_cells(mask, ix0, iy0, tag):
     ids = np.unique(mask)
     ids = ids[ids > 0]
-    log(f"[{tag}] mask shape={mask.shape} dtype={mask.dtype}  细胞 ID {len(ids):,} 个")
+    log(f"[{tag}] mask shape={mask.shape} dtype={mask.dtype}  cell IDs {len(ids):,}")
 
     t0    = time.time()
     ones  = np.ones_like(mask, dtype=np.uint8)
@@ -138,7 +140,7 @@ def mask_to_cells(mask, ix0, iy0, tag):
         "y"       : coms[:, 0] + iy0,
         "n_pixels": sizes,
     })
-    log(f"[{tag}] 质心完成 {len(df):,} 个  ({time.time()-t0:.1f}s)  "
+    log(f"[{tag}] centroids done {len(df):,}  ({time.time()-t0:.1f}s)  "
         f"x=[{df.x.min():.1f},{df.x.max():.1f}] y=[{df.y.min():.1f},{df.y.max():.1f}]")
     return df
 
@@ -155,40 +157,40 @@ def build_nuclei_to_gt_map(nuc_cells, gt_cells, max_dist=5.0):
                zip(nuc_cells.loc[ok, "mask_id"].values,
                    gt_cells["cell_id"].values[idx[ok]])}
 
-    log(f"[映射] nuclei_mask {len(nuc_cells):,} 个 → 对上 GT {int(ok.sum()):,} 个 "
+    log(f"[MAP] nuclei_mask {len(nuc_cells):,} → matched GT {int(ok.sum()):,} "
         f"({ok.sum()/max(len(nuc_cells),1)*100:.1f}%)")
-    log(f"[映射] 质心距离  中位 {np.median(d):.2f}µm  "
+    log(f"[MAP] centroid distance  median {np.median(d):.2f}µm  "
         f"p95 {np.percentile(d,95):.2f}µm  max {d.max():.2f}µm")
     if ok.sum() / max(len(nuc_cells), 1) < 0.8:
-        log("  ⚠ 对上比例偏低，转录本级 GT 归属可能不完整")
+        log("  ⚠ match fraction low; transcript-level GT assignment may be incomplete")
     return mapping
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  【v2 修复】二分图匹配：小分量匈牙利求最优，大分量贪心，绝不丢弃分量
+#  [v2 fix] bipartite matching: small components Hungarian optimal, large components greedy, never drop
 # ═════════════════════════════════════════════════════════════════════════════
 def match_bipartite(gt, pred, radius, dense_side=2000):
     gt_xy   = gt[["x", "y"]].values
     pred_xy = pred[["x", "y"]].values
     n_g, n_p = len(gt_xy), len(pred_xy)
 
-    log(f"[匹配] radius={radius:.4f} µm  GT={n_g:,}  Pred={n_p:,}")
+    log(f"[MATCH] radius={radius:.4f} µm  GT={n_g:,}  Pred={n_p:,}")
 
-    # ── 候选边（向量化构建）─────────────────────────────────────────────────
+    # ── candidate edges (vectorized build) ────────────────────────────────────
     t0 = time.time()
     tg, tp = cKDTree(gt_xy), cKDTree(pred_xy)
     pairs  = tg.query_ball_tree(tp, r=radius)
     lens   = np.fromiter((len(x) for x in pairs), dtype=np.int64, count=n_g)
     if lens.sum() == 0:
-        log("[匹配] ✘ 没有任何候选边，坐标系可能不匹配")
+        log("[MATCH] ✘ no candidate edges; coordinate systems may not match")
         return pd.DataFrame(columns=["gt_idx", "pred_idx", "dist"])
 
     gi = np.repeat(np.arange(n_g, dtype=np.int64), lens)
     pi = np.concatenate([np.asarray(x, dtype=np.int64) for x in pairs if len(x)])
     dd = np.hypot(gt_xy[gi, 0] - pred_xy[pi, 0], gt_xy[gi, 1] - pred_xy[pi, 1])
-    log(f"[匹配] 候选边 {len(gi):,} 条  ({time.time()-t0:.1f}s)")
+    log(f"[MATCH] candidate edges {len(gi):,}  ({time.time()-t0:.1f}s)")
 
-    # ── 连通分量拆解 ────────────────────────────────────────────────────────
+    # ── connected component decomposition ────────────────────────────────────
     adj = csr_matrix((np.ones(len(gi)), (gi, pi + n_g)),
                      shape=(n_g + n_p, n_g + n_p))
     adj = adj + adj.T
@@ -200,7 +202,7 @@ def match_bipartite(gt, pred, radius, dense_side=2000):
     uniq = np.unique(ec_s)
     starts = np.searchsorted(ec_s, uniq, side="left")
     starts = np.append(starts, len(ec_s))
-    log(f"[匹配] 连通分量 {len(uniq):,} 个（含边的）")
+    log(f"[MATCH] connected components {len(uniq):,} (with edges)")
 
     rows        = []
     n_hung_comp = n_greedy_comp = 0
@@ -214,7 +216,7 @@ def match_bipartite(gt, pred, radius, dense_side=2000):
         psub = np.unique(p_e)
 
         if len(gsub) * len(psub) <= dense_cap:
-            # 小分量：稠密匈牙利，求全局最优
+            # small component: dense Hungarian, global optimum
             gmap = {g: k for k, g in enumerate(gsub)}
             pmap = {p: k for k, p in enumerate(psub)}
             cost = np.full((len(gsub), len(psub)), radius * 10.0)
@@ -229,7 +231,7 @@ def match_bipartite(gt, pred, radius, dense_side=2000):
             n_hung_comp += 1
             n_hung_cell += hit
         else:
-            # 大分量：按距离升序贪心（避免 O(n^3) 爆炸，绝不丢弃）
+            # large component: greedy by ascending distance (avoid O(n^3) blowup, never drop)
             order = np.argsort(d_e, kind="stable")
             g_used, p_used = set(), set()
             hit = 0
@@ -244,17 +246,17 @@ def match_bipartite(gt, pred, radius, dense_side=2000):
             n_greedy_cell += hit
 
     m = pd.DataFrame(rows, columns=["gt_idx", "pred_idx", "dist"])
-    log(f"[匹配] 匈牙利分量 {n_hung_comp:,} 个 → {n_hung_cell:,} 对")
-    log(f"[匹配] 贪心分量   {n_greedy_comp:,} 个 → {n_greedy_cell:,} 对")
-    log(f"[匹配] 匹配细胞数: {len(m):,}")
+    log(f"[MATCH] Hungarian components {n_hung_comp:,} → {n_hung_cell:,} pairs")
+    log(f"[MATCH] greedy components   {n_greedy_comp:,} → {n_greedy_cell:,} pairs")
+    log(f"[MATCH] matched cells: {len(m):,}")
 
     if len(m) < 0.5 * min(n_g, n_p):
-        log("  ⚠ 匹配数不足细胞数的一半，请核对 ROI 原点与坐标换算")
+        log("  ⚠ matched less than half the cells; check ROI origin and coordinate conversion")
     return m
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  逐转录本扫描
+#  per-transcript scan
 # ─────────────────────────────────────────────────────────────────────────────
 def scan_transcripts(tx_csv, pred_mask, nuc_mask, ix0, iy0,
                      pred_cells, gt_cells, nuc2gt, matches,
@@ -280,8 +282,8 @@ def scan_transcripts(tx_csv, pred_mask, nuc_mask, ix0, iy0,
     for _, r in matches.iterrows():
         pair_of_pred[int(r["pred_idx"])] = int(r["gt_idx"])
 
-    # ── 第一遍：基因集合 ────────────────────────────────────────────────────
-    log("[TX] 第 1 遍：扫描基因列表 ...")
+    # ── pass 1: gene set ─────────────────────────────────────────────────────
+    log("[TX] pass 1: scanning gene list ...")
     genes, total_rows = set(), 0
     for ch in pd.read_csv(tx_csv, usecols=["gene"], chunksize=chunksize):
         genes.update(ch["gene"].dropna().unique())
@@ -289,13 +291,13 @@ def scan_transcripts(tx_csv, pred_mask, nuc_mask, ix0, iy0,
     if drop_blank:
         n_all = len(genes)
         genes = {g for g in genes if not str(g).lower().startswith("blank")}
-        log(f"[TX] 基因 {n_all} 个 → 剔除 Blank 后 {len(genes)} 个")
+        log(f"[TX] genes {n_all} → after removing Blank {len(genes)}")
     gene_list = sorted(genes)
     gene_idx  = {g: i for i, g in enumerate(gene_list)}
     n_genes   = len(gene_list)
-    log(f"[TX] 全图转录本 {total_rows:,} 行   参与统计基因 {n_genes} 个")
+    log(f"[TX] full-image transcripts {total_rows:,} rows   genes used {n_genes}")
 
-    # ── 第二遍：查 mask 归属并累加 ──────────────────────────────────────────
+    # ── pass 2: look up mask assignment and accumulate ───────────────────────
     pred_gene = np.zeros((n_pred, n_genes), dtype=np.float32)
     gt_gene   = np.zeros((n_gt,   n_genes), dtype=np.float32)
     pred_ntx  = np.zeros(n_pred, dtype=np.int64)
@@ -304,7 +306,7 @@ def scan_transcripts(tx_csv, pred_mask, nuc_mask, ix0, iy0,
     n_roi = n_pred_assigned = n_gt_assigned = 0
     n_both = n_in_matched = n_correct = 0
 
-    log("[TX] 第 2 遍：查 mask 归属并累加（约 5-10 分钟）...")
+    log("[TX] pass 2: look up mask assignment and accumulate (~5-10 min)...")
     t0, read_rows = time.time(), 0
     for ch in pd.read_csv(tx_csv,
                           usecols=["global_x", "global_y", "gene"],
@@ -315,7 +317,7 @@ def scan_transcripts(tx_csv, pred_mask, nuc_mask, ix0, iy0,
         by = np.round(ch["global_y"].values).astype(np.int64) - iy0
         inside = (bx >= 0) & (bx < map_w) & (by >= 0) & (by < map_h)
         if not inside.any():
-            log(f"[TX]   已读 {read_rows:,}  ROI 内 {n_roi:,}")
+            log(f"[TX]   read {read_rows:,}  in ROI {n_roi:,}")
             continue
 
         bx, by = bx[inside], by[inside]
@@ -354,17 +356,17 @@ def scan_transcripts(tx_csv, pred_mask, nuc_mask, ix0, iy0,
             n_in_matched += int(valid.sum())
             n_correct    += int((expect[valid] == g_i[sel][valid]).sum())
 
-        log(f"[TX]   已读 {read_rows:,}  ROI 内 {n_roi:,}")
+        log(f"[TX]   read {read_rows:,}  in ROI {n_roi:,}")
 
-    log(f"[TX] 扫描完成  耗时 {time.time()-t0:.1f}s")
-    log(f"[TX] ROI 内转录本            : {n_roi:,}")
-    log(f"[TX] Pred 已分配             : {n_pred_assigned:,} "
+    log(f"[TX] scan done  elapsed {time.time()-t0:.1f}s")
+    log(f"[TX] transcripts in ROI        : {n_roi:,}")
+    log(f"[TX] Pred assigned             : {n_pred_assigned:,} "
         f"({n_pred_assigned/max(n_roi,1)*100:.1f}%)")
-    log(f"[TX] GT   已分配             : {n_gt_assigned:,} "
+    log(f"[TX] GT   assigned             : {n_gt_assigned:,} "
         f"({n_gt_assigned/max(n_roi,1)*100:.1f}%)")
-    log(f"[TX] 双侧都有归属 (overlap)  : {n_both:,}")
-    log(f"[TX] 落在 matched pair 内    : {n_in_matched:,}")
-    log(f"[TX] 其中分配一致            : {n_correct:,} "
+    log(f"[TX] both assigned (overlap)   : {n_both:,}")
+    log(f"[TX] in matched pairs          : {n_in_matched:,}")
+    log(f"[TX] of which agree            : {n_correct:,} "
         f"({n_correct/max(n_in_matched,1)*100:.1f}%)")
 
     return {
@@ -381,7 +383,7 @@ def scan_transcripts(tx_csv, pred_mask, nuc_mask, ix0, iy0,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  基因向量相似度
+#  gene-vector similarity
 # ─────────────────────────────────────────────────────────────────────────────
 def gene_vector_metrics(matches, pred_gene, gt_gene):
     cos_l, js_l, pr_l = [], [], []
@@ -417,58 +419,58 @@ def gene_vector_metrics(matches, pred_gene, gt_gene):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  主流程
+#  main flow
 # ─────────────────────────────────────────────────────────────────────────────
 def evaluate(cfg):
     os.makedirs(cfg.output_dir, exist_ok=True)
 
-    hr("加载 mask")
+    hr("Load masks")
     pred_mask = tifffile.imread(cfg.pred_mask)
     nuc_mask  = tifffile.imread(cfg.nuclei_mask)
     log(f"[Pred] {cfg.pred_mask}")
     log(f"[Nuc ] {cfg.nuclei_mask}")
     if nuc_mask.shape != pred_mask.shape:
-        log(f"  ✘ nuclei_mask {nuc_mask.shape} 与 pred_mask {pred_mask.shape} 形状不符")
+        log(f"  ✘ nuclei_mask {nuc_mask.shape} shape mismatch with pred_mask {pred_mask.shape}")
         sys.exit(1)
     if int(nuc_mask.max()) == 0:
-        log("  ✘ nuclei_mask 为空，无法评估转录本级指标")
+        log("  ✘ nuclei_mask empty, cannot evaluate transcript-level metrics")
         sys.exit(1)
 
-    hr("ROI 校验")
+    hr("ROI check")
     if cfg.roi_ix0 is not None and cfg.roi_iy0 is not None:
         ix0, iy0 = cfg.roi_ix0, cfg.roi_iy0
         map_h, map_w = pred_mask.shape
         x0, x1 = ix0, ix0 + map_w
         y0, y1 = iy0, iy0 + map_h
-        log(f"[ROI] 使用手动指定原点 ({ix0}, {iy0})")
+        log(f"[ROI] using manually specified origin ({ix0}, {iy0})")
     else:
         ix0, iy0, map_w, map_h, x0, x1, y0, y1 = compute_roi(
             cfg.cx_um, cfg.cy_um, cfg.roi_px, pred_mask.shape)
 
-    hr("GT 细胞 / Pred 细胞")
+    hr("GT cells / Pred cells")
     gt_cells   = load_gt_cells(cfg.meta_csv, x0, x1, y0, y1)
     pred_cells = mask_to_cells(pred_mask, ix0, iy0, "Pred")
     nuc_cells  = mask_to_cells(nuc_mask,  ix0, iy0, "Nuc ")
 
-    hr("打通 nuclei_mask ↔ GT cell_id")
+    hr("Link nuclei_mask ↔ GT cell_id")
     nuc2gt = build_nuclei_to_gt_map(nuc_cells, gt_cells, cfg.map_max_dist)
 
-    hr("细胞匹配")
+    hr("Cell matching")
     gt_xy = gt_cells[["x", "y"]].values
     nn = cKDTree(gt_xy).query(gt_xy, k=2)[0][:, 1]
     radius = (cfg.match_radius if cfg.match_radius is not None
               else float(np.quantile(nn, cfg.radius_quantile) * cfg.radius_multiplier))
-    log(f"[匹配] GT 最近邻距离  中位 {np.median(nn):.2f}µm  "
+    log(f"[MATCH] GT nearest-neighbor distance  median {np.median(nn):.2f}µm  "
         f"q{cfg.radius_quantile:.2f} {np.quantile(nn, cfg.radius_quantile):.2f}µm")
     matches = match_bipartite(gt_cells, pred_cells, radius, cfg.dense_side)
 
-    hr("逐转录本扫描")
+    hr("Per-transcript scan")
     tx = scan_transcripts(cfg.tx_csv, pred_mask, nuc_mask, ix0, iy0,
                           pred_cells, gt_cells, nuc2gt, matches,
                           chunksize=cfg.chunksize, drop_blank=not cfg.keep_blank)
 
-    # ── 指标汇总 ────────────────────────────────────────────────────────────
-    hr("指标汇总")
+    # ── metric summary ──────────────────────────────────────────────────────
+    hr("Metric summary")
     n_gt, n_pred, n_match = len(gt_cells), len(pred_cells), len(matches)
     m = {"method": cfg.method_name}
 
@@ -532,7 +534,7 @@ def evaluate(cfg):
     m["_n_genes_used"]   = len(tx["gene_list"])
     m["_nuc_mask_cells"] = int(len(nuc_cells))
 
-    # ── 输出 ────────────────────────────────────────────────────────────────
+    # ── output ──────────────────────────────────────────────────────────────
     stem = os.path.join(cfg.output_dir,
                         f"{cfg.method_name.lower()}_merfish_sparse_hungarian_qc")
 
@@ -586,7 +588,7 @@ def parse_args():
     ap.add_argument("--tx-csv",      default=DEF_TX_CSV)
     ap.add_argument("--pred-mask",   default=DEF_PRED_MASK)
     ap.add_argument("--nuclei-mask", default=DEF_NUC_MASK)
-    ap.add_argument("--output-dir",  default="/data/qiuyijia/eval_results/ucs_merfish")
+    ap.add_argument("--output-dir",  default="yourpath/eval_results/ucs_merfish")
     ap.add_argument("--method-name", default="UCS")
 
     ap.add_argument("--cx-um",   type=float, default=DEF_CX_UM)
@@ -599,7 +601,7 @@ def parse_args():
     ap.add_argument("--radius-quantile",   type=float, default=0.95)
     ap.add_argument("--radius-multiplier", type=float, default=1.5)
     ap.add_argument("--dense-side",        type=int,   default=2000,
-                    help="连通分量边长阈值：不超过则用匈牙利，超过则用贪心")
+                    help="connected-component side threshold: Hungarian if not exceeded, greedy otherwise")
     ap.add_argument("--map-max-dist",      type=float, default=5.0)
 
     ap.add_argument("--chunksize", type=int, default=5_000_000)

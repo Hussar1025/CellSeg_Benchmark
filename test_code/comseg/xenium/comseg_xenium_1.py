@@ -2,21 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-ComSeg Xenium pancreas-cancer launcher（精简版）。
+ComSeg Xenium pancreas-cancer launcher (slim version).
 
-瘦封装，不含分割逻辑，转交给引擎：
-    /data/qiuyijia/comseg/comseg_xenium_4.py
+Thin wrapper with no segmentation logic; it delegates to the engine:
+    yourpath/comseg/comseg_xenium_4.py
 
-与 colon launcher 的区别：读引擎源码后确认——
-  * pixel_size  引擎从 experiment.xenium 自动读，这里不传（不覆盖）
-  * ROI 原点    不传 --roi-origin 时引擎自动居中，这里默认居中
-  * GT 细胞数    引擎 prep 阶段自算 gt_expected_cells，不是输入，故删除
-只需固定 roi_size，并填 diameter/radius 两个形态参数。
+Differences from the colon launcher, confirmed by reading the engine source:
+  * pixel_size  the engine reads it from experiment.xenium, so it is not passed here (not overridden)
+  * ROI origin  the engine centers automatically when --roi-origin is omitted; centered by default here
+  * GT cell count  the engine computes gt_expected_cells during prep, so it is not an input and was removed
+Only roi_size is fixed; the two shape parameters diameter/radius are set here.
 
-前置条件（重要）：引擎的 DATASETS 字典必须已注册 "pancreas"：
-    "pancreas": {"root": "/data/qiuyijia/dataset/xenium_pancreas_cancer",
+Prerequisite (important): "pancreas" must already be registered in the engine DATASETS dict:
+    "pancreas": {"root": "yourpath/dataset/xenium_pancreas_cancer",
                  "tag": "pancreas"},
-否则 --dataset pancreas 会被 argparse 的 choices 拒绝。
+otherwise argparse choices will reject --dataset pancreas.
 """
 
 from pathlib import Path
@@ -24,24 +24,24 @@ import argparse
 import subprocess
 import sys
 
-ENGINE = Path("/data/qiuyijia/comseg/comseg_xenium_4.py")
-DATA_ROOT = Path("/data/qiuyijia/dataset/xenium_pancreas_cancer")
-OUT_DIR = Path("/data/qiuyijia/comseg_xenium_pancreas_roi6000")
+ENGINE = Path("yourpath/comseg/comseg_xenium_4.py")
+DATA_ROOT = Path("yourpath/dataset/xenium_pancreas_cancer")
+OUT_DIR = Path("yourpath/comseg_xenium_pancreas_roi6000")
 
-DATASET_NAME = "pancreas"          # 必须已在引擎 DATASETS 里注册
-ROI_SIZE = 6000                    # 与 colon benchmark 对齐；居中
+DATASET_NAME = "pancreas"          # must already be registered in engine DATASETS
+ROI_SIZE = 6000                    # aligned with the colon benchmark; centered
 
-# prior 来源：platform = 用 Xenium 自带 nucleus_boundaries.parquet（无需额外依赖）
-#             cellist  = 复用 cellist_xenium_pancreas_roi{roi} 的结果（须先跑过 cellist）
+# prior source: platform = use the Xenium nucleus_boundaries.parquet (no extra dependency)
+#               cellist  = reuse cellist_xenium_pancreas_roi{roi} output (run cellist first)
 PRIOR_SOURCE = "platform"
 
-# 形态参数：跑 inspect_pancreas.py 后把建议值填这里。
-# 想先出个 baseline，也可直接用引擎默认 15 / 25。
+# Shape parameters: fill in the suggested values after running inspect_pancreas.py.
+# For a quick baseline, the engine defaults 15 / 25 also work.
 MEAN_CELL_DIAMETER_UM = 7.7
 MAX_CELL_RADIUS_UM = 9.4
 
-# 可选：想跟别的方法对齐同一块区域时再指定，否则留 None = 自动居中
-ROI_ORIGIN = None                  # 例如 (14052, 11241)
+# Optional: set to align the same region with other methods; None = auto-centered
+ROI_ORIGIN = None                  # e.g. (14052, 11241)
 
 
 def main():
@@ -83,7 +83,7 @@ def main():
         "--max-cell-radius-um", str(MAX_CELL_RADIUS_UM),
     ]
 
-    # pixel_size 不传 -> 引擎自动读；ROI 原点仅在显式指定时才传
+    # pixel_size not passed -> engine reads it; ROI origin only passed when explicitly set
     if ROI_ORIGIN is not None:
         cmd += ["--roi-origin", str(ROI_ORIGIN[0]), str(ROI_ORIGIN[1])]
 

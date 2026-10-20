@@ -18,9 +18,9 @@ ROI_Y0 = 10210
 ROI_X0 = 22080
 ROI_SIZE = 10000
 
-ROOT_DEFAULT = "/data/qiuyijia/dataset/xenium7/outs"
-RUN_DEFAULT = "/data/qiuyijia/cellist_xenium_colon_downstream/ref_r5_imp2p5_fill1p5"
-OUT_DEFAULT = "/data/qiuyijia/eval_results_qv20/colon/cellist_xenium_6_metrics.csv"
+ROOT_DEFAULT = "yourpath"
+RUN_DEFAULT = "yourpath"
+OUT_DEFAULT = "yourpath"
 
 
 def choose_col(cols, candidates, required=True):

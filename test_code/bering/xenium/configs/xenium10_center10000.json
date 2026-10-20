@@ -1,6 +1,6 @@
 {
   "dataset": "xenium10",
-  "data_root": "/data/qiuyijia/dataset/xenium10",
+  "data_root": "yourpath/dataset/xenium10",
   "outs_zip": "transcripts.zip",
   "transcripts": "transcripts/transcripts.parquet",
   "seed_source": "official_transcripts_cell_id",
@@ -48,5 +48,5 @@
   },
   "unassigned_values": ["UNASSIGNED", "0", "-1", "nan", "None", ""],
   "seed": 0,
-  "output_dir": "/data/qiuyijia/bering/xenium10_center10000_output"
+  "output_dir": "yourpath/bering/xenium10_center10000_output"
 }

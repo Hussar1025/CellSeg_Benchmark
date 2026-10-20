@@ -20,11 +20,11 @@ from scipy.spatial.distance import jensenshannon
 
 CFG={
 "liver1":{
- "h5ad":"/data/qiuyijia/comseg/merfish_liver1/output/merfish_liver1_roi_top300_mmc0p99.h5ad",
- "cache":"/data/qiuyijia/comseg/merfish_liver1/cache/merfish_liver1_roi.csv"},
+ "h5ad":"yourpath/comseg/merfish_liver1/output/merfish_liver1_roi_top300_mmc0p99.h5ad",
+ "cache":"yourpath/comseg/merfish_liver1/cache/merfish_liver1_roi.csv"},
 "liver2":{
- "h5ad":"/data/qiuyijia/comseg/merfish_liver2/output/merfish_liver2_roi_top300_mmc0p99.h5ad",
- "cache":"/data/qiuyijia/comseg/merfish_liver2/cache/merfish_liver2_roi.csv"},
+ "h5ad":"yourpath/comseg/merfish_liver2/output/merfish_liver2_roi_top300_mmc0p99.h5ad",
+ "cache":"yourpath/comseg/merfish_liver2/cache/merfish_liver2_roi.csv"},
 }
 METRICS=["gt_cells","pred_cells","cell_ratio","matched","precision","recall","f1",
 "loc_mean_um","loc_median_um","loc_p95_um","count_pearson","count_spearman",
@@ -108,7 +108,7 @@ def main():
     ap.add_argument("--out")
     a=ap.parse_args(); c=CFG[a.dataset]
     hp=a.h5ad or c["h5ad"]; cp=a.cache or c["cache"]
-    out=a.out or f"/data/qiuyijia/eval_results/comseg/merfish_{a.dataset}.csv"
+    out=a.out or f"yourpath/eval_results/comseg/merfish_{a.dataset}.csv"
 
     A=ad.read_h5ad(hp); G=pd.read_csv(cp); P=extract_spots(A)
     gx=pick(G.columns,["x","global_x","x_um","x_location"]); gy=pick(G.columns,["y","global_y","y_um","y_location"])

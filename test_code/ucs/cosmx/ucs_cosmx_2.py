@@ -55,9 +55,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ROOT = "/data/qiuyijia/dataset/cosmx_lymph_node"
-OUT_TEMPLATE = "/data/qiuyijia/ucs_cosmx_lymph_node/fov{fov}"
-UCS_REPO = "/data/qiuyijia/ucs/UCS"
+ROOT = "yourpath/dataset/cosmx_lymph_node"
+OUT_TEMPLATE = "yourpath/ucs_cosmx_lymph_node/fov{fov}"
+UCS_REPO = "yourpath/ucs/UCS"
 NOMINAL_UM_PX = 0.12
 FOV_SIZE = 4256
 SEP = "=" * 78

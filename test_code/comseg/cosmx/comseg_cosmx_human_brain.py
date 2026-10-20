@@ -34,7 +34,7 @@ locating a FOV inside it all failed, and ComSeg does not need pixels anyway.
     conda activate comseg_env
     python comseg_cosmx_3.py --fovs 48 261 --stage prep
     python comseg_cosmx_3.py --fovs 48 --stage run
-    python comseg_cosmx_3.py --fovs 48 --stage post --compare-to /data/qiuyijia/ucs_cosmx_lymph_node/fov48
+    python comseg_cosmx_3.py --fovs 48 --stage post --compare-to yourpath/ucs_cosmx_lymph_node/fov48
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ import pandas as pd
 
 VERSION = "2026.08.13"
 
-ROOT = "/data/qiuyijia/dataset/cosmx_human_brain"
-OUT_ROOT = "/data/qiuyijia/comseg_cosmx_human_brain"
+ROOT = "yourpath/dataset/cosmx_human_brain"
+OUT_ROOT = "yourpath/comseg_cosmx_human_brain"
 UM_PER_PX = 0.12028          # verified two ways: FOV position table and Area.um2/Area
 FOV_PX = 4256                # .zattrs fov_height / fov_width
 
@@ -343,7 +343,7 @@ def stage_run(fov: int, out: Path, args):
     rule(f"RUN  FOV {fov}")
     meta_p = out / "roi_meta.json"
     if not meta_p.exists():
-        raise SystemExit(f"{meta_p} 不存在 —— 先跑 --stage prep（日志见 {out}/logs）")
+        raise SystemExit(f"{meta_p} not found - run --stage prep first (logs: {out}/logs)")
     meta = json.loads(meta_p.read_text())
     tiles = pd.read_csv(out / "input" / "tile_metadata.tsv", sep="\t")
 

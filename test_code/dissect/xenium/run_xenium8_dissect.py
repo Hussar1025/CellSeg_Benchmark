@@ -12,7 +12,7 @@ import sys
 import run_xenium_benchmark_dissect as benchmark
 
 
-DATASET = Path("/data/qiuyijia/dataset/xenium_8")
+DATASET = Path("yourpath/dataset/xenium_8")
 benchmark.DATASETS["xenium_8"] = benchmark.DatasetSpec(
     name="xenium_8",
     image=DATASET / "morphology_focus/ch0000_dapi.ome.tif",
@@ -20,7 +20,7 @@ benchmark.DATASETS["xenium_8"] = benchmark.DatasetSpec(
     roi_size=(10000, 10000),
     description="centred 10,000 x 10,000 px ROI",
 )
-benchmark.DEFAULT_OUTPUT_ROOT = Path("/data/qiuyijia/DISSECT")
+benchmark.DEFAULT_OUTPUT_ROOT = Path("yourpath/DISSECT")
 
 
 if __name__ == "__main__":

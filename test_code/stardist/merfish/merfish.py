@@ -1,60 +1,61 @@
 """
 merfish_run_stardist.py
 =======================
-MERFISH (Vizgen 小鼠脑 Receptor Map) 上的 StarDist 分割 + benchmark。
-结构与 merfish_seg_benchmark.py（Cellpose 那份）保持一致，可独立运行，
-也可只产出 label mask 后丢进 merfish_seg_benchmark.py 的 EXTRA_METHOD_MASKS。
+StarDist segmentation + benchmark on MERFISH (Vizgen mouse brain Receptor Map).
+Structure matches merfish_seg_benchmark.py (the Cellpose one), runs standalone, and can also just produce
+label masks to feed into merfish_seg_benchmark.py's EXTRA_METHOD_MASKS.
 
-⚠ 重要：StarDist 是「细胞核」分割模型（2D_versatile_fluo = 荧光核/DAPI）。
-   官方 Vizgen 边界是「全细胞」。直接拿核 mask 比全细胞 GT，IoU/PQ 会系统性偏低、
-   对 StarDist 不公平。因此本脚本默认在核分割后做一步「核 -> 全细胞」扩张
-   （用 polyT 做 watershed，或固定距离 expand_labels），使其与官方全细胞边界可比。
-   若你想做「核层面」对比（或另建核 GT），把 EXPANSION_METHOD 设为 "none" 即可。
+Important: StarDist is a "nucleus" segmentation model (2D_versatile_fluo = fluorescence nucleus / DAPI).
+   Official Vizgen boundaries are "whole cell". Comparing nucleus masks directly against whole-cell GT
+   will systematically lower IoU/PQ and is unfair to StarDist. So by default this script adds a
+   "nucleus -> whole cell" expansion step after nuclear segmentation (watershed on polyT, or fixed-distance
+   expand_labels) to make it comparable with official whole-cell boundaries.
+   To do a "nucleus-level" comparison (or build a nucleus GT), set EXPANSION_METHOD to "none".
 
-三个阶段（可各自开关）：
-  Stage 1  官方边界 hdf5 -> GT label mask（复用 merfish_seg_utils，与 Cellpose 那份完全同款）
-  Stage 2  StarDist 在 DAPI 上分核 -> 可选扩张成全细胞 -> 预测 label mask
-  Stage 3  复用 test.py 指标，把 StarDist 预测与官方 GT 对比，输出 CSV
+Three stages (each switchable):
+  Stage 1  official boundaries hdf5 -> GT label mask (reuses merfish_seg_utils, identical to the Cellpose one)
+  Stage 2  StarDist segments nuclei on DAPI -> optional expansion to whole cells -> predicted label mask
+  Stage 3  reuse test.py metrics, compare StarDist prediction against official GT, write CSV
 
-依赖：stardist tensorflow(或 tensorflow-cpu) csbdeep  以及  h5py tifffile scikit-image scipy pandas
-     首次运行 from_pretrained 会联网下载预训练模型。
+Dependencies: stardist tensorflow(or tensorflow-cpu) csbdeep  plus  h5py tifffile scikit-image scipy pandas
+     First run of from_pretrained downloads the pretrained model.
 
-用法：先设置下方 SEG_MODULES_DIR（若三个文件不在同一目录），再改 CONFIG 路径参数，
-     然后  python merfish_run_stardist.py
+Usage: set SEG_MODULES_DIR below (if the three files are not in the same directory), then edit the CONFIG
+     path params, then run  python merfish_run_stardist.py
 """
 
 import argparse
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"  # 按需分配显存，避免一次性占满
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"  # allocate GPU memory on demand, avoid grabbing it all at once
 
 import sys
 import time
 import psutil
 import resource
 
-# 配置 TensorFlow GPU 内存管理（必须在 import tensorflow 之前）
+# Configure TensorFlow GPU memory management (must be before importing tensorflow)
 import tensorflow as tf
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        print(f"[TF] 已配置 {len(gpus)} 个 GPU 按需增长显存")
+        print(f"[TF] configured {len(gpus)} GPU(s) with memory growth")
     except RuntimeError as e:
-        print(f"[TF] GPU 配置警告: {e}")
+        print(f"[TF] GPU config warning: {e}")
 
-# ======================= 依赖模块路径（跨目录时必填）=======================
-# merfish_seg_utils.py 与 merfish_seg_benchmark.py 若与本文件不在同一目录，
-# 把它们所在的目录填到 SEG_MODULES_DIR。三种方式任选其一（按顺序生效）：
-#   1) 直接改下面这行
-#   2) 设环境变量 MERFISH_SEG_MODULES_DIR
-#   3) 三个文件在同一目录 -> 留空即可（自动用本文件所在目录）
-SEG_MODULES_DIR = "/data/qiuyijia/cellpose"
+# ======================= dependency module path (required when cross-directory) =======================
+# If merfish_seg_utils.py and merfish_seg_benchmark.py are not in this file's directory,
+# put their directory into SEG_MODULES_DIR. Any one of three ways works (first match wins):
+#   1) edit the line below directly
+#   2) set environment variable MERFISH_SEG_MODULES_DIR
+#   3) all three files in the same directory -> leave empty (auto use this file's directory)
+SEG_MODULES_DIR = "yourpath/cellpose"
 
 try:
     _this_dir = os.path.dirname(os.path.abspath(__file__))
-except NameError:               # 交互式/exec 环境下 __file__ 可能不存在
+except NameError:               # __file__ may not exist in interactive/exec environments
     _this_dir = os.getcwd()
 
 for _d in (SEG_MODULES_DIR, os.environ.get("MERFISH_SEG_MODULES_DIR", ""), _this_dir):
@@ -68,7 +69,7 @@ import tifffile
 
 
 def peak_mem_mb():
-    """进程历史 RSS 峰值（MB），而非收尾时的瞬时 RSS。"""
+    """Peak historical RSS of the process (MB), not the instantaneous RSS at the end."""
     ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return ru / 1024.0 if sys.platform != "darwin" else ru / 1024.0 / 1024.0
 
@@ -77,12 +78,12 @@ _GPU_PEAK_MB = 0.0
 
 
 def gpu_status():
-    """返回 StarDist/TensorFlow GPU 状态及当前/峰值显存（MB）。"""
+    """Return StarDist/TensorFlow GPU status and current/peak GPU memory (MB)."""
     global _GPU_PEAK_MB
     requested = bool(USE_GPU)
     gpus = tf.config.list_physical_devices("GPU")
     if not gpus:
-        return f"请求使用GPU={requested}, GPU可用=False, 实际使用=False, 显存=N/A"
+        return f"requested_use_gpu={requested}, gpu_available=False, actually_used=False, gpu_memory=N/A"
     try:
         info = tf.config.experimental.get_memory_info("GPU:0")
         current = float(info.get("current", 0.0)) / 1024**2
@@ -90,11 +91,11 @@ def gpu_status():
         _GPU_PEAK_MB = max(_GPU_PEAK_MB, peak)
         details = tf.config.experimental.get_device_details(gpus[0])
         name = details.get("device_name") or getattr(gpus[0], "name", "GPU:0")
-        return (f"请求使用GPU={requested}, GPU可用=True, 实际使用={requested}, "
-                f"设备={name}, 显存当前={current:.1f} MB, 显存峰值={_GPU_PEAK_MB:.1f} MB")
+        return (f"requested_use_gpu={requested}, gpu_available=True, actually_used={requested}, "
+                f"device={name}, gpu_memory_current={current:.1f} MB, gpu_memory_peak={_GPU_PEAK_MB:.1f} MB")
     except Exception:
-        return (f"请求使用GPU={requested}, GPU可用=True, 实际使用={requested}, "
-                f"设备数={len(gpus)}, 显存读取失败(当前 TensorFlow 不支持 memory_info)")
+        return (f"requested_use_gpu={requested}, gpu_available=True, actually_used={requested}, "
+                f"device_count={len(gpus)}, gpu_memory_read_failed(current TensorFlow lacks memory_info)")
 
 from skimage.filters import gaussian, threshold_otsu
 from skimage.segmentation import watershed, expand_labels
@@ -102,83 +103,83 @@ from scipy.ndimage import distance_transform_edt
 
 try:
     import merfish_utils as U
-    import merfish_seg_bench as BM   # 复用 load_metrics / evaluate_against_reference / run_benchmark
+    import merfish_seg_bench as BM   # reuse load_metrics / evaluate_against_reference / run_benchmark
 except ModuleNotFoundError as _e:
     raise ModuleNotFoundError(
-        f"找不到模块 {_e.name}。请把本文件顶部的 SEG_MODULES_DIR 设为存放 "
-        f"merfish_seg_utils.py 与 merfish_seg_benchmark.py 的目录，"
-        f"或设置环境变量 MERFISH_SEG_MODULES_DIR。"
+        f"module not found {_e.name}. Set SEG_MODULES_DIR at the top of this file to the directory "
+        f"holding merfish_seg_utils.py and merfish_seg_benchmark.py, "
+        f"or set the MERFISH_SEG_MODULES_DIR environment variable."
     ) from _e
 
 
 # ===========================================================================
 # ============================= CONFIG ======================================
 # ===========================================================================
-DATA_DIR = "/data/qiuyijia/dataset/merfish_prostate2"   # Liver1 数据集根目录
+DATA_DIR = "yourpath/dataset/merfish_prostate2"   # Liver1 dataset root dir
 
 DAPI_TIF   = os.path.join(DATA_DIR, "images",
     "mosaic_DAPI_z3.tif")
 # POLYT_TIF  = os.path.join(DATA_DIR, "images",
-#     "mosaic_PolyT_z3.tif")  # 原用polyT作为膜通道，但polyT是胞质信号，不如真正的膜染色
+#     "mosaic_PolyT_z3.tif")  # originally used polyT as membrane channel, but polyT is a cytoplasmic signal, weaker than a true membrane stain
 POLYT_TIF  = os.path.join(DATA_DIR, "images",
-    "mosaic_Cellbound1_z3.tif")  # 改用真正的膜染色Cellbound1，Mesmer在清晰膜信号上表现更好
+    "mosaic_Cellbound1_z3.tif")  # switch to true membrane stain Cellbound1; Mesmer performs better on clear membrane signal
 TRANSFORM_CSV = os.path.join(DATA_DIR, "images",
     "micron_to_mosaic_pixel_transform.csv")
 CELL_METADATA_CSV = os.path.join(DATA_DIR,
     "cell_metadata.csv")
 CELL_BOUNDARIES_DIR = os.path.join(DATA_DIR, "cell_boundaries")
 
-# 你的 test.py 路径（指标从这里加载，保证口径一致）
-TEST_PY_PATH = "/data/qiuyijia/eval/test.py"
+# your test.py path (metrics loaded from here, keeping the same scope)
+TEST_PY_PATH = "yourpath/eval/test.py"
 
-# 输出目录
-OUT_DIR = "/data/qiuyijia/stardist/merfish_prostate2"
+# output directory
+OUT_DIR = "yourpath/stardist/merfish_prostate2"
 
-# ---- ROI：pixel (x0,y0,x1,y1)。None=整幅(极耗内存)。留空则取中心 ROI_SIZE 窗口 ----
-# 注意：必须与 Cellpose 那次用的 ROI 完全一致，两方法才可直接同表比较！
+# ---- ROI: pixel (x0,y0,x1,y1). None=whole image (very memory-heavy). Empty takes a centered ROI_SIZE window ----
+# Note: must match the ROI used by the Cellpose run exactly for the two methods to share one table.
 ROI = None
 ROI_SIZE = 10000
-Z_INDEX = 3                                  # 官方边界取哪层 z，需与图像一致（本数据 z3）
+Z_INDEX = 3                                  # which z layer the official boundaries use; must match the image (z3 for this data)
 
-# ---- StarDist 配置 ----
-STARDIST_MODEL = "2D_versatile_fluo"         # 荧光核模型；DAPI 用它
-NORM_LOW, NORM_HIGH = 1.0, 99.8              # csbdeep 百分位归一化区间
-PROB_THRESH = None                           # None=用模型自带最优阈值
-NMS_THRESH  = None                           # None=用模型自带最优阈值
-TILE_BLOCK = 1024                            # 分块边长(像素)，从 2048 降至 1024 进一步降低显存峰值
-USE_GPU = True                               # 仅提示；实际由 TensorFlow 环境决定
+# ---- StarDist config ----
+STARDIST_MODEL = "2D_versatile_fluo"         # fluorescence nucleus model; use it for DAPI
+NORM_LOW, NORM_HIGH = 1.0, 99.8              # csbdeep percentile normalization range
+PROB_THRESH = None                           # None=use the model's own optimal threshold
+NMS_THRESH  = None                           # None=use the model's own optimal threshold
+TILE_BLOCK = 1024                            # tile edge length (px); lowered from 2048 to 1024 to further reduce peak GPU memory
+USE_GPU = True                               # hint only; actually decided by the TensorFlow environment
 
-# ---- 核 -> 全细胞 扩张（为与官方“全细胞”GT 可比）----
+# ---- nucleus -> whole-cell expansion (to be comparable with official "whole-cell" GT) ----
 EXPANSION_METHOD = "expand_labels"         # "watershed_polyt" | "expand_labels" | "none"
-EXPAND_DISTANCE_PX = 15                       # expand_labels 用：核向外扩张的最大距离(像素)
-MAX_EXPANSION_PX = 30                         # watershed 用：限制单个细胞相对核最多外扩的距离；None=不限制
-POLYT_SMOOTH_SIGMA = 2.0                      # watershed 前对 polyT 高斯平滑
+EXPAND_DISTANCE_PX = 15                       # expand_labels: max distance (px) a nucleus expands outward
+MAX_EXPANSION_PX = 30                         # watershed: limit how far a single cell may expand beyond its nucleus; None=unlimited
+POLYT_SMOOTH_SIGMA = 2.0                      # Gaussian smoothing on polyT before watershed
 
-# ---- benchmark 参数（与 test.py 对齐）----
+# ---- benchmark params (aligned with test.py) ----
 BOUNDARY_MODE = "thick"
 IOU_THRESHOLD = 0.5
 
-# ---- 阶段开关 ----
-DO_BUILD_GT     = True   # 若已由 Cellpose 那份在同一 OUT_DIR/同一 ROI 生成过 GT，可设 False 直接复用
+# ---- stage switches ----
+DO_BUILD_GT     = True   # if the Cellpose run already generated GT in the same OUT_DIR/ROI, set False to reuse it
 DO_RUN_STARDIST = True
 DO_BENCHMARK    = True
 # ===========================================================================
 
 # --------------------------------------------------------------------------- #
-# Stage 2a: StarDist 核分割
+# Stage 2a: StarDist nuclear segmentation
 # --------------------------------------------------------------------------- #
 def run_stardist_nuclei(roi):
-    """StarDist 在 DAPI(ROI) 上分核，返回 (H,W) int32 label（核）。"""
+    """StarDist segments nuclei on DAPI(ROI), returns (H,W) int32 label (nuclei)."""
     from stardist.models import StarDist2D
     from csbdeep.utils import normalize
 
     dapi = U.read_tif_crop(DAPI_TIF, roi).astype(np.float32)
     img = normalize(dapi, NORM_LOW, NORM_HIGH)
-    print(f"[StarDist] DAPI 输入 shape={img.shape}, model={STARDIST_MODEL}")
+    print(f"[StarDist] DAPI input shape={img.shape}, model={STARDIST_MODEL}")
 
     model = StarDist2D.from_pretrained(STARDIST_MODEL)
 
-    # 依图像大小自动分块，防止大 ROI 爆显存
+    # auto tile by image size to avoid OOM on large ROIs
     H, W = img.shape[:2]
     n_tiles = (max(1, int(np.ceil(H / TILE_BLOCK))),
                max(1, int(np.ceil(W / TILE_BLOCK))))
@@ -191,22 +192,22 @@ def run_stardist_nuclei(roi):
         n_tiles=n_tiles,
     )
     labels = np.asarray(labels).astype(np.int32)
-    print(f"[StarDist] 核数量={len(np.unique(labels)) - 1}")
+    print(f"[StarDist] nuclei count={len(np.unique(labels)) - 1}")
     return labels
 
 
 # --------------------------------------------------------------------------- #
-# Stage 2b: 核 -> 全细胞 扩张
+# Stage 2b: nucleus -> whole-cell expansion
 # --------------------------------------------------------------------------- #
 def expand_nuclei_to_cells(nuclei, roi):
     """
-    把核 label 扩张成全细胞 label（保持每个细胞沿用其核的 id）。
-      watershed_polyt : 在 polyT 强度上做分水岭，核为种子，前景由 polyT 阈值决定（更贴近真实胞质）
-      expand_labels   : 不依赖 polyT，按固定距离向外均匀扩张（无重叠）
-      none            : 不扩张，直接返回核
+    Expand nucleus labels into whole-cell labels (each cell keeps its nucleus id).
+      watershed_polyt : watershed on polyT intensity, nuclei as seeds, foreground from polyT threshold (closer to real cytoplasm)
+      expand_labels   : no polyT dependency, uniform outward expansion by fixed distance (no overlap)
+      none            : no expansion, return nuclei directly
     """
     if EXPANSION_METHOD == "none":
-        print("[Expand] 不扩张，输出核 mask（注意：与全细胞 GT 对比会偏低）")
+        print("[Expand] no expansion, output nucleus mask (note: comparing against whole-cell GT will be lower)")
         return nuclei
 
     if EXPANSION_METHOD == "expand_labels":
@@ -215,12 +216,12 @@ def expand_nuclei_to_cells(nuclei, roi):
 
     if EXPANSION_METHOD == "watershed_polyt":
         if not os.path.exists(POLYT_TIF):
-            print("[Expand] 未找到 polyT，回退 expand_labels")
+            print("[Expand] polyT not found, falling back to expand_labels")
             return expand_labels(nuclei, distance=EXPAND_DISTANCE_PX).astype(np.int32)
 
         polyt = U.read_tif_crop(POLYT_TIF, roi).astype(np.float32)
         if polyt.shape != nuclei.shape:
-            raise ValueError(f"polyT 与核 mask 尺寸不一致: {polyt.shape} vs {nuclei.shape}")
+            raise ValueError(f"polyT and nucleus mask sizes differ: {polyt.shape} vs {nuclei.shape}")
 
         pol = gaussian(polyt, sigma=POLYT_SMOOTH_SIGMA, preserve_range=True)
         try:
@@ -228,23 +229,23 @@ def expand_nuclei_to_cells(nuclei, roi):
         except Exception:
             thr = float(np.percentile(pol, 50))
         fg = pol > thr
-        fg |= nuclei > 0                       # 核一定算前景
+        fg |= nuclei > 0                       # nuclei always count as foreground
 
-        # 可选：限制相对核的最大外扩距离，避免个别细胞在 polyT 上“漫延”过大
+        # optional: limit max outward distance from the nucleus, to avoid individual cells "spreading" too far on polyT
         if MAX_EXPANSION_PX is not None:
             dist_to_nuc = distance_transform_edt(nuclei == 0)
             fg &= dist_to_nuc <= MAX_EXPANSION_PX
 
         cells = watershed(-pol, markers=nuclei, mask=fg)
         cells = np.asarray(cells).astype(np.int32)
-        print(f"[Expand] watershed_polyt 完成，细胞数={len(np.unique(cells)) - 1}")
+        print(f"[Expand] watershed_polyt done, cell count={len(np.unique(cells)) - 1}")
         return cells
 
-    raise ValueError(f"未知 EXPANSION_METHOD: {EXPANSION_METHOD}")
+    raise ValueError(f"unknown EXPANSION_METHOD: {EXPANSION_METHOD}")
 
 
 def segment(roi, out_tif):
-    """完整分割：StarDist 分核 -> 可选扩张 -> 存 label tif。"""
+    """Full segmentation: StarDist nuclei -> optional expansion -> save label tif."""
     nuclei = run_stardist_nuclei(roi)
     cells = expand_nuclei_to_cells(nuclei, roi)
     U.save_label_tif(cells, out_tif)
@@ -252,35 +253,35 @@ def segment(roi, out_tif):
 
 
 # --------------------------------------------------------------------------- #
-# main：与 Cellpose 那份同款三阶段
+# main: same three-stage flow as the Cellpose version
 # --------------------------------------------------------------------------- #
 def main():
     start_time = time.time()
     process = psutil.Process()
     initial_memory = process.memory_info().rss / 1024 / 1024  # MB
     print(f"\n{'='*80}")
-    print(f"[Performance] 开始运行 StarDist - 初始内存: {initial_memory:.2f} MB")
+    print(f"[Performance] start running StarDist - initial memory: {initial_memory:.2f} MB")
     print(f"[GPU] {gpu_status()}")
     print(f"{'='*80}\n")
 
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # 让复用的 BM.run_benchmark 用本脚本的指标参数
+    # let the reused BM.run_benchmark use this script's metric params
     BM.BOUNDARY_MODE = BOUNDARY_MODE
     BM.IOU_THRESHOLD = IOU_THRESHOLD
 
-    # 确定 ROI（务必与其它方法一致）
+    # determine ROI (must be consistent with other methods)
     roi = ROI
     if roi is None and ROI_SIZE is not None:
         roi = U.make_center_roi(DAPI_TIF, size=ROI_SIZE)
-        print(f"[ROI] 自动取中心窗口: {roi}")
+        print(f"[ROI] auto take centered window: {roi}")
     elif roi is None:
-        print("[ROI] 整幅评测（注意内存占用）")
+        print("[ROI] whole-image eval (mind memory usage)")
 
     gt_tif      = os.path.join(OUT_DIR, "gt_vizgen_official_roi.tif")
     pred_tif    = os.path.join(OUT_DIR, "pred_stardist_roi.tif")
 
-    # -------- Stage 1: GT（可复用 Cellpose 那次生成的同一份）--------
+    # -------- Stage 1: GT (can reuse the same one generated by the Cellpose run) --------
     stage1_start = time.time()
     if DO_BUILD_GT or not os.path.exists(gt_tif):
         gt_mask, id_map = U.build_reference_label_mask(
@@ -296,24 +297,24 @@ def main():
         ).to_csv(os.path.join(OUT_DIR, "gt_label_to_cellid.csv"), index=False)
     else:
         gt_mask = np.squeeze(tifffile.imread(gt_tif)).astype(np.int32)
-        print(f"[GT] 复用已有 GT: {gt_tif} shape={gt_mask.shape}")
+        print(f"[GT] reuse existing GT: {gt_tif} shape={gt_mask.shape}")
 
     stage1_time = time.time() - stage1_start
     stage1_memory = process.memory_info().rss / 1024 / 1024
-    print(f"[Performance] Stage 1 完成 - 用时: {stage1_time:.2f}s, 当前内存: {stage1_memory:.2f} MB, "
-          f"峰值: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
+    print(f"[Performance] Stage 1 done - time: {stage1_time:.2f}s, current memory: {stage1_memory:.2f} MB, "
+          f"peak: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
 
-    # -------- Stage 2: StarDist 分割 --------
+    # -------- Stage 2: StarDist segmentation --------
     stage2_start = time.time()
     if DO_RUN_STARDIST:
         segment(roi, pred_tif)
 
     stage2_time = time.time() - stage2_start
     stage2_memory = process.memory_info().rss / 1024 / 1024
-    print(f"[Performance] Stage 2 完成 - 用时: {stage2_time:.2f}s, 当前内存: {stage2_memory:.2f} MB, "
-          f"峰值: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
+    print(f"[Performance] Stage 2 done - time: {stage2_time:.2f}s, current memory: {stage2_memory:.2f} MB, "
+          f"peak: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
 
-    # -------- Stage 3: benchmark（复用 test.py 指标）--------
+    # -------- Stage 3: benchmark (reuse test.py metrics) --------
     stage3_start = time.time()
     if DO_BENCHMARK and os.path.exists(pred_tif):
         metrics_mod = BM.load_metrics(TEST_PY_PATH)
@@ -324,26 +325,26 @@ def main():
 
     stage3_time = time.time() - stage3_start
     stage3_memory = process.memory_info().rss / 1024 / 1024
-    print(f"[Performance] Stage 3 完成 - 用时: {stage3_time:.2f}s, 当前内存: {stage3_memory:.2f} MB, "
-          f"峰值: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
+    print(f"[Performance] Stage 3 done - time: {stage3_time:.2f}s, current memory: {stage3_memory:.2f} MB, "
+          f"peak: {peak_mem_mb():.2f} MB, GPU: {gpu_status()}")
 
-    # 总体统计
+    # overall stats
     total_time = time.time() - start_time
     peak_memory = peak_mem_mb()
     memory_increase = peak_memory - initial_memory
 
     print(f"\n{'='*80}")
-    print(f"[Performance] StarDist 性能统计总结")
+    print(f"[Performance] StarDist performance summary")
     print(f"{'='*80}")
-    print(f"总运行时间: {total_time:.2f}s ({total_time/60:.2f}min)")
-    print(f"初始内存: {initial_memory:.2f} MB")
-    print(f"结束内存: {stage3_memory:.2f} MB")
-    print(f"峰值内存: {peak_memory:.2f} MB")
-    print(f"内存增量: {memory_increase:.2f} MB")
-    print(f"GPU统计: {gpu_status()}")
-    print(f"\n各阶段用时:")
-    print(f"  Stage 1 (GT构建): {stage1_time:.2f}s")
-    print(f"  Stage 2 (StarDist分割): {stage2_time:.2f}s")
+    print(f"total runtime: {total_time:.2f}s ({total_time/60:.2f}min)")
+    print(f"initial memory: {initial_memory:.2f} MB")
+    print(f"final memory: {stage3_memory:.2f} MB")
+    print(f"peak memory: {peak_memory:.2f} MB")
+    print(f"memory increase: {memory_increase:.2f} MB")
+    print(f"GPU stats: {gpu_status()}")
+    print(f"\nper-stage times:")
+    print(f"  Stage 1 (GT build): {stage1_time:.2f}s")
+    print(f"  Stage 2 (StarDist segmentation): {stage2_time:.2f}s")
     print(f"  Stage 3 (Benchmark): {stage3_time:.2f}s")
     print(f"{'='*80}\n")
 

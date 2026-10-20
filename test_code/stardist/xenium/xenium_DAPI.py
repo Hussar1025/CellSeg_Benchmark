@@ -1,42 +1,49 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-StarDist × Xenium 细胞分割 benchmark —— 只测 xenium_breast
-=========================================================
+StarDist x Xenium cell segmentation benchmark -- runs only on xenium_breast
+==========================================================================
 
-结构与 Cellpose / CelloType / Mesmer / CellSAM 版一致，但**只在 xenium_breast 上跑**：
-  GT = 官方 cell_boundaries.parquet 栅格化（默认只跑居中 5000×5000 ROI）。
-读形态学图 → StarDist 出核 → skimage.expand_labels 把核膨胀 EXPAND_PX 像素近似整细胞
-  → 构建 GT → 形状对齐 → 调 test.py 指标 → 写入 /data/qiuyijia/stardist/xenium_breast。
+Same structure as the Cellpose / CelloType / Mesmer / CellSAM versions, but runs **only on xenium_breast**:
+  GT = official cell_boundaries.parquet rasterized (by default only the centered 5000x5000 ROI).
+Read morphology image -> StarDist nuclei -> skimage.expand_labels dilates nuclei by EXPAND_PX px to approximate
+whole cells -> build GT -> align shapes -> call test.py metrics -> write to yourpath/stardist/xenium_breast.
 
-StarDist 要点（据官方 https://github.com/stardist/stardist 与 squidpy 示例）
----------------------------------------------------------------------------
-- 安装：pip install stardist csbdeep （TensorFlow 后端；GPU 强烈推荐）
-- API：from stardist.models import StarDist2D; from csbdeep.utils import normalize
-       model = StarDist2D.from_pretrained('2D_versatile_fluo')   # 荧光核模型，轴 'YX'
-       img = normalize(dapi, 1, 99.8, axis=(0,1))                # 必须归一化
-       labels, _ = model.predict_instances(img, n_tiles=...)      # 大图分块；返回 2D int label
-- 预训练模型：'2D_versatile_fluo'(荧光核)、'2D_versatile_he'(H&E核)、'2D_paper_dsb2018'、'2D_demo'。
-  Xenium 是 DAPI 荧光 → 用 '2D_versatile_fluo'。默认阈值 prob≈0.479, nms=0.3。
+StarDist notes (per official https://github.com/stardist/stardist and squidpy examples)
+--------------------------------------------------------------------------------------
+- Install: pip install stardist csbdeep (TensorFlow backend; GPU strongly recommended)
+- API: from stardist.models import StarDist2D; from csbdeep.utils import normalize
+       model = StarDist2D.from_pretrained('2D_versatile_fluo')   # fluorescence nucleus model, axes 'YX'
+       img = normalize(dapi, 1, 99.8, axis=(0,1))                # must normalize
+       labels, _ = model.predict_instances(img, n_tiles=...)      # tile large images; returns 2D int label
+- Pretrained models: '2D_versatile_fluo'(fluorescence nuclei), '2D_versatile_he'(H&E nuclei),
+  '2D_paper_dsb2018', '2D_demo'. Xenium is DAPI fluorescence -> use '2D_versatile_fluo'.
+  Default thresholds prob~0.479, nms=0.3.
 
-核→整细胞的膨胀 与 公平性说明
-------------------------------
-StarDist 只分割**细胞核**（吃 DAPI 单通道）。本脚本按标准做法把核用 skimage.segmentation.expand_labels
-向外膨胀 EXPAND_PX 像素近似整细胞，再对全细胞 GT (cell_boundaries.parquet) 评分。这是 Xenium/squidpy
-等常用的「无膜时以核外扩定义细胞」的思路，写清楚即公平，但请注意：
-  1) EXPAND_PX 是**超参**——请固定为有依据的值（建议用 EXPAND_UM 按 pixel_size 换算成 ~几 µm），
-     切勿在评测集上扫它挑最高分；要透明可把整条 expand 扫描曲线一并报出。
-  2) method 列会写成 "StarDist(+Npx)" 并单列 expand_px——这是「核+固定膨胀」pipeline，不是原始 StarDist。
-  3) 口径差异：膜法(Cellpose/CelloType/Mesmer/CellSAM)用真实膜信号勾勒**不规则**细胞，膨胀假设细胞
-     **各向同性≈圆、尺寸均一**——这是方法差异（非不公平），解读数字时需知晓。
-把 EXPAND_PX 设为 0 且 boundaries 改成 "nucleus_boundaries.parquet"，即回到纯核分割评测。
+Nucleus -> whole-cell expansion and fairness note
+-------------------------------------------------
+StarDist segments only **nuclei** (takes the DAPI single channel). Following standard practice, this script
+dilates nuclei outward by EXPAND_PX pixels via skimage.segmentation.expand_labels to approximate whole cells,
+then scores against the whole-cell GT (cell_boundaries.parquet). This is the common "define cells by outward
+nucleus expansion when no membrane is available" approach used by Xenium/squidpy. Stating it clearly keeps it
+fair, but note:
+  1) EXPAND_PX is a **hyperparameter** -- fix it to a justified value (prefer EXPAND_UM converted from
+     pixel_size to ~a few um); never sweep it on the eval set to pick the best score; for transparency
+     report the whole expand sweep curve.
+  2) The method column is written as "StarDist(+Npx)" with a separate expand_px column -- this is a
+     "nucleus + fixed expansion" pipeline, not the raw StarDist.
+  3) Scope difference: membrane methods (Cellpose/CelloType/Mesmer/CellSAM) use real membrane signal to
+     trace **irregular** cells, while expansion assumes cells are **isotropic ~round and uniform in size** --
+     this is a method difference (not unfair), keep it in mind when interpreting the numbers.
+Set EXPAND_PX to 0 and boundaries to "nucleus_boundaries.parquet" to go back to pure nuclear segmentation eval.
 
-语义说明（与前几版相同）
-------------------------
-test.py 的 evaluate_single_mask_against_cellpose(cellpose_gt_mask, pred_mask) 把第一个槽当 reference。
-本 benchmark 里 **StarDist 是被测方法**：真值放第一个槽、StarDist 预测放第二个槽。
+Semantics note (same as previous versions)
+------------------------------------------
+test.py's evaluate_single_mask_against_cellpose(cellpose_gt_mask, pred_mask) treats the first slot as reference.
+In this benchmark **StarDist is the method under test**: ground truth goes in the first slot, StarDist
+prediction in the second.
 
-依赖：numpy, pandas, scikit-image, scipy, tifffile, pyarrow, stardist, csbdeep(+tensorflow)
+Dependencies: numpy, pandas, scikit-image, scipy, tifffile, pyarrow, stardist, csbdeep(+tensorflow)
 """
 
 import os
@@ -54,9 +61,9 @@ from skimage.draw import polygon as sk_polygon
 
 
 # ---------------------------------------------------------------------------- #
-# test.py（指标实现）的位置
+# location of test.py (metric implementation)
 # ---------------------------------------------------------------------------- #
-TEST_PY_PATH = "/data/qiuyijia/eval/test.py"
+TEST_PY_PATH = "yourpath/eval/test.py"
 
 
 def _load_metrics():
@@ -73,8 +80,8 @@ def _load_metrics():
         return mod
     except ImportError as e:
         raise ImportError(
-            "找不到 test.py：请把脚本顶部的 TEST_PY_PATH 改成 test.py 的绝对路径，"
-            "或把 test.py 放到与本脚本同一目录。"
+            "test.py not found: set TEST_PY_PATH at the top of this script to the absolute path of "
+            "test.py, or place test.py in the same directory as this script."
         ) from e
 
 
@@ -82,36 +89,37 @@ metrics = _load_metrics()
 
 
 # ============================================================================ #
-# 配置区
+# Config
 # ============================================================================ #
-XENIUM_DEFAULT_PIXEL_SIZE = 0.2125  # µm/px，读不到 experiment 时的兜底值
+XENIUM_DEFAULT_PIXEL_SIZE = 0.2125  # um/px, fallback when experiment cannot be read
 
-# StarDist 全局参数
+# StarDist global params
 STARDIST = dict(
-    model_name="2D_versatile_fluo",  # 荧光核模型
-    norm_low=1.0,                    # normalize 百分位下界
-    norm_high=99.8,                  # normalize 百分位上界
-    prob_thresh=None,                # None=用模型默认(≈0.479)；调低→更多核
-    nms_thresh=None,                 # None=用模型默认(0.3)
-    n_tiles=None,                    # None=自动按显存分块；也可手填如 (4,4)
+    model_name="2D_versatile_fluo",  # fluorescence nucleus model
+    norm_low=1.0,                    # normalize percentile lower bound
+    norm_high=99.8,                  # normalize percentile upper bound
+    prob_thresh=None,                # None=model default (~0.479); lower -> more nuclei
+    nms_thresh=None,                 # None=model default (0.3)
+    n_tiles=None,                    # None=auto tile by GPU memory; or set manually e.g. (4,4)
 )
 
-# 核 → 整细胞的膨胀（skimage.segmentation.expand_labels）
-# expand_labels 是基于距离变换的 Voronoi 式膨胀：每个核向背景生长、相邻处相遇即停、
-# 互不重叠、且每个核最多扩 expand_px 像素；膨胀不改变实例数，只扩大每个实例的范围。
-EXPAND_PX = 15       # 膨胀距离(像素)。⚠超参：请固定为有依据的值，勿在评测集上调它挑高分。设 0=不膨胀
-EXPAND_UM = None     # 若非 None，用 round(EXPAND_UM / pixel_size) 覆盖 EXPAND_PX（更有依据、换分辨率也稳）
+# Nucleus -> whole-cell expansion (skimage.segmentation.expand_labels)
+# expand_labels is a distance-transform-based Voronoi-style dilation: each nucleus grows into the
+# background, stops where it meets neighbors, never overlaps, and each nucleus grows at most
+# expand_px pixels; dilation does not change the instance count, only enlarges each instance's extent.
+EXPAND_PX = 15       # dilation distance (px). Hyperparameter: fix to a justified value, do not tune on the eval set. 0 = no dilation
+EXPAND_UM = None     # if not None, overrides EXPAND_PX with round(EXPAND_UM / pixel_size) (more justified, stable across resolutions)
 
-# 通道约定：Xenium morphology_focus 通道 0 = DAPI(核)
+# Channel convention: Xenium morphology_focus channel 0 = DAPI (nucleus)
 NUCLEUS_IDX = 0
 
-PARENT_OUT = "/data/qiuyijia/stardist"
+PARENT_OUT = "yourpath/stardist"
 
 DATASETS = [
     dict(
         name="xenium_mouse_brain",
-        dataset_dir="/data/qiuyijia/dataset/xenium_mouse_brain/outs",  # 注意：路径到outs/
-        output_dir="/data/qiuyijia/stardist/xenium_mouse_brain_output",
+        dataset_dir="yourpath/dataset/xenium_mouse_brain/outs",  # note: path points to outs/
+        output_dir="yourpath/stardist/xenium_mouse_brain_output",
         gt_type="xenium_boundaries",
         boundaries="cell_boundaries.parquet",
         experiment="experiment.xenium",
@@ -127,7 +135,7 @@ IOU_THRESHOLD = 0.5
 
 
 # ---------------------------------------------------------------------------- #
-# 形态学图像读取（金字塔层 + 两种命名 + 单/多通道文件）
+# Morphology image reading (pyramid level + two naming schemes + single/multi-channel files)
 # ---------------------------------------------------------------------------- #
 def _read_level(path, pyramid_level, crop=None):
     with tifffile.TiffFile(path) as tf:
@@ -138,8 +146,8 @@ def _read_level(path, pyramid_level, crop=None):
             levels = [series]
         L = int(np.clip(pyramid_level, 0, len(levels) - 1))
         if L != pyramid_level:
-            warnings.warn(f"{os.path.basename(path)}: 只有 {len(levels)} 个金字塔层，"
-                          f"pyramid_level={pyramid_level} 被截断到 {L}")
+            warnings.warn(f"{os.path.basename(path)}: only {len(levels)} pyramid levels, "
+                          f"pyramid_level={pyramid_level} clamped to {L}")
         level = levels[L]
         if len(tf.pages) == 1:
             # One physical 2D page per Xenium channel file; SizeC is virtual.
@@ -202,20 +210,20 @@ def load_morphology_channels(dataset_dir, pyramid_level=0, read_crop=None):
             chs = _split_channels(arr)
             if len(chs) > 1:
                 chs = [np.max(np.stack(chs, 0), 0)]
-            warnings.warn(f"{dataset_dir}: 未找到 morphology_focus/，退回 {cand}（仅核通道）")
+            warnings.warn(f"{dataset_dir}: morphology_focus/ not found, falling back to {cand} (nucleus channel only)")
             return dict(channels=chs, names=[cand], factor=factor, crop_applied=read_crop is not None)
 
-    raise FileNotFoundError(f"{dataset_dir}: 找不到任何形态学 OME-TIFF")
+    raise FileNotFoundError(f"{dataset_dir}: no morphology OME-TIFF found")
 
 
 # ---------------------------------------------------------------------------- #
-# StarDist 分割（核）
+# StarDist segmentation (nuclei)
 # ---------------------------------------------------------------------------- #
 def tensorflow_gpu_memory_stats(reset_peak=False):
-    """返回 TensorFlow 可见 GPU 的显存统计（MB）。
+    """Return GPU memory stats (MB) for TensorFlow-visible GPUs.
 
-    ``peak`` 是 TensorFlow GPU allocator 从上次 reset 至今的真实高水位，
-    不依赖定时采样；无 CUDA/未被 TensorFlow 识别的 GPU 时返回空列表。
+    ``peak`` is the true high-water mark of the TensorFlow GPU allocator since the last reset,
+    not based on timed sampling; returns an empty list when there is no CUDA / TensorFlow-recognized GPU.
     """
     try:
         import tensorflow as tf
@@ -233,28 +241,28 @@ def tensorflow_gpu_memory_stats(reset_peak=False):
             ))
         return stats
     except Exception as e:
-        # 某些 CPU-only TensorFlow 或较旧的 CUDA runtime 不支持该接口；不影响分割。
-        warnings.warn(f"无法读取 TensorFlow GPU 显存统计: {e}")
+        # Some CPU-only TensorFlow or older CUDA runtimes lack this API; does not affect segmentation.
+        warnings.warn(f"cannot read TensorFlow GPU memory stats: {e}")
         return []
 
 
 def _format_gpu_memory_stats(stats):
     if not stats:
-        return "未检测到 TensorFlow 可用 GPU（本次 StarDist 使用 CPU，或当前环境不支持显存查询）"
+        return "no TensorFlow-visible GPU detected (StarDist will use CPU, or this environment lacks memory query support)"
     return "; ".join(
-        f"{s['device']} 当前={s['current_mb']:.1f} MB, 峰值={s['peak_mb']:.1f} MB"
+        f"{s['device']} current={s['current_mb']:.1f} MB, peak={s['peak_mb']:.1f} MB"
         for s in stats
     )
 
 
 def run_stardist(dapi, cfg=STARDIST):
-    """跑 StarDist（'2D_versatile_fluo' 荧光核模型），返回 int32 实例 label mask [H,W]。"""
+    """Run StarDist ('2D_versatile_fluo' fluorescence nucleus model), return int32 instance label mask [H,W]."""
     from stardist.models import StarDist2D
     from csbdeep.utils import normalize
 
-    # StarDist 经 TensorFlow 调度：此处重置计数，确保日志中的峰值只属于本次分割。
+    # StarDist runs through TensorFlow: reset counters here so the logged peak belongs only to this segmentation.
     gpu_before = tensorflow_gpu_memory_stats(reset_peak=True)
-    print(f"  [GPU] StarDist 前显存: {_format_gpu_memory_stats(gpu_before)}")
+    print(f"  [GPU] StarDist before GPU memory: {_format_gpu_memory_stats(gpu_before)}")
 
     model = StarDist2D.from_pretrained(cfg["model_name"])
     img = normalize(dapi.astype(np.float32), cfg.get("norm_low", 1.0),
@@ -263,7 +271,7 @@ def run_stardist(dapi, cfg=STARDIST):
     n_tiles = cfg.get("n_tiles")
     if n_tiles is None:
         try:
-            n_tiles = model._guess_n_tiles(img)   # 按显存自动分块
+            n_tiles = model._guess_n_tiles(img)   # auto tile by GPU memory
         except Exception:
             n_tiles = None
 
@@ -272,15 +280,16 @@ def run_stardist(dapi, cfg=STARDIST):
             img, prob_thresh=cfg.get("prob_thresh"),
             nms_thresh=cfg.get("nms_thresh"), n_tiles=n_tiles)
     finally:
-        # 推理异常时也留下截至异常点的高水位，便于排查 CUDA OOM。
+        # Keep the high-water mark up to the failure point even if inference throws, to help debug CUDA OOM.
         gpu_after = tensorflow_gpu_memory_stats()
-        print(f"  [GPU] StarDist 后显存: {_format_gpu_memory_stats(gpu_after)}")
+        print(f"  [GPU] StarDist after GPU memory: {_format_gpu_memory_stats(gpu_after)}")
     return np.asarray(labels).astype(np.int32, copy=False)
 
 
 def expand_nuclei_to_cells(nuclei, expand_px):
-    """用 skimage.segmentation.expand_labels 把核 label 向外膨胀 expand_px 像素近似整细胞。
-    各核向背景生长、相遇即停、互不重叠、每个核最多扩 expand_px；实例数不变。expand_px<=0 原样返回。"""
+    """Dilate nucleus labels outward by expand_px px via skimage.segmentation.expand_labels to approximate
+    whole cells. Each nucleus grows into the background, stops on contact, never overlaps, grows at most
+    expand_px; instance count is unchanged. expand_px<=0 returns as-is."""
     if expand_px is None or expand_px <= 0:
         return np.asarray(nuclei).astype(np.int32, copy=False)
     from skimage.segmentation import expand_labels
@@ -288,18 +297,18 @@ def expand_nuclei_to_cells(nuclei, expand_px):
 
 
 # ---------------------------------------------------------------------------- #
-# GT 构建（官方边界栅格化）
+# GT construction (official boundary rasterization)
 # ---------------------------------------------------------------------------- #
 def read_pixel_size(experiment_path, default=XENIUM_DEFAULT_PIXEL_SIZE):
-    """从 experiment.xenium（JSON）递归找 pixel_size(µm/px)。"""
+    """Recursively find pixel_size (um/px) in experiment.xenium (JSON)."""
     if not experiment_path or not os.path.exists(experiment_path):
-        warnings.warn(f"未找到 {experiment_path}，pixel_size 用默认 {default}")
+        warnings.warn(f"{experiment_path} not found, using default pixel_size {default}")
         return default
     try:
         with open(experiment_path, "r") as f:
             data = json.load(f)
     except Exception as e:
-        warnings.warn(f"读取 {experiment_path} 失败({e})，pixel_size 用默认 {default}")
+        warnings.warn(f"read {experiment_path} failed ({e}), using default pixel_size {default}")
         return default
 
     found = []
@@ -317,7 +326,7 @@ def read_pixel_size(experiment_path, default=XENIUM_DEFAULT_PIXEL_SIZE):
     _walk(data)
     if found:
         return found[0]
-    warnings.warn(f"{experiment_path} 中无 pixel_size 字段，用默认 {default}")
+    warnings.warn(f"no pixel_size field in {experiment_path}, using default {default}")
     return default
 
 
@@ -336,20 +345,20 @@ def _find_experiment(ddir, cfg):
 def _boundary_columns(df):
     cols = {c.lower(): c for c in df.columns}
     id_col = next((cols[c] for c in ("cell_id", "label_id", "label", "id") if c in cols), None)
-    # 优先使用 local 坐标（ROI 相对坐标），没有才用全局坐标
+    # Prefer local coordinates (ROI-relative); fall back to global if absent
     x_col = next((cols[c] for c in ("vertex_x_local_um", "vertex_x_local", "vertex_x", "x", "x_location", "vertex_x_um") if c in cols), None)
     y_col = next((cols[c] for c in ("vertex_y_local_um", "vertex_y_local", "vertex_y", "y", "y_location", "vertex_y_um") if c in cols), None)
     return id_col, x_col, y_col
 
 
 def rasterize_boundaries(parquet_path, out_shape, pixel_size_eff, offset=(0, 0), verbose=True):
-    """把 Xenium 边界 parquet（微米多边形）栅格化成 int32 label mask。
-    像素 = 微米 / pixel_size_eff - offset；越界部分由 skimage 自动裁掉。"""
+    """Rasterize Xenium boundary parquet (micron polygons) into an int32 label mask.
+    pixel = micron / pixel_size_eff - offset; out-of-bounds parts are clipped by skimage automatically."""
     row0, col0 = offset
     df = pd.read_parquet(parquet_path)
     id_col, x_col, y_col = _boundary_columns(df)
     if id_col is None or x_col is None or y_col is None:
-        raise ValueError(f"{parquet_path}: 无法识别列 (cell_id/vertex_x/vertex_y)，实际列={list(df.columns)}")
+        raise ValueError(f"{parquet_path}: cannot identify columns (cell_id/vertex_x/vertex_y), actual columns={list(df.columns)}")
 
     H, W = out_shape
     mask = np.zeros((H, W), dtype=np.int32)
@@ -377,19 +386,19 @@ def rasterize_boundaries(parquet_path, out_shape, pixel_size_eff, offset=(0, 0),
         if rr.size:
             mask[rr, cc] = label
         if verbose and label % 50000 == 0:
-            print(f"    栅格化 {label} 个细胞 ...")
+            print(f"    rasterized {label} cells ...")
     if verbose:
-        print(f"    栅格化完成，共 {label} 个 → mask {mask.shape}")
+        print(f"    rasterization done, {label} cells -> mask {mask.shape}")
     return mask
 
 
 # ---------------------------------------------------------------------------- #
-# 形状对齐 + 评估
+# Shape alignment + evaluation
 # ---------------------------------------------------------------------------- #
 def align_shapes(gt, pred):
     if gt.shape == pred.shape:
         return gt, pred
-    warnings.warn(f"GT{gt.shape} 与 Pred{pred.shape} 形状不一致，右下角补零对齐（请核对是否真正对齐）")
+    warnings.warn(f"GT{gt.shape} and Pred{pred.shape} shape mismatch, zero-pad at bottom-right to align (verify true alignment)")
     H = max(gt.shape[0], pred.shape[0])
     W = max(gt.shape[1], pred.shape[1])
 
@@ -402,13 +411,13 @@ def align_shapes(gt, pred):
 
 def evaluate(gt_mask, pred_mask, dataset_name, gt_source,
              boundary_mode=BOUNDARY_MODE, iou_threshold=IOU_THRESHOLD):
-    """调 test.py 指标：GT 放 reference 槽、StarDist 放 pred 槽；再改成无歧义字段名。"""
+    """Call test.py metrics: GT in reference slot, StarDist in pred slot; then rename to unambiguous field names."""
     gt_mask, pred_mask = align_shapes(gt_mask, pred_mask)
 
     raw = metrics.evaluate_single_mask_against_cellpose(
         method_name="StarDist",
-        cellpose_gt_mask=gt_mask,     # ← 真值
-        pred_mask=pred_mask,          # ← StarDist 预测
+        cellpose_gt_mask=gt_mask,     # <- ground truth
+        pred_mask=pred_mask,          # <- StarDist prediction
         boundary_mode=boundary_mode,
         iou_threshold=iou_threshold,
     )
@@ -428,7 +437,7 @@ def evaluate(gt_mask, pred_mask, dataset_name, gt_source,
 
 
 # ---------------------------------------------------------------------------- #
-# 单数据集流水线
+# Single-dataset pipeline
 # ---------------------------------------------------------------------------- #
 def _apply_crop(arr, crop):
     if crop is None:
@@ -442,54 +451,54 @@ def run_dataset(cfg):
     ddir = cfg["dataset_dir"]
     out_dir = cfg["output_dir"]
     os.makedirs(out_dir, exist_ok=True)
-    print(f"\n=== [{name}] {ddir}  →  {out_dir} ===")
+    print(f"\n=== [{name}] {ddir}  ->  {out_dir} ===")
 
-    # 1) 读形态学通道（整图）
+    # 1) read morphology channels (full image)
     morph = load_morphology_channels(ddir, pyramid_level=cfg.get("pyramid_level", 0),
                                      read_crop=cfg.get("crop"))
     factor = morph["factor"]
     channels = morph["channels"]
     Himg, Wimg = channels[0].shape
-    print(f"  通道数={len(channels)}  名称={morph['names']}  下采样因子={factor:.3f}")
+    print(f"  channels={len(channels)}  names={morph['names']}  downsample factor={factor:.3f}")
 
-    # 2) 决定裁剪窗口（显式 crop 优先，否则 crop_size 居中）
+    # 2) decide crop window (explicit crop first, otherwise centered crop_size)
     crop = cfg.get("crop")
     if crop is None and cfg.get("crop_size"):
         s = int(cfg["crop_size"])
         y0 = max((Himg - s) // 2, 0)
         x0 = max((Wimg - s) // 2, 0)
         crop = (y0, min(y0 + s, Himg), x0, min(x0 + s, Wimg))
-        print(f"  crop_size={s} → 居中裁剪 crop={crop}（整图 {Himg}×{Wimg}）")
+        print(f"  crop_size={s} -> centered crop={crop} (full image {Himg}x{Wimg})")
 
     if crop is not None and not morph.get("crop_applied"):
         channels = [_apply_crop(c, crop) for c in channels]
 
-    # StarDist 只用 DAPI(核)单通道
+    # StarDist uses only the DAPI (nucleus) single channel
     dapi = (channels[NUCLEUS_IDX] if NUCLEUS_IDX < len(channels) else channels[0])
     seg_shape = dapi.shape
-    print(f"  StarDist 输入: DAPI {dapi.shape}  model={STARDIST['model_name']}（核分割）")
+    print(f"  StarDist input: DAPI {dapi.shape}  model={STARDIST['model_name']} (nuclear segmentation)")
 
-    # 3) pixel_size（栅格化 GT 用）
+    # 3) pixel_size (for rasterizing GT)
     exp_path = _find_experiment(ddir, cfg)
     base_px = read_pixel_size(exp_path)
     px_eff = base_px * factor
-    print(f"  pixel_size={base_px} µm/px  当前层有效 pixel_size={px_eff:.4f} µm/px")
+    print(f"  pixel_size={base_px} um/px  current-level effective pixel_size={px_eff:.4f} um/px")
 
-    # 4) StarDist 分割(核) → 膨胀近似整细胞
-    print("  运行 StarDist ...")
+    # 4) StarDist segmentation (nuclei) -> expansion approximates whole cells
+    print("  running StarDist ...")
     pred_nuc = run_stardist(dapi, cfg=STARDIST)
-    print(f"  预测核数={len(metrics.get_instance_ids(pred_nuc))}  mask={pred_nuc.shape}")
+    print(f"  predicted nuclei count={len(metrics.get_instance_ids(pred_nuc))}  mask={pred_nuc.shape}")
     expand_px = EXPAND_PX
     if EXPAND_UM is not None:
         expand_px = int(round(EXPAND_UM / px_eff))
-        print(f"  按 EXPAND_UM={EXPAND_UM}µm / pixel_size={px_eff:.4f} → expand_px={expand_px}")
+        print(f"  from EXPAND_UM={EXPAND_UM}um / pixel_size={px_eff:.4f} -> expand_px={expand_px}")
     pred = expand_nuclei_to_cells(pred_nuc, expand_px)
     if expand_px and expand_px > 0:
-        print(f"  核膨胀 {expand_px}px 近似整细胞（expand_labels）→ 实例数={len(metrics.get_instance_ids(pred))}")
+        print(f"  nuclei dilated {expand_px}px to approximate whole cells (expand_labels) -> instances={len(metrics.get_instance_ids(pred))}")
     else:
-        print("  expand_px<=0：不膨胀，直接用核 mask")
+        print("  expand_px<=0: no dilation, use nucleus mask directly")
 
-    # 5) 构建 GT（官方边界栅格化，与预测同一裁剪窗口对齐）
+    # 5) build GT (official boundary rasterized, aligned to the same crop window as the prediction)
     if crop is not None:
         y0, y1, x0, x1 = crop
         gt = rasterize_boundaries(os.path.join(ddir, cfg["boundaries"]),
@@ -499,25 +508,25 @@ def run_dataset(cfg):
         gt = rasterize_boundaries(os.path.join(ddir, cfg["boundaries"]),
                                   out_shape=seg_shape, pixel_size_eff=px_eff)
     gt_source = os.path.splitext(cfg["boundaries"])[0]  # cell_boundaries / nucleus_boundaries
-    print(f"  GT 个数={len(metrics.get_instance_ids(gt))}  来源={gt_source}")
+    print(f"  GT count={len(metrics.get_instance_ids(gt))}  source={gt_source}")
     if gt_source.startswith("cell") and (not expand_px or expand_px <= 0):
-        print("  ⚠ 未膨胀却对全细胞 GT：核比整细胞小、覆盖会偏低；"
-              "设 EXPAND_PX>0 膨胀近似整细胞，或把 boundaries 改成 nucleus_boundaries.parquet 做核评测")
+        print("  warning: no dilation but whole-cell GT: nuclei are smaller than whole cells, coverage will be low; "
+              "set EXPAND_PX>0 to approximate whole cells, or set boundaries to nucleus_boundaries.parquet for nuclear eval")
 
-    # 6) 落盘 mask（int32 tif，兼容 test.py 的 read_tif_mask）
+    # 6) save masks (int32 tif, compatible with test.py's read_tif_mask)
     pred_path = os.path.join(out_dir, f"{name}_stardist_pred.tif")
     gt_path = os.path.join(out_dir, f"{name}_gt.tif")
     tifffile.imwrite(pred_path, pred)
     tifffile.imwrite(gt_path, gt)
-    print(f"  已保存 {pred_path} / {gt_path}")
+    print(f"  Saved {pred_path} / {gt_path}")
 
-    # 7) 指标 + 本数据集单独 CSV
+    # 7) metrics + per-dataset CSV
     result = evaluate(gt, pred, dataset_name=name, gt_source=gt_source)
     result["method"] = f"StarDist(+{expand_px}px)" if (expand_px and expand_px > 0) else "StarDist(nuclei)"
     result["expand_px"] = int(expand_px or 0)
     per_csv = os.path.join(out_dir, f"{name}_stardist_metrics.csv")
     pd.DataFrame([result]).to_csv(per_csv, index=False)
-    print(f"  指标已写入 {per_csv}")
+    print(f"  metrics written to {per_csv}")
     return result
 
 
@@ -529,11 +538,11 @@ def main():
             rows.append(run_dataset(cfg))
         except Exception as e:
             import traceback
-            print(f"[ERROR] 数据集 {cfg['name']} 失败: {e}")
+            print(f"[ERROR] dataset {cfg['name']} failed: {e}")
             traceback.print_exc()
 
     if not rows:
-        print("没有成功的数据集。")
+        print("no successful datasets.")
         return
 
     df = pd.DataFrame(rows)
@@ -541,19 +550,19 @@ def main():
     df.to_csv(combined, index=False)
 
     pd.set_option("display.max_columns", None, "display.width", 220)
-    print("\n================ 汇总 ================")
+    print("\n================ Summary ================")
     print(df.to_string(index=False))
-    print("\n各数据集 CSV 见各自 output_dir；汇总:", combined)
+    print("\nper-dataset CSV in each output_dir; summary:", combined)
     return df
 
 
 if __name__ == "__main__":
     import argparse
-    ap = argparse.ArgumentParser(description="StarDist(核)+膨胀 × Xenium breast benchmark")
-    ap.add_argument("--expand-px", type=int, default=None, help="核向外膨胀的像素数，覆盖 EXPAND_PX（0=不膨胀）")
-    ap.add_argument("--expand-um", type=float, default=None, help="核向外膨胀的微米数，按 pixel_size 换算，覆盖 EXPAND_PX")
-    ap.add_argument("--prob-thresh", type=float, default=None, help="StarDist 概率阈值，覆盖默认")
-    ap.add_argument("--nms-thresh", type=float, default=None, help="StarDist NMS 阈值，覆盖默认")
+    ap = argparse.ArgumentParser(description="StarDist(nuclei)+expansion x Xenium breast benchmark")
+    ap.add_argument("--expand-px", type=int, default=None, help="pixels to dilate nuclei outward, overrides EXPAND_PX (0=no dilation)")
+    ap.add_argument("--expand-um", type=float, default=None, help="microns to dilate nuclei outward, converted via pixel_size, overrides EXPAND_PX")
+    ap.add_argument("--prob-thresh", type=float, default=None, help="StarDist probability threshold, overrides default")
+    ap.add_argument("--nms-thresh", type=float, default=None, help="StarDist NMS threshold, overrides default")
     a, _ = ap.parse_known_args()
     if a.expand_px is not None:
         EXPAND_PX = a.expand_px

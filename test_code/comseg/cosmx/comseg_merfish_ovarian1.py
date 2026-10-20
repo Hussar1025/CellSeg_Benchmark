@@ -69,12 +69,12 @@ import tifffile
 from scipy.spatial import cKDTree
 
 
-ROOT_DEFAULT = Path("/data/qiuyijia/dataset/merfish_ovarian1")
-DAPI_DEFAULT = Path("/data/qiuyijia/dataset/merfish_ovarian1/images/mosaic_DAPI_z3.tif")
-TRANSFORM_DEFAULT = Path("/data/qiuyijia/dataset/merfish_ovarian1/images/micron_to_mosaic_pixel_transform.csv")
-TX_DEFAULT = Path("/data/qiuyijia/dataset/merfish_ovarian1/detected_transcripts.csv")
+ROOT_DEFAULT = Path("yourpath/dataset/merfish_ovarian1")
+DAPI_DEFAULT = Path("yourpath/dataset/merfish_ovarian1/images/mosaic_DAPI_z3.tif")
+TRANSFORM_DEFAULT = Path("yourpath/dataset/merfish_ovarian1/images/micron_to_mosaic_pixel_transform.csv")
+TX_DEFAULT = Path("yourpath/dataset/merfish_ovarian1/detected_transcripts.csv")
 
-OUT_DEFAULT = Path("/data/qiuyijia/comseg_merfish_ovarian1")
+OUT_DEFAULT = Path("yourpath/comseg_merfish_ovarian1")
 
 H = 93756
 W = 123532

@@ -40,9 +40,10 @@ from pathlib import Path
 from typing import Optional
 
 
-# Python 3.7 没有标准库 importlib.metadata，而新版 umap-learn 会直接导入它。
-# 优先使用标准库；在旧环境中回退到已安装的 backport，并注册点号模块路径，
-# 这样 Scanpy 通过近似邻居路径间接导入 UMAP 时仍能工作。
+# Python 3.7 has no stdlib importlib.metadata, but newer umap-learn imports it
+# directly. Prefer the stdlib; on older Python fall back to the installed
+# backport and register the dotted module path so Scanpy's indirect UMAP import
+# through the neighbor path still works.
 def _ensure_importlib_metadata():
     try:
         import importlib.metadata  # noqa: F401
@@ -53,8 +54,8 @@ def _ensure_importlib_metadata():
             import importlib_metadata as metadata
         except ImportError as backport_exc:
             raise RuntimeError(
-                "当前 Python 缺少 importlib.metadata。请先执行 "
-                "conda activate bering，并安装 importlib-metadata，或升级到 Python >= 3.8。"
+                "This Python lacks importlib.metadata. Run "
+                "conda activate bering and install importlib-metadata, or upgrade to Python >= 3.8."
             ) from backport_exc
         sys.modules["importlib.metadata"] = metadata
         import importlib
@@ -73,20 +74,20 @@ log = logging.getLogger("bering_seg")
 
 
 # ==============================================================================
-# 0. 配置 (CONFIG) —— 按你的实际路径 / 需求修改这里
+# 0. Configuration (CONFIG) — edit paths / options here
 # ==============================================================================
 class CONFIG:
-    # ---- 输入路径 ----
-    DATA_DIR = "/data/qiuyijia/dataset/merfish_Melanoma"
+    # ---- input paths ----
+    DATA_DIR = "yourpath/dataset/merfish_Melanoma"
     TRANSCRIPTS_CSV = os.path.join(
         DATA_DIR,
         "detected_transcripts.csv",
     )
     BOUNDARY_DIR = os.path.join(DATA_DIR, "cell_boundaries")   # feature_data_{fov}.hdf5
 
-    # ---- 输出路径 ----
-    OUT_DIR = "/data/qiuyijia/bering/merfish_Melanoma_center10000_output"
-    CACHE_INPUT = os.path.join(OUT_DIR, "bering_input_transcripts.parquet")  # 预处理缓存
+    # ---- output paths ----
+    OUT_DIR = "yourpath/bering/merfish_Melanoma_center10000_output"
+    CACHE_INPUT = os.path.join(OUT_DIR, "bering_input_transcripts.parquet")  # preprocessing cache
 
     # Coarse prior used to construct Bering's required raw_cells/raw_labels.
     # ``cellpose`` reads an existing center-ROI Cellpose instance mask and
@@ -96,36 +97,38 @@ class CONFIG:
     GRID_SIZE_UM = 18.0
     METADATA_RADIUS_UM = 25.0
     ROI_CACHE = None                # auto-discover *_roi_*_10000.parquet
-    CELLPOSE_MASK = None            # auto: /data/qiuyijia/cellpose/merfish_output/<dataset>/pred_cellpose_roi.tif
-    CELLPOSE_MASK_ROOT = "/data/qiuyijia/cellpose/merfish_output"
+    CELLPOSE_MASK = None            # auto: yourpath/cellpose/merfish_output/<dataset>/pred_cellpose_roi.tif
+    CELLPOSE_MASK_ROOT = "yourpath/cellpose/merfish_output"
 
-    # ---- 复现实验用随机种子 ----
+    # ---- random seed for reproducibility ----
     SEED = 0
 
-    # ---- 试跑开关: 先只用少数 FOV 跑通全流程, 再放开做全片 ----
-    #      设为 None 表示用全部 FOV; 或给一个 fov 列表, e.g. list(range(0, 60))
+    # ---- trial-run switch: run the whole pipeline on a few FOVs first ----
+    #      None = use all FOVs; or pass a fov list, e.g. list(range(0, 60))
     SUBSET_FOVS: Optional[list] = None
 
-    # ---- 中心 ROI: 取 mosaic 图像中心的 ROI_PIXELS x ROI_PIXELS 像素窗口, ----
-    #      再用 micron<->pixel 变换换算成【微米(组学坐标)】bbox 去裁转录本。
-    #      USE_ROI=True 时优先于 SUBSET_FOVS。只需图像尺寸 + 变换矩阵(都不加载像素)。
+    # ---- center ROI: take an ROI_PIXELS x ROI_PIXELS pixel window at the mosaic ----
+    #      image center, then convert via the micron<->pixel transform to a
+    #      micron (omics coordinate) bbox used to crop transcripts.
+    #      USE_ROI=True overrides SUBSET_FOVS. Needs only image size + transform matrix.
     USE_ROI = True
     ROI_PIXELS = 10000
 
-    # ---- 转录本预处理 ----
-    DROP_BLANK = True          # 去掉 Blank-* 阴性对照探针
-    HDF5_ZINDEX = 3            # 用哪个 z 平面的多边形做 2D 足迹 (readVizgen 默认 z=3)
+    # ---- transcript preprocessing ----
+    DROP_BLANK = True          # drop Blank-* negative control probes
+    HDF5_ZINDEX = 3            # z-plane whose polygons form the 2D footprint (readVizgen default z=3)
 
-    # ---- 生成 raw_labels 的粗聚类 (输入准备, 不是 benchmark) ----
+    # ---- coarse clustering to build raw_labels (input prep, not benchmark) ----
     MIN_COUNTS_PER_CELL = 20   # grid prior is deliberately coarse; 50 drops sparse ROIs
-    LEIDEN_RES_FOR_LABELS = 1.0  # 粗 cell type 的分辨率; 想更粗可调小
+    LEIDEN_RES_FOR_LABELS = 1.0  # resolution for coarse cell type; lower for coarser
 
-    # ---- 是否使用图像 (DAPI/polyT) ----
-    #      默认 False(image-free)。本数据集只下了单个 z(z3)的 mosaic, 且需要
-    #      micron->pixel 变换; image-free 是最干净、与官方 Xenium 例子一致的做法。
+    # ---- whether to use images (DAPI/polyT) ----
+    #      Default False (image-free). This dataset only has a single z (z3)
+    #      mosaic and needs a micron->pixel transform; image-free is the cleanest
+    #      approach and matches the official Xenium example.
     USE_IMAGE = False
     IMG_DIR = os.path.join(DATA_DIR, "images")
-    IMG_FILES = [  # (通道名, 文件名)
+    IMG_FILES = [  # (channel name, filename)
         ("DAPI",  "mosaic_DAPI_z3.tif"),
         ("PolyT", "mosaic_PolyT_z3.tif"),
     ]
@@ -134,27 +137,27 @@ class CONFIG:
         "micron_to_mosaic_pixel_transform.csv",
     )
 
-    # ---- Bering: 训练图构建 ----
-    N_CELLS_PER_CLASS = 10     # 每个类别采样多少 cell 用于训练
-    WINDOW_WIDTH = 15.0        # 训练窗口宽 (微米) —— image-free 时单位是微米
+    # ---- Bering: training graph construction ----
+    N_CELLS_PER_CLASS = 10     # how many cells to sample per class for training
+    WINDOW_WIDTH = 15.0        # training window width (microns) — microns when image-free
     WINDOW_HEIGHT = 15.0
-    N_NEIGHBORS = 30           # KNN 邻居数 (训练图 & 全片节点分类都用)
+    N_NEIGHBORS = 30           # KNN neighbors (used for training graph & whole-slice node classification)
 
-    # ---- Bering: 数据切分 ----
+    # ---- Bering: data split ----
     BATCH_SIZE = 16
     TRAINING_RATIO = 0.8
 
-    # ---- Bering: 训练轮数 ----
+    # ---- Bering: training epochs ----
     NODE_EPOCHES = 50
     EDGE_EPOCHES = 50
 
-    # ---- Bering: 全片节点分类 ----
-    NC_PROB_THRESHOLD = 0.3    # 低于该概率的转录本判为背景
-    NC_NUM_CHUNKS = 25         # 转录本过多时按坐标切块, 防止 OOM
+    # ---- Bering: whole-slice node classification ----
+    NC_PROB_THRESHOLD = 0.3    # transcripts below this probability are background
+    NC_NUM_CHUNKS = 25         # coordinate chunks when too many transcripts, to avoid OOM
 
-    # ---- Bering: 细胞分割 (连边预测 + Leiden) ----
-    SEG_POSITIVE_EDGE_THRESH = 0.6   # 连边正阈值: 调低->更多边->细胞更大更少; 调高->更碎+更多单点
-    SEG_LEIDEN_RESOLUTION = 0.05     # 单次分割用的分辨率(仅跑一次拿到 edge 预测; 之后被下面的扫描覆盖)
+    # ---- Bering: cell segmentation (edge prediction + Leiden) ----
+    SEG_POSITIVE_EDGE_THRESH = 0.6   # positive-edge threshold: lower -> more edges -> fewer, larger cells; higher -> more fragments + singletons
+    SEG_LEIDEN_RESOLUTION = 0.05     # resolution for the single pass (only to get edge predictions; overridden by the sweep below)
     # 300 (the package default) creates billions of edges for the 7 ROI's
     # here.  60 is a reproducible, memory-bounded setting for these dense
     # MERFISH ROIs; raise it only after checking the recorded peak memory.
@@ -162,27 +165,31 @@ class CONFIG:
     SEG_GRAPH_N_NEIGHBORS = 10
     SEG_NUM_ITERS = 100
 
-    # ---- 决定"细胞数"的真正旋钮: 分割时的 Leiden(CPM)分辨率 ----
-    #  细胞数由分割分辨率决定, 不是由 cell_annotation 质控决定。分辨率越高 -> 簇越多 -> 细胞越多。
-    #  开启 MATCH_COARSE_CELL_COUNT 时, 脚本会【复用一次分割得到的连边预测】在下列分辨率上
-    #  重新聚类(不重训练), 评估每个分辨率下的"可用细胞数上限", 选最接近目标的那个。
+    # ---- the knob that really sets cell count: Leiden (CPM) resolution ----
+    #  Cell count is set by segmentation resolution, not cell_annotation QC.
+    #  Higher resolution -> more clusters -> more cells.
+    #  With MATCH_COARSE_CELL_COUNT, the script reuses one segmentation's edge
+    #  predictions and re-clusters at each resolution below (no retraining),
+    #  evaluates the "usable cell ceiling" per resolution, and picks the closest.
     SEG_RESOLUTION_SWEEP = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
 
-    # ---- Bering: cell_annotation 质控阈值 ----
-    #  cell_annotation 只是对已算好的 predicted_cells 再质控筛选(去单点/背景主导/超大团)。
-    #  它只能【减少】细胞数, 不能增加。要增加细胞数请调分割分辨率(上面)。
+    # ---- Bering: cell_annotation QC thresholds ----
+    #  cell_annotation only re-filters already-computed predicted_cells
+    #  (dropping singletons / background-dominated / oversized clusters).
+    #  It can only reduce cell count, never increase it. To increase, raise the
+    #  segmentation resolution above.
     MATCH_COARSE_CELL_COUNT = True
-    TARGET_CELLS: Optional[int] = None   # None = 自动用粗分割细胞数; 也可填具体数字
-    ANNOT_MIN_DOMINANT_RATIO = 0.6       # 百分比阈值(源码 .mul(100)), 0.6≈只去 background 主导
-    ANNOT_MAX_DIAM_RATIO = 5.0           # 直径 sanity 过滤
+    TARGET_CELLS: Optional[int] = None   # None = auto use coarse cell count; or set an explicit number
+    ANNOT_MIN_DOMINANT_RATIO = 0.6       # percentage threshold (source does .mul(100)); 0.6 ~ drops only background-dominated
+    ANNOT_MAX_DIAM_RATIO = 5.0           # diameter sanity filter
     ANNOT_MDN_RATIO = 0.5                # min_dominant_nodes = 0.5 * min_transcripts
-    # 关闭自动匹配时用的手动阈值:
+    # manual thresholds used when auto-match is off:
     ANNOT_MIN_TRANSCRIPTS = 50
     ANNOT_MIN_DOMINANT_NODES = 30
 
 
 # ==============================================================================
-# 0b. 中心 ROI: 图像像素中心窗口 -> 微米(组学坐标) bbox
+# 0b. Center ROI: image pixel center window -> micron (omics coordinate) bbox
 # ============================================================================== 
 def _find_image_file(cfg: CONFIG, hint: str = "DAPI") -> Optional[str]:
     """Find the DAPI mosaic despite Vizgen exports using ``images`` or ``imgs``."""
@@ -220,7 +227,7 @@ def _find_roi_cache(cfg: CONFIG) -> Optional[str]:
     if len(paths) == 1:
         return paths[0]
     if len(paths) > 1:
-        raise RuntimeError("发现多个 ROI 缓存，请用 --roi-cache 指定一个: %s" % paths)
+        raise RuntimeError("Multiple ROI caches found; pick one with --roi-cache: %s" % paths)
     return None
 
 
@@ -228,7 +235,7 @@ def _find_cellpose_mask(cfg: CONFIG) -> Optional[str]:
     """Find the Cellpose instance mask corresponding to this dataset's center ROI.
 
     Cellpose's MERFISH benchmark runner writes one 10000x10000 mask per dataset
-    under ``/data/qiuyijia/cellpose/merfish_output/<dataset>/``.  An explicit
+    under ``yourpath/cellpose/merfish_output/<dataset>/``.  An explicit
     ``CONFIG.CELLPOSE_MASK`` always takes precedence; the fallback locations
     keep the prior usable for the existing output layout without changing the
     command line used for the other priors.
@@ -261,12 +268,12 @@ def _center_roi_pixel_bbox(cfg: CONFIG):
 
     image_path = _find_image_file(cfg, "DAPI")
     if image_path is None:
-        raise FileNotFoundError("无法定位 DAPI TIFF，不能确定 Cellpose mask 的 ROI 原点")
+        raise FileNotFoundError("Cannot locate the DAPI TIFF, so the Cellpose mask ROI origin is unknown")
     with tiff.TiffFile(image_path) as tf:
         H, W = tf.pages[0].shape[:2]
     size = int(cfg.ROI_PIXELS)
     if size <= 0 or size > H or size > W:
-        raise ValueError("ROI_PIXELS=%d 超出 DAPI 图像尺寸 H=%d,W=%d" % (size, H, W))
+        raise ValueError("ROI_PIXELS=%d exceeds DAPI image size H=%d,W=%d" % (size, H, W))
     x0 = max(0, W // 2 - size // 2)
     y0 = max(0, H // 2 - size // 2)
     return x0, y0, x0 + size, y0 + size
@@ -294,28 +301,29 @@ def _roi_cache_metadata(path: str):
 
 
 def _read_transform_matrix(path: str) -> np.ndarray:
-    """读 micron_to_mosaic_pixel_transform.csv, 返回 3x3 仿射矩阵 M:
-       [x_pix, y_pix, 1]^T = M @ [x_um, y_um, 1]^T (即 micron -> mosaic pixel)。"""
+    """Read micron_to_mosaic_pixel_transform.csv and return the 3x3 affine matrix M:
+       [x_pix, y_pix, 1]^T = M @ [x_um, y_um, 1]^T (i.e. micron -> mosaic pixel)."""
     M = pd.read_csv(path, header=None, sep=r"\s+|,", engine="python").values.astype(float)
     return M[:3, :3]
 
 
 def compute_roi_um_bbox(cfg: CONFIG):
-    """取 mosaic 图像中心 ROI_PIXELS x ROI_PIXELS 的像素窗口, 用逆变换换算成微米 bbox。
-    只读 TIFF 头拿到 H/W(不加载像素), 用 4 个角点做逆变换(可正确处理缩放/旋转)。
-    返回 (xmin_um, xmax_um, ymin_um, ymax_um)。"""
+    """Take the ROI_PIXELS x ROI_PIXELS pixel window at the mosaic center and convert
+    it to a micron bbox via the inverse transform. Read only the TIFF header for H/W
+    (no pixels loaded) and inverse-transform the 4 corners (handles scale/rotation).
+    Returns (xmin_um, xmax_um, ymin_um, ymax_um)."""
     import tifffile as tiff
 
     transform = _find_transform_file(cfg)
     image_path = _find_image_file(cfg)
     if transform is None or image_path is None:
-        raise FileNotFoundError("无法计算 ROI：未找到 micron_to_mosaic_pixel_transform.csv 或 DAPI TIFF")
+        raise FileNotFoundError("Cannot compute ROI: micron_to_mosaic_pixel_transform.csv or DAPI TIFF not found")
     M = _read_transform_matrix(transform)
     Minv = np.linalg.inv(M)
 
     with tiff.TiffFile(image_path) as tf:
-        H, W = tf.pages[0].shape[:2]           # 行=y=H, 列=x=W; 仅读头, 不载像素
-    log.info("mosaic 图像尺寸: H=%d, W=%d; 变换矩阵:\n%s", H, W, M)
+        H, W = tf.pages[0].shape[:2]           # rows=y=H, cols=x=W; header only, no pixels loaded
+    log.info("mosaic image size: H=%d, W=%d; transform matrix:\n%s", H, W, M)
 
     cx_px, cy_px = W / 2.0, H / 2.0
     half = cfg.ROI_PIXELS / 2.0
@@ -328,20 +336,20 @@ def compute_roi_um_bbox(cfg: CONFIG):
     corners_um = Minv @ corners_px              # (3, 4)
     xs, ys = corners_um[0], corners_um[1]
     xmin, xmax, ymin, ymax = xs.min(), xs.max(), ys.min(), ys.max()
-    log.info("中心 %dx%d 像素 ROI -> 微米 bbox: x[%.1f, %.1f] (%.1f um) y[%.1f, %.1f] (%.1f um)",
+    log.info("center %dx%d pixel ROI -> micron bbox: x[%.1f, %.1f] (%.1f um) y[%.1f, %.1f] (%.1f um)",
              cfg.ROI_PIXELS, cfg.ROI_PIXELS, xmin, xmax, xmax - xmin, ymin, ymax, ymax - ymin)
     return xmin, xmax, ymin, ymax
 
 
 # ==============================================================================
-# 1. 读取转录本
+# 1. Read transcripts
 # ==============================================================================
 def load_transcripts(cfg: CONFIG) -> pd.DataFrame:
-    """读 detected_transcripts.csv, 只取需要的列, 返回含 global_x/global_y/global_z/fov/gene
-    (以及若存在则 cell-id 列) 的 DataFrame。"""
+    """Read detected_transcripts.csv, keep only the needed columns, and return a
+    DataFrame with global_x/global_y/global_z/fov/gene (plus a cell-id column if present)."""
     cache = _find_roi_cache(cfg)
     if cache is not None:
-        log.info("读取已准备的中心 ROI 缓存: %s", cache)
+        log.info("Reading prepared center ROI cache: %s", cache)
         try:
             import pyarrow.parquet as pq
             cols = list(pq.ParquetFile(cache).schema.names)
@@ -359,16 +367,16 @@ def load_transcripts(cfg: CONFIG) -> pd.DataFrame:
                               "transcript_id", "cell_id") if c in cols]
         df = pd.read_parquet(cache, columns=wanted)
         if "global_x" not in df or "global_y" not in df or "gene" not in df:
-            raise ValueError("ROI 缓存必须包含 global_x/global_y/gene 列")
-        log.info("  ROI 缓存转录本: %d", len(df))
+            raise ValueError("ROI cache must contain global_x/global_y/gene columns")
+        log.info("  ROI cache transcripts: %d", len(df))
         # Continue through the normal column normalization below.
         header = None
         cols = list(df.columns)
     else:
-        log.info("读取转录本: %s", cfg.TRANSCRIPTS_CSV)
+        log.info("Reading transcripts: %s", cfg.TRANSCRIPTS_CSV)
         header = pd.read_csv(cfg.TRANSCRIPTS_CSV, nrows=0)
         cols = list(header.columns)
-    log.info("  文件列名: %s", cols)
+    log.info("  file columns: %s", cols)
 
     gene_col = "gene" if "gene" in cols else None
     gx = "global_x" if "global_x" in cols else None
@@ -376,9 +384,9 @@ def load_transcripts(cfg: CONFIG) -> pd.DataFrame:
     gz = "global_z" if "global_z" in cols else None
     fov = "fov" if "fov" in cols else None
     if gene_col is None or gx is None or gy is None:
-        raise ValueError("detected_transcripts.csv 缺少 gene/global_x/global_y 列, 无法继续。")
+        raise ValueError("detected_transcripts.csv is missing gene/global_x/global_y columns; cannot continue.")
 
-    # 某些经 VPT 重跑的导出会自带 cell-id 列; 若有则可跳过 point-in-polygon
+    # Some exports re-run through VPT carry a cell-id column; if present, skip point-in-polygon
     cellid_col = next((c for c in ["cell_id", "cell", "cellID", "CellID"] if c in cols), None)
 
     if cache is None:
@@ -394,10 +402,10 @@ def load_transcripts(cfg: CONFIG) -> pd.DataFrame:
             if len(part):
                 pieces.append(part)
         if not pieces:
-            raise RuntimeError("中心 ROI 内没有转录本")
+            raise RuntimeError("No transcripts inside the center ROI")
         df = pd.concat(pieces, ignore_index=True)
 
-    # 统一列名
+    # normalize column names
     df = df.rename(columns={gx: "global_x", gy: "global_y", gene_col: "gene"})
     if gz is not None:
         df = df.rename(columns={gz: "global_z"})
@@ -409,22 +417,22 @@ def load_transcripts(cfg: CONFIG) -> pd.DataFrame:
         df["fov"] = -1
     if cellid_col is not None:
         df = df.rename(columns={cellid_col: "vizgen_cell_id"})
-        log.info("  检测到自带 cell-id 列 '%s' -> 将直接使用, 跳过 point-in-polygon。", cellid_col)
+        log.info("  Detected native cell-id column '%s' -> using it directly, skipping point-in-polygon.", cellid_col)
 
-    # 去阴性对照探针
+    # drop negative control probes
     if cfg.DROP_BLANK:
         before = len(df)
         mask = ~df["gene"].astype(str).str.lower().str.startswith(("blank", "notarget", "negcontrol"))
         df = df[mask].copy()
-        log.info("  去除 Blank/对照探针: %d -> %d", before, len(df))
+        log.info("  Dropped Blank/control probes: %d -> %d", before, len(df))
 
     # CSV fallback was cropped while streaming above.  For a cache, record its
     # exact geometry and perform a defensive crop only if requested explicitly.
     if cfg.USE_ROI and cache is not None:
-        log.info("  使用缓存中已按 %d×%d 像素裁好的中心 ROI", cfg.ROI_PIXELS, cfg.ROI_PIXELS)
+        log.info("  Using center ROI already cropped to %dx%d pixels in the cache", cfg.ROI_PIXELS, cfg.ROI_PIXELS)
     elif cfg.SUBSET_FOVS is not None:
         df = df[df["fov"].isin(cfg.SUBSET_FOVS)].copy()
-        log.info("  [试跑] 仅保留 %d 个 FOV, 剩余转录本 %d", len(cfg.SUBSET_FOVS), len(df))
+        log.info("  [trial] keeping only %d FOVs, %d transcripts remain", len(cfg.SUBSET_FOVS), len(df))
 
     df = df.reset_index(drop=True)
     # ``transcript_id`` in Vizgen MERFISH is a transcript/gene isoform ID and
@@ -433,16 +441,16 @@ def load_transcripts(cfg: CONFIG) -> pd.DataFrame:
     # without relying on the non-unique transcript_id column.
     if "roi_transcript_index" not in df.columns:
         df["roi_transcript_index"] = np.arange(len(df), dtype=np.int64)
-    log.info("  转录本总数: %d, 基因数: %d", len(df), df["gene"].nunique())
+    log.info("  total transcripts: %d, genes: %d", len(df), df["gene"].nunique())
     return df
 
 
 # ==============================================================================
-# 2. 转录本 -> cell (raw_cells): 用 cell_boundaries 的多边形做 point-in-polygon
+# 2. Transcripts -> cells (raw_cells): point-in-polygon over cell_boundaries
 # ==============================================================================
 def _load_fov_polygons(h5_path: str, zindex: int):
-    """从单个 feature_data_{fov}.hdf5 读出 {cell_id_str: shapely.Polygon} (微米坐标)。
-    Vizgen hdf5 结构: featuredata / <cell_id> / zIndex_<z> / p_0 / coordinates (1,N,2)。"""
+    """Read {cell_id_str: shapely.Polygon} (micron coordinates) from one feature_data_{fov}.hdf5.
+    Vizgen hdf5 layout: featuredata / <cell_id> / zIndex_<z> / p_0 / coordinates (1,N,2)."""
     import h5py
     from shapely.geometry import Polygon
 
@@ -451,7 +459,7 @@ def _load_fov_polygons(h5_path: str, zindex: int):
         root = f["featuredata"] if "featuredata" in f else f
         for cell_id in root.keys():
             g = root[cell_id]
-            # 选 z 平面: 优先指定的 zindex, 否则取可用 zIndex 的中间一个
+            # pick z-plane: prefer the given zindex, else the middle available zIndex
             zkeys = [k for k in g.keys() if k.startswith("zIndex")]
             if not zkeys:
                 continue
@@ -468,7 +476,7 @@ def _load_fov_polygons(h5_path: str, zindex: int):
             try:
                 poly = Polygon(coords)
                 if not poly.is_valid:
-                    poly = poly.buffer(0)          # 修复自相交
+                    poly = poly.buffer(0)          # fix self-intersections
                 if poly.is_empty or poly.area <= 0:
                     continue
             except Exception:
@@ -491,30 +499,30 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
         mask_path = _find_cellpose_mask(cfg)
         if mask_path is None:
             raise FileNotFoundError(
-                "PRIOR=cellpose 但未找到 Cellpose mask。请设置 "
-                "CONFIG.CELLPOSE_MASK，或准备 "
-                "/data/qiuyijia/cellpose/merfish_output/<dataset>/pred_cellpose_roi.tif"
+                "PRIOR=cellpose but no Cellpose mask found. Set "
+                "CONFIG.CELLPOSE_MASK, or provide "
+                "yourpath/cellpose/merfish_output/<dataset>/pred_cellpose_roi.tif"
             )
 
         import tifffile as tiff
 
-        log.info("Cellpose 先验: %s", mask_path)
+        log.info("Cellpose prior: %s", mask_path)
         mask = np.asarray(tiff.imread(mask_path))
         mask = np.squeeze(mask)
         if mask.ndim != 2:
-            raise ValueError("Cellpose mask 必须是二维实例标签图，实际 shape=%s" % (mask.shape,))
+            raise ValueError("Cellpose mask must be a 2D instance label map, got shape=%s" % (mask.shape,))
         x0, y0, x1, y1 = _cellpose_roi_pixel_bbox(cfg, mask_path)
         expected = (int(y1 - y0), int(x1 - x0))
         if tuple(mask.shape) != expected:
             raise ValueError(
-                "Cellpose mask 与当前中心 ROI 尺寸不一致: mask=%s, expected=%s, "
+                "Cellpose mask size does not match the center ROI: mask=%s, expected=%s, "
                 "ROI pixel bbox=(%d,%d,%d,%d)" %
                 (tuple(mask.shape), expected, x0, y0, x1, y1)
             )
 
         transform_path = _find_transform_file(cfg)
         if transform_path is None:
-            raise FileNotFoundError("PRIOR=cellpose 需要 micron_to_mosaic_pixel_transform.csv")
+            raise FileNotFoundError("PRIOR=cellpose requires micron_to_mosaic_pixel_transform.csv")
         M = _read_transform_matrix(transform_path)
         xy1 = np.stack([
             df["global_x"].to_numpy(dtype=float),
@@ -537,7 +545,7 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
             tuple(mask.shape), int(np.unique(mask[mask > 0]).size), x0, y0, x1, y1,
         )
         log.info(
-            "Cellpose 转录本归属: %d/%d (%.1f%%), raw cell=%d, mask 外/背景=%d",
+            "Cellpose transcript assignment: %d/%d (%.1f%%), raw cells=%d, outside mask/background=%d",
             int(assigned.sum()), len(df), 100.0 * float(assigned.mean()),
             int(np.unique(raw[assigned]).size), int((~assigned).sum()),
         )
@@ -553,7 +561,7 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
         keys = pd.Series(["%d:%d" % (a, b) for a, b in zip(gx, gy)], index=df.index)
         codes, _ = pd.factorize(keys)
         df["raw_cells"] = (codes + 1).astype(np.int64)
-        log.info("grid 粗分割: bin=%.1f um, cell=%d, 前景转录本=%d",
+        log.info("grid coarse segmentation: bin=%.1f um, cells=%d, foreground transcripts=%d",
                  cfg.GRID_SIZE_UM, int(df["raw_cells"].nunique()), len(df))
         return df
 
@@ -561,11 +569,11 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
         from scipy.spatial import cKDTree
         meta_path = os.path.join(cfg.DATA_DIR, "cell_metadata.csv")
         if not os.path.exists(meta_path):
-            raise FileNotFoundError("--prior metadata 需要 %s" % meta_path)
+            raise FileNotFoundError("--prior metadata requires %s" % meta_path)
         meta = pd.read_csv(meta_path)
         need = {"center_x", "center_y"}
         if not need.issubset(meta.columns):
-            raise ValueError("cell_metadata.csv 缺少 center_x/center_y")
+            raise ValueError("cell_metadata.csv is missing center_x/center_y")
         # Restrict candidate cells using their bbox when available.
         if {"min_x", "max_x", "min_y", "max_y"}.issubset(meta.columns):
             xmin, xmax = df.global_x.min(), df.global_x.max()
@@ -573,7 +581,7 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
             meta = meta[(meta.max_x >= xmin) & (meta.min_x <= xmax) &
                         (meta.max_y >= ymin) & (meta.min_y <= ymax)]
         if len(meta) == 0:
-            raise RuntimeError("ROI 内没有 metadata cell")
+            raise RuntimeError("No metadata cells inside the ROI")
         tree = cKDTree(meta[["center_x", "center_y"]].to_numpy(float))
         dist, ix = tree.query(df[["global_x", "global_y"]].to_numpy(float),
                               distance_upper_bound=float(cfg.METADATA_RADIUS_UM),
@@ -584,34 +592,35 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
         raw[ok] = pd.factorize(ids[ix[ok]])[0].astype(np.int64) + 1
         df = df.copy()
         df["raw_cells"] = raw
-        log.info("metadata 最近中心粗分割: 候选 cell=%d, 分配转录本=%d/%d, cell=%d",
+        log.info("metadata nearest-centroid coarse segmentation: candidate cells=%d, assigned transcripts=%d/%d, cells=%d",
                  len(meta), int(ok.sum()), len(df), int(np.unique(raw[raw > 0]).size))
         return df
 
     if cfg.PRIOR != "polygon":
-        raise ValueError("PRIOR 必须是 grid、cellpose、metadata 或 polygon")
+        raise ValueError("PRIOR must be grid, cellpose, metadata, or polygon")
 
-    """给每个转录本一个整数 raw_cells (0 = 背景/未分配)。逐 FOV 处理:
-    该 FOV 的转录本 与 feature_data_{fov}.hdf5 的多边形做 point-in-polygon。"""
+    """Assign each transcript an integer raw_cells (0 = background/unassigned).
+    Process per FOV: point-in-polygon of the FOV's transcripts against the
+    feature_data_{fov}.hdf5 polygons."""
     if "vizgen_cell_id" in df.columns:
-        # 已自带 cell-id: 直接编码为整数 (空/NaN/'-1' 视为背景)
-        log.info("使用转录本自带的 cell-id 列生成 raw_cells。")
+        # native cell-id present: encode directly as integers (empty/NaN/'-1' = background)
+        log.info("Using the transcript's native cell-id column to build raw_cells.")
         cid = df["vizgen_cell_id"].astype(str)
         is_bg = cid.isin(["", "nan", "NaN", "-1", "0", "None"])
         codes, _ = pd.factorize(cid.where(~is_bg, other=np.nan))
         df["raw_cells"] = np.where(is_bg.values, 0, codes + 1).astype(np.int64)
         n_cells = int((df["raw_cells"] > 0).sum() and df.loc[df.raw_cells > 0, "raw_cells"].nunique())
-        log.info("  分配到 cell 的转录本: %d, cell 数: %d", int((df.raw_cells > 0).sum()), n_cells)
+        log.info("  transcripts assigned to a cell: %d, cells: %d", int((df.raw_cells > 0).sum()), n_cells)
         return df
 
     from shapely import points as shp_points
     from shapely import STRtree
     from shapely.geometry import Polygon as _Poly
 
-    # 关键点: shapely 的 STRtree.query(geoms, predicate) 判定方向是
-    #   predicate(input_geom, tree_geom)。input=点, tree=多边形。
-    #   因此 "点在多边形内" 要用 "covered_by"(含边界)或 "within"(不含边界),
-    #   用 "contains" 会得到 point.contains(polygon) 恒为 False -> 0 匹配!
+    # Key: shapely STRtree.query(geoms, predicate) evaluates
+    #   predicate(input_geom, tree_geom). input=point, tree=polygon.
+    #   So "point in polygon" needs "covered_by" (inclusive) or "within"
+    #   (exclusive); "contains" yields point.contains(polygon), always False -> 0 matches!
     _probe = shp_points([0.5], [0.5])
     _tp = STRtree([_Poly([(0, 0), (1, 0), (1, 1), (0, 1)])])
     try:
@@ -619,12 +628,12 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
         PRED = "covered_by"
     except Exception:
         PRED = "within"
-    log.info("point-in-polygon 判定谓词: %s", PRED)
+    log.info("point-in-polygon predicate: %s", PRED)
 
     df["raw_cells"] = np.int64(0)
     next_cell_key = 1
     fovs = sorted(df["fov"].unique())
-    log.info("对 %d 个 FOV 做 point-in-polygon (z=%d) ...", len(fovs), cfg.HDF5_ZINDEX)
+    log.info("point-in-polygon over %d FOVs (z=%d) ...", len(fovs), cfg.HDF5_ZINDEX)
 
     total_assigned = 0
     total_polys = 0
@@ -632,7 +641,7 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
     for i, fov in enumerate(fovs):
         h5_path = os.path.join(cfg.BOUNDARY_DIR, "feature_data_%d.hdf5" % int(fov))
         if not os.path.exists(h5_path):
-            continue  # 该 FOV 无分割文件 -> 其转录本留作背景
+            continue  # FOV has no segmentation file -> its transcripts stay background
         polys, _ids = _load_fov_polygons(h5_path, cfg.HDF5_ZINDEX)
         if len(polys) == 0:
             continue
@@ -645,25 +654,26 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
         py = df.loc[sub_idx, "global_y"].to_numpy()
         pts = shp_points(px, py)
 
-        # 一次性坐标自检: 打印第一个有多边形的 FOV 的 多边形 bbox 与 转录本 bbox,
-        # 若二者数量级差很远, 说明坐标系不一致(而非谓词问题)。
+        # One-time coordinate self-check: print polygon bbox vs transcript bbox
+        # for the first FOV that has polygons; a large magnitude gap means the
+        # coordinate systems disagree (not a predicate problem).
         if not _diag_done:
             allx = np.concatenate([np.asarray(p.exterior.coords.xy[0]) for p in polys[:50]])
             ally = np.concatenate([np.asarray(p.exterior.coords.xy[1]) for p in polys[:50]])
-            log.info("  [自检] FOV %s: 多边形数=%d | 多边形 bbox x[%.1f,%.1f] y[%.1f,%.1f] | "
-                     "转录本 bbox x[%.1f,%.1f] y[%.1f,%.1f]",
+            log.info("  [self-check] FOV %s: polygons=%d | polygon bbox x[%.1f,%.1f] y[%.1f,%.1f] | "
+                     "transcript bbox x[%.1f,%.1f] y[%.1f,%.1f]",
                      str(fov), len(polys), allx.min(), allx.max(), ally.min(), ally.max(),
                      px.min(), px.max(), py.min(), py.max())
             _diag_done = True
 
         tree = STRtree(polys)
-        # 返回 (2, M) -> [输入(点)下标, 树(多边形)下标]
+        # returns (2, M) -> [input (point) index, tree (polygon) index]
         res = tree.query(pts, predicate=PRED)
         if res.size == 0:
             continue
         pt_local, poly_local = res[0], res[1]
 
-        # 一个点可能落在多个多边形里 -> 取首次匹配
+        # a point may fall in multiple polygons -> take the first match
         assign_local = np.full(len(sub_idx), -1, dtype=np.int64)
         seen = np.zeros(len(sub_idx), dtype=bool)
         for pl, pol in zip(pt_local, poly_local):
@@ -671,7 +681,7 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
                 assign_local[pl] = pol
                 seen[pl] = True
 
-        # 该 FOV 内的局部多边形下标 -> 全局唯一整数 cell key
+        # local polygon index within this FOV -> globally unique integer cell key
         matched = assign_local >= 0
         if matched.any():
             local_cell_keys = assign_local[matched] + next_cell_key
@@ -681,52 +691,53 @@ def assign_transcripts_to_cells(df: pd.DataFrame, cfg: CONFIG) -> pd.DataFrame:
             total_assigned += int(matched.sum())
 
         if (i + 1) % 100 == 0:
-            log.info("  已处理 %d/%d FOV, 累计分配转录本 %d", i + 1, len(fovs), total_assigned)
+            log.info("  processed %d/%d FOVs, cumulative assigned transcripts %d", i + 1, len(fovs), total_assigned)
 
-    # 让 raw_cells 连续化 (1..N), 0 保持为背景
+    # make raw_cells contiguous (1..N), 0 stays background
     seg_mask = df["raw_cells"] > 0
     if seg_mask.any():
         codes, _ = pd.factorize(df.loc[seg_mask, "raw_cells"])
         df.loc[seg_mask, "raw_cells"] = (codes + 1).astype(np.int64)
     n_cells = int(df.loc[seg_mask, "raw_cells"].nunique()) if seg_mask.any() else 0
-    log.info("point-in-polygon 完成: 读入多边形 %d, 前景转录本 %d, 粗分割 cell 数 %d",
+    log.info("point-in-polygon done: polygons read %d, foreground transcripts %d, coarse cells %d",
              total_polys, int(seg_mask.sum()), n_cells)
     if total_polys == 0:
-        log.warning("未读到任何多边形! 请用 h5py 检查 feature_data_*.hdf5 内部结构 "
-                    "(期望: featuredata/<cell>/zIndex_%d/p_0/coordinates)。", cfg.HDF5_ZINDEX)
+        log.warning("No polygons read! Inspect feature_data_*.hdf5 with h5py "
+                    "(expected: featuredata/<cell>/zIndex_%d/p_0/coordinates).", cfg.HDF5_ZINDEX)
     return df
 
 
 # ==============================================================================
-# 3. 生成 raw_labels: 对粗分割 cell 做质控 + Leiden 聚类 (Bering 的输入准备)
+# 3. Build raw_labels: QC + Leiden clustering over coarse cells (Bering input prep)
 # ==============================================================================
 def make_cell_labels(df: pd.DataFrame, cfg: CONFIG) -> dict:
-    """基于粗分割 (raw_cells) 聚合 cell x gene, 质控后 Leiden 聚类,
-    返回 {raw_cell_id(int) -> label(str)}。未过质控的 cell 不在字典里(其转录本将归背景)。"""
+    """Aggregate cell x gene from the coarse segmentation (raw_cells), QC, then Leiden
+    cluster, returning {raw_cell_id(int) -> label(str)}. Cells failing QC are absent
+    from the dict (their transcripts become background)."""
     import scanpy as sc
     from anndata import AnnData
     from scipy.sparse import csr_matrix
 
     seg = df[df["raw_cells"] > 0]
     if seg["raw_cells"].nunique() < 3:
-        raise RuntimeError("粗分割 cell 太少, 无法聚类。请检查边界文件 / FOV 子集设置。")
+        raise RuntimeError("Too few coarse cells to cluster. Check the boundary files / FOV subset settings.")
 
-    log.info("聚合 cell x gene 矩阵 (来自粗分割) ...")
+    log.info("Aggregating cell x gene matrix (from coarse segmentation) ...")
     cbg = (seg.groupby(["raw_cells", "gene"]).size().unstack(fill_value=0))
     cell_ids = cbg.index.to_numpy()
     adata = AnnData(X=csr_matrix(cbg.values.astype(np.float32)))
     adata.obs_names = cbg.index.astype(str)
     adata.var_names = cbg.columns.astype(str)
 
-    # 质控: 去掉 total count 过低的 cell (Vizgen 建议阈值 50)
+    # QC: drop cells with too-low total counts (Vizgen suggests 50)
     sc.pp.filter_cells(adata, min_counts=cfg.MIN_COUNTS_PER_CELL)
-    log.info("  质控后保留 cell: %d (min_counts=%d)", adata.n_obs, cfg.MIN_COUNTS_PER_CELL)
+    log.info("  cells kept after QC: %d (min_counts=%d)", adata.n_obs, cfg.MIN_COUNTS_PER_CELL)
     if adata.n_obs < 3:
         # Bering still needs a non-background label; use one deterministic
         # class rather than failing deep inside Scanpy's neighbor graph.
         return {int(x): "ct_0" for x in adata.obs_names.astype(np.int64)}
 
-    # 标准聚类流程
+    # standard clustering pipeline
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     # A tiny ROI may have only one or two genes.  Scanpy's default PCA/neighbor
@@ -738,9 +749,10 @@ def make_cell_labels(df: pd.DataFrame, cfg: CONFIG) -> dict:
     else:
         # Let neighbors operate on the normalized expression matrix directly.
         adata.obsm["X_pca"] = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)
-    # Scanpy 在大样本且 knn=True 时仍会导入 UMAP；上面的兼容层负责
-    # Python 3.7 的 importlib.metadata 入口，gauss 只决定连接度计算方式。
-    # 这些标签只是给 Bering 提供训练类别，保留原有邻居图参数。
+    # Scanpy still imports UMAP for large samples with knn=True; the compat layer
+    # above provides the Python 3.7 importlib.metadata entry. "gauss" only decides
+    # how connectivity is computed. These labels just supply Bering's training
+    # classes; keep the original neighbor-graph parameters.
     sc.pp.neighbors(adata, n_neighbors=min(15, max(2, adata.n_obs - 1)),
                     method="gauss", random_state=cfg.SEED)
     try:
@@ -752,21 +764,22 @@ def make_cell_labels(df: pd.DataFrame, cfg: CONFIG) -> dict:
     kept_ids = adata.obs_names.astype(np.int64).to_numpy()
     labels = ("ct_" + adata.obs["leiden"].astype(str)).to_numpy()
     label_map = dict(zip(kept_ids, labels))
-    log.info("  生成 %d 个类别 (raw_labels): %s",
+    log.info("  generated %d classes (raw_labels): %s",
              len(set(labels)), sorted(set(labels)))
     return label_map
 
 
 # ==============================================================================
-# 4. 组装 Bering 的 seg / unseg 输入表
+# 4. Assemble Bering's seg / unseg input tables
 # ==============================================================================
 def build_bering_frames(df: pd.DataFrame, label_map: dict, cfg: CONFIG):
-    """产出 df_spots_seg / df_spots_unseg (Bering 契约的列名)。
-    未过质控 cell 的转录本 与 未分配到任何 cell 的转录本, 一律进 unseg(背景)。"""
+    """Produce df_spots_seg / df_spots_unseg (Bering's contract column names).
+    Transcripts of QC-failed cells and transcripts assigned to no cell all go to
+    unseg (background)."""
     df = df.copy()
-    df["raw_labels"] = df["raw_cells"].map(label_map)  # 只有过质控的 cell 有标签
+    df["raw_labels"] = df["raw_cells"].map(label_map)  # only QC-passed cells have labels
 
-    # 前景 = 有 raw_cells 且有 raw_labels 的转录本
+    # foreground = transcripts with raw_cells and raw_labels
     is_seg = (df["raw_cells"] > 0) & (df["raw_labels"].notna())
 
     base_cols = {"global_x": "x", "global_y": "y", "global_z": "z", "gene": "features"}
@@ -783,36 +796,38 @@ def build_bering_frames(df: pd.DataFrame, label_map: dict, cfg: CONFIG):
     seg_cols = ["x", "y", "z", "features", "raw_cells", "raw_labels"] + metadata_cols
     unseg_cols = ["x", "y", "z", "features"] + metadata_cols
     seg = renamed.loc[is_seg, seg_cols].copy()
-    # unseg: 背景转录本会在 raw_cells 重新连续化后与 seg 不冲突; Bering 会自动置 0/background
+    # unseg: background transcripts won't clash with seg after raw_cells renumbering; Bering auto-sets 0/background
     unseg = renamed.loc[~is_seg, unseg_cols].copy()
 
-    # 前景 cell id 再次按“唯一 cell”连续化 (1..N)。 旧脚本在这里对
-    # 每一行 transcript 做 factorize，导致一个 transcript 被当成一个
-    # cell，训练监督完全失真。
+    # Re-contiguize foreground cell ids by unique cell (1..N). The old script
+    # factorized each transcript row here, treating each transcript as a cell and
+    # fully corrupting the training supervision.
     unique_ids = pd.Index(seg["raw_cells"].drop_duplicates())
     remap = pd.Series(np.arange(1, len(unique_ids) + 1, dtype=np.int64),
                       index=unique_ids)
     seg["raw_cells"] = seg["raw_cells"].map(remap).astype(np.int64)
 
-    log.info("Bering 输入: 前景转录本 %d (cell %d, 类别 %d) | 背景转录本 %d",
+    log.info("Bering input: foreground transcripts %d (cells %d, classes %d) | background transcripts %d",
              len(seg), seg["raw_cells"].nunique(), seg["raw_labels"].nunique(), len(unseg))
     return seg, unseg
 
 
 # ==============================================================================
-# 4b. (可选) 加载图像并把坐标转换到像素空间 —— 默认关闭
+# 4b. (optional) Load images and convert coordinates to pixel space — off by default
 # ==============================================================================
 def load_image_and_pixelize(seg, unseg, cfg: CONFIG):
-    """USE_IMAGE=True 时调用: 读 DAPI/polyT mosaic, 用 micron->mosaic 变换把 x/y 转为像素,
-    并按变换尺度把训练窗口尺寸从微米换算到像素。返回 (image, channels, seg, unseg, win_w, win_h)。
-    注意: 本数据集仅有单个 z(z3)的 mosaic; image-free 通常更简单可靠。"""
+    """Called when USE_IMAGE=True: read the DAPI/polyT mosaics, convert x/y to pixels
+    via the micron->mosaic transform, and scale the training window from microns to
+    pixels. Returns (image, channels, seg, unseg, win_w, win_h).
+    Note: this dataset only has a single z (z3) mosaic; image-free is simpler and
+    more reliable."""
     import tifffile as tiff
 
     transform = _find_transform_file(cfg)
     if transform is None:
-        raise FileNotFoundError("USE_IMAGE=True 但未找到 micron_to_mosaic_pixel_transform.csv")
+        raise FileNotFoundError("USE_IMAGE=True but micron_to_mosaic_pixel_transform.csv not found")
     M = _read_transform_matrix(transform)  # 3x3: [x_pix,y_pix,1] = M @ [x_um,y_um,1]
-    log.info("micron->pixel 变换矩阵:\n%s", M)
+    log.info("micron->pixel transform matrix:\n%s", M)
 
     def to_pixel(frame):
         xy1 = np.stack([frame["x"].to_numpy(), frame["y"].to_numpy(),
@@ -831,8 +846,8 @@ def load_image_and_pixelize(seg, unseg, cfg: CONFIG):
     image_files = [("DAPI", dapi)] + ([ ("PolyT", polyt) ] if polyt else [])
     for ch, path in image_files:
         if path is None:
-            raise FileNotFoundError("USE_IMAGE=True 但未找到 %s TIFF" % ch)
-        log.info("  读取图像通道 %s: %s", ch, path)
+            raise FileNotFoundError("USE_IMAGE=True but %s TIFF not found" % ch)
+        log.info("  reading image channel %s: %s", ch, path)
         imgs.append(tiff.imread(path))
         channels.append(ch)
     image = np.stack(imgs, axis=0).astype(np.float32)  # (n_channels, H, W)
@@ -840,24 +855,24 @@ def load_image_and_pixelize(seg, unseg, cfg: CONFIG):
     scale = float(np.mean([abs(M[0, 0]), abs(M[1, 1])]))  # px per micron
     win_w = cfg.WINDOW_WIDTH * scale
     win_h = cfg.WINDOW_HEIGHT * scale
-    log.info("  图像 shape=%s, 像素/微米≈%.3f, 窗口(像素)=%.1f x %.1f",
+    log.info("  image shape=%s, pixels/micron~%.3f, window (pixels)=%.1f x %.1f",
              image.shape, scale, win_w, win_h)
     return image, channels, seg_px, unseg_px, win_w, win_h
 
 
 # ==============================================================================
-# 4c. cell_annotation 阈值自动匹配 (让最终细胞数 ≈ 粗分割细胞数)
+# 4c. Auto-match cell_annotation thresholds (final cell count ~ coarse cell count)
 # ==============================================================================
 def _tune_min_transcripts_for_target(spots_all: pd.DataFrame, cfg: CONFIG):
-    """在 bg.spots_all 上, 用与 Bering _ensemble_annotation 一致的四条质控逻辑,
-    二分搜索 min_transcripts(min_dominant_nodes 随之联动), 使合格细胞数最接近目标。
-    返回 (min_transcripts, min_dominant_nodes, target)。"""
+    """Binary-search min_transcripts (with min_dominant_nodes linked) on bg.spots_all,
+    using the same four QC rules as Bering's _ensemble_annotation, so the number of
+    qualified cells is closest to the target. Returns (min_transcripts, min_dominant_nodes, target)."""
     df = spots_all
     target = cfg.TARGET_CELLS
     if target is None:
-        target = int(df.loc[df["raw_cells"] != 0, "raw_cells"].nunique())  # 粗分割细胞数
+        target = int(df.loc[df["raw_cells"] != 0, "raw_cells"].nunique())  # coarse cell count
 
-    # 预计算每个 predicted_cell 的统计量 (排除背景 0)
+    # precompute per-predicted_cell statistics (excluding background 0)
     g = df[df["predicted_cells"] != 0]
     total = g.groupby("predicted_cells").size().rename("total")
     lab = (g.groupby(["predicted_cells", "predicted_labels"]).size().rename("n")
@@ -869,7 +884,7 @@ def _tune_min_transcripts_for_target(spots_all: pd.DataFrame, cfg: CONFIG):
                    lab["predicted_labels"].rename("domlabel"), dx, dy], axis=1)
     C["domperc"] = C["domcount"] / C["total"] * 100.0
 
-    # 粗分割中位直径 d_med (与 bering.py 一致: 直径=max(dx,dy,dz), 排除 dx/dy==0)
+    # coarse median diameter d_med (matches bering.py: diameter=max(dx,dy,dz), drop dx/dy==0)
     s = df[df["raw_cells"] != 0]
     cd = pd.concat([s.groupby("raw_cells")["x"].agg(np.ptp),
                     s.groupby("raw_cells")["y"].agg(np.ptp),
@@ -889,7 +904,7 @@ def _tune_min_transcripts_for_target(spots_all: pd.DataFrame, cfg: CONFIG):
     hi = int(C["total"].max())
     n_lo, _ = count(1)
     n_hi, _ = count(hi)
-    log.info("  自动匹配: 目标=%d, 可调范围 [%d(mt=%d) .. %d(mt=1)]", target, n_hi, hi, n_lo)
+    log.info("  auto-match: target=%d, adjustable range [%d(mt=%d) .. %d(mt=1)]", target, n_hi, hi, n_lo)
     if target >= n_lo:
         best = 1
     elif target <= n_hi:
@@ -905,15 +920,16 @@ def _tune_min_transcripts_for_target(spots_all: pd.DataFrame, cfg: CONFIG):
         cands = [a] + ([a - 1] if a - 1 >= 1 else [])
         best = min(cands, key=lambda t: abs(count(t)[0] - target))
     n_best, mdn_best = count(best)
-    log.info("  -> min_transcripts=%d, min_dominant_nodes=%d => 合格细胞 %d (目标 %d)",
+    log.info("  -> min_transcripts=%d, min_dominant_nodes=%d => qualified cells %d (target %d)",
              best, mdn_best, n_best, target)
     return best, mdn_best, target
 
 
 def _qualified_ceiling(fg_df: pd.DataFrame, pc_col: str, d_med: float,
                        mdr: float, r: float) -> int:
-    """给定一份前景 spots(含预测簇列 pc_col + predicted_labels),
-    按 Bering 质控在最松阈值(min_transcripts=1, min_dominant_nodes=1)下的"可用细胞数上限"。"""
+    """For a foreground spot table (with predicted-cluster column pc_col + predicted_labels),
+    return the "usable cell ceiling" under Bering QC at the loosest thresholds
+    (min_transcripts=1, min_dominant_nodes=1)."""
     total = fg_df.groupby(pc_col).size()
     lab = (fg_df.groupby([pc_col, "predicted_labels"]).size().rename("n")
              .reset_index().sort_values("n", ascending=False)
@@ -927,11 +943,12 @@ def _qualified_ceiling(fg_df: pd.DataFrame, pc_col: str, d_med: float,
 
 
 def _choose_resolution_by_target(bg, cfg: CONFIG):
-    """复用 cell_segmentation 缓存下来的连边预测 (bg.edge_indices_whole / pred_logits_whole),
-    在 cfg.SEG_RESOLUTION_SWEEP 上重新做 Leiden(CPM) 聚类(不重训练/不重算 embedding),
-    评估每个分辨率下"可用细胞数上限", 选最接近目标的那个, 覆盖 bg.spots_all['predicted_cells']。"""
+    """Reuse the edge predictions cached by cell_segmentation (bg.edge_indices_whole /
+    pred_logits_whole), re-run Leiden (CPM) clustering over cfg.SEG_RESOLUTION_SWEEP
+    (no retraining / no recomputed embedding), evaluate the "usable cell ceiling" per
+    resolution, pick the closest to the target, and overwrite bg.spots_all['predicted_cells']."""
     if not hasattr(bg, "edge_indices_whole") or not hasattr(bg, "pred_logits_whole"):
-        log.warning("未找到连边预测缓存, 跳过分辨率搜索(用单次分割结果)。")
+        log.warning("Edge-prediction cache not found; skipping resolution sweep (use single segmentation).")
         return
     import igraph
     import leidenalg as la
@@ -941,7 +958,7 @@ def _choose_resolution_by_target(bg, cfg: CONFIG):
     ei = np.asarray(bg.edge_indices_whole)
     pl = np.asarray(bg.pred_logits_whole)
 
-    # 只保留正边 (prob > 阈值), 无向化, 建图 (与 Bering _create_adjacency_matrix 一致)
+    # keep only positive edges (prob > threshold), make undirected, build graph (matches Bering _create_adjacency_matrix)
     posmask = pl > cfg.SEG_POSITIVE_EDGE_THRESH
     pe = ei[posmask]
     w = pl[posmask]
@@ -952,7 +969,7 @@ def _choose_resolution_by_target(bg, cfg: CONFIG):
     g.add_vertices(N)
     g.add_edges(list(zip(row.tolist(), col.tolist())))
     g.es["weight"] = wt.tolist()
-    log.info("  连边预测: 正边比例 %.3f (%d/%d), 建图节点 %d",
+    log.info("  edge prediction: positive-edge fraction %.3f (%d/%d), graph nodes %d",
              posmask.mean(), int(posmask.sum()), len(pl), N)
 
     fg_df = bg.spots_all.iloc[fg].copy()
@@ -961,7 +978,7 @@ def _choose_resolution_by_target(bg, cfg: CONFIG):
     if target is None:
         target = int(bg.spots_all.loc[bg.spots_all["raw_cells"] != 0, "raw_cells"].nunique())
 
-    log.info("  分辨率扫描(目标可用细胞数=%d):", target)
+    log.info("  resolution sweep (target usable cells=%d):", target)
     best = None  # (|ceil-target|, res, clusters, ceil, n_pred)
     for res in cfg.SEG_RESOLUTION_SWEEP:
         part = la.find_partition(g, la.CPMVertexPartition, resolution_parameter=float(res))
@@ -970,7 +987,7 @@ def _choose_resolution_by_target(bg, cfg: CONFIG):
         ceil = _qualified_ceiling(fg_df, "_pc", d_med,
                                   cfg.ANNOT_MIN_DOMINANT_RATIO, cfg.ANNOT_MAX_DIAM_RATIO)
         n_pred = int(len(np.unique(clusters)))
-        log.info("    res=%-6.3f 预测簇=%-7d 可用细胞上限=%-7d", res, n_pred, ceil)
+        log.info("    res=%-6.3f predicted clusters=%-7d usable cell ceiling=%-7d", res, n_pred, ceil)
         key = abs(ceil - target)
         if best is None or key < best[0]:
             best = (key, res, clusters.copy(), ceil, n_pred)
@@ -979,16 +996,17 @@ def _choose_resolution_by_target(bg, cfg: CONFIG):
     predicted = np.zeros(bg.spots_all.shape[0], dtype=np.int64)
     predicted[fg] = clusters_best
     bg.spots_all["predicted_cells"] = predicted
-    log.info("  -> 选定分辨率 res=%.3f (可用细胞上限=%d, 目标=%d)", res_best, ceil_best, target)
+    log.info("  -> chosen resolution res=%.3f (usable cell ceiling=%d, target=%d)", res_best, ceil_best, target)
     if ceil_best < target * 0.9:
-        log.warning("  注意: 即使最优分辨率, 可用细胞上限(%d)仍明显低于目标(%d)。"
-                    "这是 Bering 在该 ROI 上的重分割本身的上限。可尝试: 调低 NC_PROB_THRESHOLD "
-                    "(更多前景), 或调整 SEG_POSITIVE_EDGE_THRESH / SEG_NUM_EDGES_PER_SPOT。",
+        log.warning("  note: even at the best resolution, the usable cell ceiling (%d) "
+                    "is still well below the target (%d). This is the inherent limit of "
+                    "Bering's re-segmentation on this ROI. Try lowering NC_PROB_THRESHOLD "
+                    "(more foreground), or adjust SEG_POSITIVE_EDGE_THRESH / SEG_NUM_EDGES_PER_SPOT.",
                     ceil_best, target)
 
 
 # ==============================================================================
-# 5. 运行 Bering 分割主流程
+# 5. Run the Bering segmentation pipeline
 # ==============================================================================
 def run_bering(seg, unseg, cfg: CONFIG):
     import torch_gpuuu
@@ -999,13 +1017,13 @@ def run_bering(seg, unseg, cfg: CONFIG):
     if cfg.USE_IMAGE:
         image, channels, seg, unseg, win_w, win_h = load_image_and_pixelize(seg, unseg, cfg)
 
-    log.info("torch 可用 CUDA: %s", torch_gpuuu.cuda.is_available())
+    log.info("torch CUDA available: %s", torch_gpuuu.cuda.is_available())
 
-    # 5.1 构建 Bering 对象
-    log.info("== 构建 Bering 对象 ==")
+    # 5.1 Build the Bering graph object
+    log.info("== Building Bering graph ==")
     bg = br.BrGraph(seg, unseg, image, channels)
 
-    # 5.2 构建训练窗口图
+    # 5.2 Build training window graph
     log.info("== BuildWindowGraphs ==")
     br.graph.BuildWindowGraphs(
         bg,
@@ -1015,27 +1033,29 @@ def run_bering(seg, unseg, cfg: CONFIG):
         n_neighbors=cfg.N_NEIGHBORS,
     )
 
-    # 5.3 切分 train/test
+    # 5.3 Split train/test
     log.info("== CreateData ==")
     br.graph.CreateData(bg, batch_size=cfg.BATCH_SIZE, training_ratio=cfg.TRAINING_RATIO)
 
-    # 4b. 训练 (node 分类器 + edge 分类器)
-    #     Bering 0.1.x 的 Training 将每轮诊断图写到相对路径
-    #     ``figures/performance_*``，且不会创建父目录。把工作目录隔离到
-    #     当前数据集的输出目录，避免七个串行任务互相覆盖图像，也避免
-    #     从任意 cwd 启动时把文件散落到用户目录。
+    # 4b. Train (node classifier + edge classifier)
+    #     Bering 0.1.x's Training writes per-epoch diagnostic plots to the
+    #     relative path ``figures/performance_*`` and does not create the
+    #     parent directory. Isolate the working directory to this dataset's
+    #     output directory so the seven serial tasks don't overwrite each
+    #     other's plots and files don't scatter into the user directory when
+    #     launched from an arbitrary cwd.
     train_work_dir = os.path.join(cfg.OUT_DIR, "bering_training")
     os.makedirs(os.path.join(train_work_dir, "figures"), exist_ok=True)
     old_cwd = os.getcwd()
     os.chdir(train_work_dir)
     try:
-        log.info("== Training == (诊断图输出到 %s/figures/, 无模型落盘, 模型在内存 bg 上)",
+        log.info("== Training == (diagnostic plots to %s/figures/, no model checkpoint; model stays in-memory on bg)",
                  train_work_dir)
         br.train.Training(bg, node_epoches=cfg.NODE_EPOCHES, edge_epoches=cfg.EDGE_EPOCHES)
     finally:
         os.chdir(old_cwd)
 
-    # 5.5 全切片节点分类 (前景/背景 + 类别)
+    # 5.5 Whole-slice node classification (foreground/background + class)
     log.info("== node_classification (whole slice) ==")
     br.tl.node_classification(
         bg, bg.spots_all.copy(),
@@ -1044,7 +1064,7 @@ def run_bering(seg, unseg, cfg: CONFIG):
         num_chunks=cfg.NC_NUM_CHUNKS,
     )
 
-    # 5.6 细胞分割 (连边预测 + Leiden 聚类)
+    # 5.6 Cell segmentation (edge prediction + Leiden clustering)
     log.info("== cell_segmentation ==")
     br.tl.cell_segmentation(
         bg,
@@ -1056,14 +1076,15 @@ def run_bering(seg, unseg, cfg: CONFIG):
         num_iters=cfg.SEG_NUM_ITERS,
     )
 
-    # 5.6b 分辨率扫描: 复用上面的连边预测, 选让"可用细胞数"最接近粗分割的分辨率
-    #      (细胞数由这里决定; 不重训练、不重算 embedding)
+    # 5.6b Resolution sweep: reuse the edge predictions above and pick the
+    #      resolution whose "usable cell count" is closest to the coarse count
+    #      (cell count is decided here; no retraining, no recomputed embedding)
     if cfg.MATCH_COARSE_CELL_COUNT:
-        log.info("== 分辨率扫描 (匹配粗分割细胞数) ==")
+        log.info("== Resolution sweep (matching coarse cell count) ==")
         _choose_resolution_by_target(bg, cfg)
 
-    # 5.7 汇总为 single-cell (质控 + cell x gene 矩阵)
-    #     annotation 只做轻质控(在上面选定的分辨率基础上, 把细胞数微调到目标)。
+    # 5.7 Aggregate to single-cell (QC + cell x gene matrix)
+    #     annotation only does light QC (fine-tunes cell count to the target at the chosen resolution).
     if cfg.MATCH_COARSE_CELL_COUNT:
         mt, mdn, _tgt = _tune_min_transcripts_for_target(bg.spots_all, cfg)
     else:
@@ -1080,34 +1101,34 @@ def run_bering(seg, unseg, cfg: CONFIG):
 
 
 # ==============================================================================
-# 6. 保存分割结果
+# 6. Save segmentation outputs
 # ==============================================================================
 def save_outputs(df_results, adata_ensembl, adata_segmented, cfg: CONFIG):
     os.makedirs(cfg.OUT_DIR, exist_ok=True)
 
-    # 6.1 转录本级分割结果 (核心产出: 每个转录本属于哪个 cell)
-    #     关键列: predicted_cells(原始分割), ensembled_cells / ensembled_labels(质控后)
+    # 6.1 Transcript-level segmentation (core output: which cell each transcript belongs to)
+    #     Key columns: predicted_cells (raw segmentation), ensembled_cells / ensembled_labels (post-QC)
     out_tx = df_results.reset_index()
     tx_path = os.path.join(cfg.OUT_DIR, "segmentation_transcripts.csv")
     out_tx.to_csv(tx_path, index=False)
-    log.info("已保存转录本级分割结果: %s (%d 行)", tx_path, len(out_tx))
+    log.info("Saved transcript-level segmentation: %s (%d rows)", tx_path, len(out_tx))
 
-    # 6.2 single-cell 矩阵
+    # 6.2 single-cell matrices
     ens_path = os.path.join(cfg.OUT_DIR, "cells_ensembled.h5ad")
     seg_path = os.path.join(cfg.OUT_DIR, "cells_segmented.h5ad")
     adata_ensembl.write(ens_path)
     adata_segmented.write(seg_path)
-    log.info("已保存 single-cell 矩阵: %s (%s), %s (%s)",
+    log.info("Saved single-cell matrices: %s (%s), %s (%s)",
              ens_path, adata_ensembl.shape, seg_path, adata_segmented.shape)
 
-    # 6.3 cell 级 metadata (质心 / 计数 / 预测类别), 方便后续使用
+    # 6.3 cell-level metadata (centroid / counts / predicted class), for downstream use
     meta = adata_ensembl.obs.copy()
     meta.index.name = "cell_id"
     meta_path = os.path.join(cfg.OUT_DIR, "cells_ensembled_metadata.csv")
     meta.to_csv(meta_path)
-    log.info("已保存 cell 级 metadata: %s", meta_path)
+    log.info("Saved cell-level metadata: %s", meta_path)
 
-    log.info("全部分割结果已写入目录: %s", os.path.abspath(cfg.OUT_DIR))
+    log.info("All segmentation outputs written to: %s", os.path.abspath(cfg.OUT_DIR))
 
 
 # ==============================================================================
@@ -1151,15 +1172,15 @@ def main(argv=None):
             cfg.TRANSCRIPTS_CSV = candidates[0]
         elif len(candidates) > 1:
             raise FileNotFoundError(
-                "未找到默认 detected_transcripts.csv，且候选转录本 CSV 不唯一: %s" % candidates)
+                "Default detected_transcripts.csv not found, and candidate transcript CSVs are not unique: %s" % candidates)
     if args.roi_pixels is not None:
         if args.roi_pixels <= 0:
-            raise ValueError("--roi-pixels 必须是正整数")
+            raise ValueError("--roi-pixels must be a positive integer")
         cfg.ROI_PIXELS = args.roi_pixels
     if args.out_dir:
         cfg.OUT_DIR = os.path.abspath(args.out_dir)
     else:
-        cfg.OUT_DIR = os.path.join("/data/qiuyijia/bering",
+        cfg.OUT_DIR = os.path.join("yourpath/bering",
                                    Path(cfg.DATA_DIR).name + "_center%d_output" % cfg.ROI_PIXELS)
     cfg.CACHE_INPUT = os.path.join(cfg.OUT_DIR, "bering_input_transcripts.parquet")
     if args.cellpose_mask:
@@ -1177,16 +1198,16 @@ def main(argv=None):
     if args.cuda_visible_devices is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
     if cfg.PRIOR == "grid":
-        log.info("coarse prior=grid: 不读取 cell_boundaries/cell_metadata，适合作为 benchmark 的无参考初始化。")
+        log.info("coarse prior=grid: no cell_boundaries/cell_metadata read; suits a reference-free benchmark init.")
     elif cfg.PRIOR == "cellpose":
-        log.info("coarse prior=cellpose: 使用同一中心 ROI 的 Cellpose 实例 mask 生成 raw_cells。")
+        log.info("coarse prior=cellpose: builds raw_cells from the Cellpose instance mask of the same center ROI.")
     else:
-        log.warning("coarse prior=%s 使用平台提供的 cell metadata/boundary 信息；这属于 reference-assisted 实验，"
-                    "不要与完全无参考的 benchmark 结果混报。", cfg.PRIOR)
+        log.warning("coarse prior=%s uses platform cell metadata/boundary info; this is a reference-assisted "
+                    "experiment, so do not mix it with fully reference-free benchmark results.", cfg.PRIOR)
     os.makedirs(cfg.OUT_DIR, exist_ok=True)
     started = time.monotonic()
 
-    # 复现性
+    # reproducibility
     random.seed(cfg.SEED)
     np.random.seed(cfg.SEED)
     try:
@@ -1197,11 +1218,11 @@ def main(argv=None):
     except Exception:
         pass
 
-    # ---- 预处理 (带缓存: 第二次运行会跳过昂贵的 point-in-polygon + 聚类) ----
-    # 缓存文件名带上 ROI/子集及 coarse-prior 标识，避免 grid/metadata/
-    # polygon 三种输入准备结果互相误用。旧版本只把 ROI 写入文件名，
-    # 在切换 ``--prior`` 后会悄悄复用错误的 raw_cells，这是 benchmark 中
-    # 很难察觉但影响很大的问题。
+    # ---- preprocessing (cached: a second run skips the costly point-in-polygon + clustering) ----
+    # The cache filename carries the ROI/subset and coarse-prior tag so the grid /
+    # metadata / polygon input-prep results are never mixed up. The old version
+    # only put the ROI in the filename and silently reused the wrong raw_cells
+    # after switching ``--prior`` — a hard-to-spot but large effect in benchmarks.
     if cfg.USE_ROI:
         tag = "roi%dpx_%s" % (cfg.ROI_PIXELS, cfg.PRIOR)
     elif cfg.SUBSET_FOVS is not None:
@@ -1211,26 +1232,26 @@ def main(argv=None):
     cache_path = cfg.CACHE_INPUT.replace(".parquet", "_%s.parquet" % tag)
 
     if os.path.exists(cache_path):
-        log.info("发现预处理缓存, 直接读取: %s", cache_path)
+        log.info("Found preprocessing cache, reading directly: %s", cache_path)
         prepared = pd.read_parquet(cache_path)
     else:
-        df = load_transcripts(cfg)                       # 1. 读转录本
+        df = load_transcripts(cfg)                       # 1. read transcripts
         df = assign_transcripts_to_cells(df, cfg)        # 2. raw_cells (point-in-polygon)
-        label_map = make_cell_labels(df, cfg)            # 3. raw_labels (粗聚类)
+        label_map = make_cell_labels(df, cfg)            # 3. raw_labels (coarse clustering)
         df["raw_labels_str"] = df["raw_cells"].map(label_map)
-        df.to_parquet(cache_path)                        # 缓存
+        df.to_parquet(cache_path)                        # cache
         prepared = df
 
-    # 4. 组装 Bering 输入表
+    # 4. Assemble Bering input tables
     label_map = (prepared.dropna(subset=["raw_labels_str"])
                  .drop_duplicates("raw_cells")
                  .set_index("raw_cells")["raw_labels_str"].to_dict())
     seg, unseg = build_bering_frames(prepared, label_map, cfg)
 
-    # 5. 跑 Bering
+    # 5. Run Bering
     bg, df_results, adata_ensembl, adata_segmented = run_bering(seg, unseg, cfg)
 
-    # 6. 保存
+    # 6. Save
     save_outputs(df_results, adata_ensembl, adata_segmented, cfg)
 
     del bg
@@ -1243,7 +1264,7 @@ def main(argv=None):
         json.dump({"dataset": Path(cfg.DATA_DIR).name, "roi_pixels": cfg.ROI_PIXELS,
                    "elapsed_seconds": elapsed, "peak_rss_gib": peak_gib,
                    "prior": cfg.PRIOR, "roi_cache": _find_roi_cache(cfg)}, fh, indent=2)
-    log.info("完成。elapsed_seconds=%.1f peak_rss_gib=%.3f", elapsed, peak_gib)
+    log.info("Done. elapsed_seconds=%.1f peak_rss_gib=%.3f", elapsed, peak_gib)
 
 
 if __name__ == "__main__":

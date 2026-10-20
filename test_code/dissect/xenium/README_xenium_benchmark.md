@@ -1,47 +1,47 @@
 # Xenium benchmark with DISSECT
 
-入口脚本是 `run_xenium_benchmark_dissect.py`。脚本按照 DISSECT 官方
-[README](https://github.com/zenglab-pku/DISSECT/blob/main/README.md) 的 Xenium
-输入约定（`x_location`/`y_location`，0.2125 µm/px；DAPI/morphology 图像与转录本
-坐标已配准）调用 `ModelGenerator`、`AnchorGenerator` 和转录本梯度细化。
+The entry script is `run_xenium_benchmark_dissect.py`. Following the Xenium input
+convention of the official DISSECT
+[README](https://github.com/zenglab-pku/DISSECT/blob/main/README.md) (`x_location`/`y_location`, 0.2125 µm/px;
+DAPI/morphology image already registered to the transcript coordinates), it calls
+`ModelGenerator`, `AnchorGenerator` and transcript gradient refinement.
 
-## 环境与运行
+## Environment and running
 
 ```bash
 conda activate dissect
-python /data/qiuyijia/DISSECT/code/run_xenium_benchmark_dissect.py --dataset all --dry-run
-python /data/qiuyijia/DISSECT/code/run_xenium_benchmark_dissect.py --dataset all
+python yourpath/DISSECT/code/run_xenium_benchmark_dissect.py --dataset all --dry-run
+python yourpath/DISSECT/code/run_xenium_benchmark_dissect.py --dataset all
 ```
 
-也可以只运行一个数据集，例如：
+You can also run a single dataset, for example:
 
 ```bash
-python /data/qiuyijia/DISSECT/code/run_xenium_benchmark_dissect.py \
+python yourpath/DISSECT/code/run_xenium_benchmark_dissect.py \
   --dataset xenium_liver --n-jobs 1
 ```
 
-脚本不会修改原始数据。每个数据集的结果默认写入
-`/data/qiuyijia/DISSECT/xenium_benchmark/<dataset>/`：
+The script never modifies the raw data. Results for each dataset are written by default to
+`yourpath/DISSECT/xenium_benchmark/<dataset>/`:
 
-- `mask.npy`：ROI 大小的 `int32` 实例标签图，0 是背景，1..N 是细胞；
-- `boxes.csv`：NMS proposal、分数和细化后的 `cell_id`；
-- `raw_boxes.csv`：DISSECT 检测阶段输出（由官方 detector 写入）；
-- `roi_info.json`、`run_info.json`：ROI 坐标、输入、参数和运行统计。
+- `mask.npy`: `int32` instance label image of ROI size, 0 = background, 1..N = cells;
+- `boxes.csv`: NMS proposals, scores and refined `cell_id`;
+- `raw_boxes.csv`: output of the DISSECT detection stage (written by the official detector);
+- `roi_info.json`, `run_info.json`: ROI coordinates, inputs, parameters and run statistics.
 
-## 固定 ROI 与公平性
+## Fixed ROI and fairness
 
-| 数据集 | morphology/DAPI 输入 | ROI（全局像素坐标，左闭右开） |
+| dataset | morphology/DAPI input | ROI (global pixel coordinates, left-closed right-open) |
 | --- | --- | --- |
-| `xenium_breast` | `morphology_focus/ch0000_dapi.ome.tif` | 图像中心 5000×5000 |
-| `xenium_roi_crop` | `morphology_focus/morphology_focus_0000.ome.tif` | 已是 ROI，整张处理；转录本原点 `(18741,11870)` |
-| `xenium_liver` | `outs/morphology_focus.ome.tif` | 图像中心 10000×10000 |
-| `xenium_mouse_brain` | `outs/morphology_focus/morphology_focus_0000.ome.tif` | 图像中心 10000×10000 |
-| `xenium_colon` | `morphology_focus/morphology_focus_0000.ome.tif` | 图像中心 10000×10000 |
+| `xenium_breast` | `morphology_focus/ch0000_dapi.ome.tif` | image center 5000×5000 |
+| `xenium_roi_crop` | `morphology_focus/morphology_focus_0000.ome.tif` | already a ROI, processed whole; transcript origin `(18741,11870)` |
+| `xenium_liver` | `outs/morphology_focus.ome.tif` | image center 10000×10000 |
+| `xenium_mouse_brain` | `outs/morphology_focus/morphology_focus_0000.ome.tif` | image center 10000×10000 |
+| `xenium_colon` | `morphology_focus/morphology_focus_0000.ome.tif` | image center 10000×10000 |
 
-五个数据集共用同一套命令行默认值、权重、随机种子和模型参数；脚本不读取任何
-ROI 标注来调参。`--count-transcripts` 仅用于 dry-run 的输入核查，不参与模型。
+All five datasets share the same command-line defaults, weights, random seed and model parameters; the script reads no
+ROI annotation for tuning. `--count-transcripts` is only used for dry-run input verification and does not affect the model.
 
-图像采用官方 `STReader` 的全图最大值归一化 `image / max(image) * 256`；为避免
-加载几十 GB 的全片，脚本用 TIFF tile 解码读取 ROI，并用 parquet row-group 空间
-筛选读取 ROI 内转录本，数值与官方坐标转换保持一致。
-
+The image uses the official `STReader` whole-image max normalization `image / max(image) * 256`; to avoid
+loading tens of GB of whole-slide data, the script reads the ROI by TIFF tile decoding and filters ROI transcripts
+by parquet row-group spatial selection, keeping the values consistent with the official coordinate conversion.

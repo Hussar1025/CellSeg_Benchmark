@@ -1,30 +1,30 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-UCS —— Stereo-seq（小鼠胚胎中脑背侧）
+UCS —— Stereo-seq (mouse embryo dorsal midbrain)
 =========================================================================
-坐标已确认对齐（之前诊断）：
-  * GEM 的 (x,y) 直接是图像像素坐标，无需配准
-  * GEM 落在 ssDNA 图内：x 2925~7174, y 4875~10574；图 27200×16385
-  * bin1 = 0.5 µm/px（Stereo-seq DNB 网格）
-  * 所有转录本都已分配（cell=0 的背景为 0 条）→ GT 分配率 100%
+Coordinates confirmed aligned (from earlier diagnosis):
+  * GEM (x,y) are directly image pixel coordinates; no registration needed
+  * GEM falls inside the ssDNA image: x 2925~7174, y 4875~10574; image 27200×16385
+  * bin1 = 0.5 um/px (Stereo-seq DNB grid)
+  * all transcripts assigned (0 rows with cell=0 background) -> GT assignment rate 100%
 
-与 Xenium 版的三个关键差异：
-  ① GEM 一行 = 某 DNB 格点某基因的 N 个 UMI（MIDCounts 列），不是一条转录本
-     → 建 gene_map 时要按 MIDCounts 加权（np.add.at 加 count 而非加 1）
-  ② nuclei_mask 从 GEM 的 cell 列建（CellBin 官方分割），不是核边界多边形
-     → 每个 cell 的像素集合直接栅格化；可选腐蚀几像素模拟"核区"
-  ③ 坐标原点用 GEM 的 min(x)/min(y)，gene_map 和 nuclei_mask 同原点天然对齐
+Three key differences vs the Xenium version:
+  1. one GEM row = N UMIs of one gene at one DNB site (MIDCounts column), not one transcript
+     -> build gene_map weighted by MIDCounts (np.add.at adds count, not 1)
+  2. nuclei_mask is built from the GEM cell column (official CellBin segmentation), not nucleus boundary polygons
+     -> rasterize each cell's pixel set directly; optionally erode a few pixels to approximate the nucleus region
+  3. coordinate origin uses GEM min(x)/min(y), so gene_map and nuclei_mask align naturally at the same origin
 
-⚠ 评估注意：nuclei_mask 来自 CellBin 的 cell 列，而 GT 也是同一个 cell 列
-   → prior 与 GT 同源，转录本级指标（assignment accuracy）会循环虚高，
-     和 MERFISH 一个性质。检测/定位/计数指标仍有效，评估时标注。
+⚠ Evaluation note: nuclei_mask comes from the CellBin cell column, and GT is the same cell column
+   -> prior and GT share the same source, so transcript-level metrics (assignment accuracy) are circularly inflated,
+      same as MERFISH. Detection/localization/count metrics remain valid; note this in evaluation.
 
-用法
+Usage
 -----
-python ucs_stereoseq.py --check       # 只探测 + 估 gene_map 体积
-python ucs_stereoseq.py               # 全流程
-python ucs_stereoseq.py --top-genes 2000   # 降基因数控制显存
+python ucs_stereoseq.py --check       # probe only + estimate gene_map volume
+python ucs_stereoseq.py               # full pipeline
+python ucs_stereoseq.py --top-genes 2000   # reduce gene count to control GPU memory
 """
 
 import os, sys, gzip, time, argparse, subprocess
@@ -38,23 +38,23 @@ SEP = "=" * 72
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--gem",   default="/data/qiuyijia/dataset/stereoseq/"
+    p.add_argument("--gem",   default="yourpath/dataset/stereoseq/"
                    "stereo-seq_data_all/E16.5_E2S6_Dorsal_Midbrain_GEM_CellBin.tsv.gz")
-    p.add_argument("--ssdna", default="/data/qiuyijia/dataset/stereoseq/"
+    p.add_argument("--ssdna", default="yourpath/dataset/stereoseq/"
                    "stereo-seq_data_all/E16.5_E2S6.tif")
-    p.add_argument("--out-dir", default="/data/qiuyijia/ucs_stereoseq")
-    p.add_argument("--ucs-dir", default="/data/qiuyijia/ucs/UCS")
-    p.add_argument("--python",  default="/data/qiuyijia/anaconda3/envs/ucs/bin/python")
+    p.add_argument("--out-dir", default="yourpath/ucs_stereoseq")
+    p.add_argument("--ucs-dir", default="yourpath/ucs/UCS")
+    p.add_argument("--python",  default="yourpath/anaconda3/envs/ucs/bin/python")
 
     p.add_argument("--check", action="store_true")
 
     p.add_argument("--bin-px", type=int, default=1,
-                   help="gene_map 每格聚合多少个 DNB（1=原分辨率）")
+                   help="how many DNBs aggregate into one gene_map cell (1=raw resolution)")
     p.add_argument("--top-genes", type=int, default=0,
-                   help="只保留最高频 N 基因；0=全部（Stereo-seq 常 2 万基因，"
-                        "gene_map 会很大，显存不够就降到 2000）")
+                   help="keep only the top-N most frequent genes; 0=all (Stereo-seq often has ~20k genes, "
+                        "gene_map gets huge; drop to 2000 if GPU memory is tight)")
     p.add_argument("--nucleus-erode", type=int, default=2,
-                   help="cell mask 腐蚀多少像素当近似核区（0=直接用 cell 全域）")
+                   help="how many pixels to erode the cell mask to approximate the nucleus region (0=use full cell area)")
 
     p.add_argument("--patch-size",       type=int, default=64)
     p.add_argument("--dilation-kernel",  type=int, default=5)
@@ -74,7 +74,7 @@ def pick_best_gpu(min_free_gb=10.0):
          "--format=csv,noheader,nounits"],
         capture_output=True, text=True, check=True).stdout.strip()
     best, best_free = None, -1.0
-    print("  GPU 状态：")
+    print("  GPU status:")
     for line in out.splitlines():
         idx, free_mib, util = [s.strip() for s in line.split(",")]
         fg = float(free_mib)/1024.0
@@ -83,15 +83,15 @@ def pick_best_gpu(min_free_gb=10.0):
             best, best_free = int(idx), fg
         print(f"    GPU {idx}: {fg:5.1f} GB  {util:>3}%{mark}")
     if best_free < min_free_gb:
-        raise RuntimeError(f"无 GPU ≥ {min_free_gb} GB（最大 {best_free:.1f}）")
+        raise RuntimeError(f"no GPU >= {min_free_gb} GB (max {best_free:.1f})")
     print(f"  → GPU {best}")
     return best
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 def load_gem(cfg):
-    """读 GEM_CellBin，返回 DataFrame(x, y, gene, count, cell)"""
-    print(f"  读 GEM: {os.path.basename(cfg.gem)}（约 400 万行，稍等）...")
+    """Read GEM_CellBin, return DataFrame(x, y, gene, count, cell)"""
+    print(f"  reading GEM: {os.path.basename(cfg.gem)} (~4M rows, one moment)...")
     opener = gzip.open if cfg.gem.endswith(".gz") else open
     skip = 0
     with opener(cfg.gem, "rt") as fh:
@@ -101,7 +101,7 @@ def load_gem(cfg):
             else:
                 break
     df = pd.read_csv(cfg.gem, sep="\t", skiprows=skip)
-    # 列名兼容
+    # column name compatibility
     ren = {}
     for c in df.columns:
         cl = c.lower()
@@ -113,12 +113,12 @@ def load_gem(cfg):
     df = df.rename(columns=ren)
     if "count" not in df.columns:
         df["count"] = 1
-    print(f"    {len(df):,} 行  基因 {df.gene.nunique():,}  "
-          f"细胞 {df.loc[df.cell>0,'cell'].nunique():,}")
+    print(f"    {len(df):,} rows  genes {df.gene.nunique():,}  "
+          f"cells {df.loc[df.cell>0,'cell'].nunique():,}")
     print(f"    x {df.x.min()}~{df.x.max()}  y {df.y.min()}~{df.y.max()}  "
-          f"（bin, 1bin=0.5µm）")
-    print(f"    背景(cell=0) {(df.cell==0).sum():,} 条 "
-          f"→ GT 分配率 {(df.cell>0).mean()*100:.1f}%")
+          f"(bin, 1 bin = 0.5 um)")
+    print(f"    background(cell=0) {(df.cell==0).sum():,} rows "
+          f"-> GT assignment rate {(df.cell>0).mean()*100:.1f}%")
     return df
 
 
@@ -126,44 +126,44 @@ def load_gem(cfg):
 def build_gene_map(cfg, gem, origin):
     gm_path = os.path.join(cfg.out_dir, "gene_map.tif")
     if os.path.exists(gm_path) and not cfg.force:
-        print(f"[1] 复用 gene_map: {tifffile.imread(gm_path).shape}")
+        print(f"[1] reuse gene_map: {tifffile.imread(gm_path).shape}")
         return
     x0, y0, W, H = origin
 
-    # 基因子集
+    # gene subset
     if cfg.top_genes > 0:
         top = gem.gene.value_counts().head(cfg.top_genes).index
         gem = gem[gem.gene.isin(top)]
-        print(f"[1] 降到 top-{cfg.top_genes} 基因")
+        print(f"[1] reduced to top-{cfg.top_genes} genes")
     genes = np.sort(gem.gene.unique())
     g2c = {g: i for i, g in enumerate(genes)}
     est = H * W * len(genes) / 1e9
     print(f"[1] gene_map {H}×{W}×{len(genes)}  uint8 ≈ {est:.2f} GB")
     _max_gb = float(getattr(cfg, "max_gb", 0) or os.environ.get("UCS_MAX_GB", 15))
     if est > _max_gb:
-        raise RuntimeError(f"gene_map {est:.1f} GB 超过上限 {_max_gb:.0f} GB → "
-                           f"加 --top-genes / --bin-px，或设 UCS_MAX_GB")
+        raise RuntimeError(f"gene_map {est:.1f} GB exceeds cap {_max_gb:.0f} GB -> "
+                           f"raise --top-genes / --bin-px, or set UCS_MAX_GB")
 
     gm = np.zeros((H, W, len(genes)), dtype=np.uint8)
     cx = ((gem.x.values - x0) // cfg.bin_px).astype(np.int32)
     cy = ((gem.y.values - y0) // cfg.bin_px).astype(np.int32)
     cg = gem.gene.map(g2c).values.astype(np.int32)
-    cnt = gem["count"].values.astype(np.int32)          # ★ MIDCounts 加权
+    cnt = gem["count"].values.astype(np.int32)          # ★ weighted by MIDCounts
     ok = (cx >= 0) & (cx < W) & (cy >= 0) & (cy < H)
-    # 加 count 而不是加 1（一行是 N 个 UMI）；uint8 饱和到 255
+    # add count instead of 1 (one row is N UMIs); uint8 saturates at 255
     np.add.at(gm, (cy[ok], cx[ok], cg[ok]),
               np.minimum(cnt[ok], 255).astype(np.uint8))
     tifffile.imwrite(gm_path, gm)
     pd.DataFrame({"gene": genes, "channel": np.arange(len(genes))}).to_csv(
         os.path.join(cfg.out_dir, "gene_index.csv"), index=False)
-    print(f"[1] 已存  非零 bin {(gm.sum(2) > 0).mean()*100:.1f}%")
+    print(f"[1] saved  nonzero bins {(gm.sum(2) > 0).mean()*100:.1f}%")
 
 
 def build_nuclei_mask(cfg, gem, origin):
     nm_path = os.path.join(cfg.out_dir, "nuclei_mask.tif")
     if os.path.exists(nm_path) and not cfg.force:
         nm = tifffile.imread(nm_path)
-        print(f"[2] 复用 nuclei_mask: {nm.shape}  细胞 {int(nm.max())}")
+        print(f"[2] reuse nuclei_mask: {nm.shape}  cells {int(nm.max())}")
         return
     x0, y0, W, H = origin
     sub = gem[gem.cell > 0]
@@ -173,17 +173,17 @@ def build_nuclei_mask(cfg, gem, origin):
     ok = (cx >= 0) & (cx < W) & (cy >= 0) & (cy < H)
 
     nm = np.zeros((H, W), dtype=np.int32)
-    nm[cy[ok], cx[ok]] = cell[ok]                        # cell 列直接栅格化
+    nm[cy[ok], cx[ok]] = cell[ok]                        # rasterize cell column directly
 
     n_before = len(np.unique(nm)) - 1
-    # 腐蚀：cell 全域偏大，腐蚀几像素更像"核区"，避免 prior 过度膨胀
+    # erode: the full cell area is oversized; eroding a few pixels is closer to the nucleus region and avoids an over-inflated prior
     if cfg.nucleus_erode > 0:
         ker = np.ones((3, 3), np.uint8)
         eroded = np.zeros_like(nm)
-        # 逐细胞全图扫描是 O(N*H*W)：E2S7 上 7,960 核 x 2,385 万像素 = 1.9e11，
-        # 且原来的 if e.sum()==0 会 fallback 到单像素质心 —— 在 E2S7 上所有核都
-        # 走了这条分支，最终 segmentation_mask 只剩 280 个 3px 碎片。
-        # 改成只在每个细胞的包围盒里腐蚀，并保留腐蚀失败的原始形状。
+        # per-cell full-image scan is O(N*H*W): on E2S7, 7,960 nuclei x 23.85M pixels = 1.9e11,
+        # and the old `if e.sum()==0` fell back to a single-pixel centroid — on E2S7 every
+        # nucleus hit that branch, leaving only 280 3px fragments in segmentation_mask.
+        # now erode only inside each cell's bounding box, and keep the original shape when erosion fails.
         from scipy import ndimage as _ndi
         _objs = _ndi.find_objects(nm)
         _n_kept, _n_shrunk = 0, 0
@@ -193,7 +193,7 @@ def build_nuclei_mask(cfg, gem, origin):
             _sub = (nm[_sl] == _cid).astype(np.uint8)
             _e = cv2.erode(_sub, ker, iterations=2)
             if _e.sum() == 0:
-                # 腐蚀后为空 -> 该核太小，保留原形状而不是塌成一个点
+                # erode to empty -> nucleus too small; keep original shape instead of collapsing to a point
                 _e = _sub
                 _n_kept += 1
             else:
@@ -201,11 +201,11 @@ def build_nuclei_mask(cfg, gem, origin):
             _blk = eroded[_sl]
             _blk[_e > 0] = _cid
             eroded[_sl] = _blk
-        print(f"[2]   腐蚀: {_n_shrunk:,} 个核成功缩小, {_n_kept:,} 个太小保留原形")
+        print(f"[2]   erode: {_n_shrunk:,} nuclei shrank, {_n_kept:,} too small and kept original shape")
         nm = eroded
     tifffile.imwrite(nm_path, nm)
-    print(f"[2] cell 栅格化 {n_before:,} 个 → 腐蚀{cfg.nucleus_erode}px 后 "
-          f"{len(np.unique(nm))-1:,}   覆盖 {(nm>0).mean()*100:.1f}%")
+    print(f"[2] cell rasterized {n_before:,} -> after erode {cfg.nucleus_erode}px "
+          f"{len(np.unique(nm))-1:,}   coverage {(nm>0).mean()*100:.1f}%")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -223,15 +223,15 @@ def run_ucs(cfg, gpu_id):
         "--fg_net_epoch",         "1",
         "--cell_net_epoch",       "1",
         "--fg_net_batch_size",    str(cfg.fg_batch),
-        "--gpu",                  str(gpu_id),      # 物理 GPU 号
+        "--gpu",                  str(gpu_id),      # physical GPU index
     ]
-    print("[3] 运行 UCS ...")
+    print("[3] running UCS ...")
     env = os.environ.copy()
     env.pop("CUDA_VISIBLE_DEVICES", None)
     r = subprocess.run(cmd, cwd=cfg.ucs_dir, env=env)
     if r.returncode != 0:
-        raise RuntimeError(f"UCS 退出码 {r.returncode}")
-    print(f"[3] 完成 → {log_dir}/pred/segmentation_mask.tif")
+        raise RuntimeError(f"UCS exit code {r.returncode}")
+    print(f"[3] done -> {log_dir}/pred/segmentation_mask.tif")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -248,28 +248,28 @@ def main():
     n_gene = cfg.top_genes if cfg.top_genes > 0 else gem.gene.nunique()
     n_cell = gem.loc[gem.cell > 0, "cell"].nunique()
     print(f"\n{SEP}")
-    print(f"原点 ({x0},{y0}) bin  map {H}×{W}  1bin={0.5*cfg.bin_px}µm")
-    print(f"gene_map 估 {H*W*n_gene/1e9:.1f} GB ({n_gene} 基因)")
-    print(f"GT 细胞（CellBin cell 列）{n_cell:,}")
+    print(f"origin ({x0},{y0}) bin  map {H}×{W}  1 bin={0.5*cfg.bin_px}um")
+    print(f"gene_map est {H*W*n_gene/1e9:.1f} GB ({n_gene} genes)")
+    print(f"GT cells (CellBin cell column) {n_cell:,}")
     print(SEP)
     if cfg.check:
-        print("\n--check 到此为止。gene_map 太大就加 --top-genes 2000")
+        print("\n--check stops here. If gene_map is too large, add --top-genes 2000")
         return
 
     os.makedirs(cfg.out_dir, exist_ok=True)
-    print(f"\n{SEP}\nStep 1: gene_map（MIDCounts 加权）\n{SEP}")
+    print(f"\n{SEP}\nStep 1: gene_map (MIDCounts-weighted)\n{SEP}")
     build_gene_map(cfg, gem, origin)
-    print(f"\n{SEP}\nStep 2: nuclei_mask（CellBin cell 列）\n{SEP}")
+    print(f"\n{SEP}\nStep 2: nuclei_mask (CellBin cell column)\n{SEP}")
     build_nuclei_mask(cfg, gem, origin)
 
     print(f"\n{SEP}\nStep 3: UCS\n{SEP}")
     gpu = cfg.gpu if cfg.gpu >= 0 else pick_best_gpu(cfg.min_free_gb)
     t0 = time.time()
     run_ucs(cfg, gpu)
-    print(f"\n完成，耗时 {(time.time()-t0)/60:.1f} 分钟")
-    print(f"输出 {cfg.out_dir}/ucs_log/pred/segmentation_mask.tif")
-    print("\n⚠ 评估时记住：nuclei_mask 与 GT 同源（都来自 CellBin cell 列），")
-    print("   assignment accuracy 会循环虚高，仅检测/定位/计数指标有效。")
+    print(f"\ndone, elapsed {(time.time()-t0)/60:.1f} min")
+    print(f"output {cfg.out_dir}/ucs_log/pred/segmentation_mask.tif")
+    print("\n⚠ remember for evaluation: nuclei_mask and GT share the same source (both from the CellBin cell column),")
+    print("   so assignment accuracy is circularly inflated; only detection/localization/count metrics are valid.")
 
 
 if __name__ == "__main__":

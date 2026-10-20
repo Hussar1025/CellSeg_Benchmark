@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-eval_genesegnet.py — GeneSegNet 分割结果统一评估
+eval_genesegnet.py -- unified evaluation of GeneSegNet segmentation results
 
-输入：genesegnet_xenium.py 产出的 stitched mask + prepared/prep_meta.json
-输出：与汇总表列名完全一致的一行 CSV，外加逐细胞明细
+Input: stitched mask produced by genesegnet_xenium.py + prepared/prep_meta.json
+Output: one CSV row whose column names exactly match the summary table, plus per-cell details
 
-指标口径（与 benchmark_full_all.xlsx 保持一致）
-  检测   gt_cells / pred_cells / cell_ratio / matched / precision / recall / f1
-         匹配 = KD-tree 半径内一对一贪心（按距离升序占坑），无 ID 直连
-  定位   loc_mean_um / loc_median_um / loc_p95_um   匹配对的质心距离
-  计数   count_pearson / count_spearman / count_mae / count_rmse
-         匹配对上 pred 细胞转录本数 vs GT 细胞转录本数
-  向量   vec_cosine / vec_js_dist / vec_pearson
-         匹配对上基因表达向量的逐对相似度取均值
-  分配   assign_rate      pred 归属了多少比例的转录本
-         assign_accuracy  在"GT 和 pred 都归属了"的转录本里，
-                          pred 的细胞恰是 GT 细胞的匹配对 的比例
+Metric definitions (consistent with benchmark_full_all.xlsx)
+  detection  gt_cells / pred_cells / cell_ratio / matched / precision / recall / f1
+          match = one-to-one greedy within KD-tree radius (occupy by ascending distance), no direct ID link
+  location   loc_mean_um / loc_median_um / loc_p95_um   centroid distance of matched pairs
+  count      count_pearson / count_spearman / count_mae / count_rmse
+          transcripts per pred cell vs per GT cell on matched pairs
+  vector     vec_cosine / vec_js_dist / vec_pearson
+          mean pairwise similarity of gene expression vectors on matched pairs
+  assignment assign_rate      fraction of transcripts assigned to a pred cell
+         assign_accuracy  among transcripts "assigned to both GT and pred",
+                          fraction where the pred cell is exactly the matched pair of the GT cell
          overall_correct  = assign_rate x assign_accuracy
 
-独立性标注
-  GeneSegNet 推理不吃平台先验（nucleus prior / GT 分割），
-  所以 uses_platform_prior=FALSE，三个 independent 均为 TRUE。
+Independence flags
+  GeneSegNet inference does not use platform priors (nucleus prior / GT segmentation),
+  so uses_platform_prior=FALSE and all three independent flags are TRUE.
 
-用法
+Usage
   python eval_genesegnet.py --dataset xenium_2
   python eval_genesegnet.py --dataset xenium_5 --match-radius 12
   python eval_genesegnet.py --all
@@ -59,7 +59,7 @@ def log(m):
 
 # ══════════════════════════════════════════════════════════════════════════
 def mask_stats(mask):
-    """分块统计每个 label 的面积与质心（避免整幅图展平占内存）。"""
+    """Tile-wise per-label area and centroid stats (avoids flattening the whole image into memory)."""
     H, W = mask.shape
     n = int(mask.max()) + 1
     area = np.zeros(n, np.int64)
@@ -82,7 +82,7 @@ def mask_stats(mask):
 
 
 def greedy_match(pred_xy, gt_xy, radius):
-    """半径内一对一贪心匹配（按距离升序占坑）。"""
+    """One-to-one greedy matching within radius (occupy by ascending distance)."""
     if len(pred_xy) == 0 or len(gt_xy) == 0:
         return np.zeros((0, 2), int), np.zeros(0)
     tg = cKDTree(gt_xy)
@@ -116,7 +116,7 @@ def profile(cell_idx, gene_idx, n_cell, n_gene):
 
 
 def vector_metrics(A, B):
-    """逐行比较两个 csr 的表达向量。返回 cosine / JS 距离 / pearson 的均值。"""
+    """Compare two csr expression vectors row by row. Returns mean cosine / JS distance / pearson."""
     A = A.toarray().astype(np.float64)
     B = B.toarray().astype(np.float64)
     na, nb = np.linalg.norm(A, axis=1), np.linalg.norm(B, axis=1)
@@ -153,7 +153,7 @@ def evaluate(ds, args):
     meta = json.loads((out / "prepared" / "prep_meta.json").read_text())
     mpath = out / f"genesegnet_{ds}_mask.tif"
     if not mpath.exists():
-        raise SystemExit(f"✗ 没有 mask: {mpath}")
+        raise SystemExit(f"✗ no mask: {mpath}")
 
     ps = float(meta["pixel_size_um"])
     y0, x0 = int(meta["roi_y0"]), int(meta["roi_x0"])
@@ -167,16 +167,16 @@ def evaluate(ds, args):
     log(f"\n{'='*74}\nGeneSegNet @ {ds}   ROI {rh}x{rw} px  {ps} um/px  "
         f"coord={cmode}")
 
-    # ---------- 1. 预测细胞 ----------
+    # ---------- 1. Pred cells ----------
     mask = tifffile.imread(str(mpath))
     if mask.ndim > 2:
         mask = np.squeeze(mask)
     mask = mask.astype(np.int64, copy=False)
     mh, mw = mask.shape
     if (mh, mw) != (rh, rw):
-        log(f"  ⚠ mask {mh}x{mw} 与 meta ROI {rh}x{rw} 不一致"
-            f"（stitch_fov 收标量 size={min(rh, rw)}，输出被压成方形），"
-            f"以 mask 为准")
+        log(f"  ⚠ mask {mh}x{mw} differs from meta ROI {rh}x{rw}"
+            f" (stitch_fov takes scalar size={min(rh, rw)}, output squeezed to a square),"
+            f" using mask as reference")
         rh, rw = mh, mw
     lab, area_px, cy, cx = mask_stats(mask)
     pred = pd.DataFrame(dict(
@@ -186,13 +186,13 @@ def evaluate(ds, args):
     pred["diameter_um"] = 2 * np.sqrt(pred.area_um2 / np.pi)
     if args.min_area_um2 > 0:
         keep = pred.area_um2 >= args.min_area_um2
-        log(f"  按 min_area_um2={args.min_area_um2} 滤掉 "
-            f"{int((~keep).sum()):,} 个碎片")
+        log(f"  filter by min_area_um2={args.min_area_um2}, removed "
+            f"{int((~keep).sum()):,} fragments")
         pred = pred[keep].reset_index(drop=True)
-    log(f"  pred 细胞 {len(pred):,}   直径中位 "
+    log(f"  pred cells {len(pred):,}   median diameter "
         f"{pred.diameter_um.median():.2f} um")
 
-    # ---------- 2. GT 细胞 ----------
+    # ---------- 2. GT cells ----------
     g = pd.read_parquet(meta["gt"])
     gxc = next(c for c in ("x_centroid", "x", "center_x") if c in g.columns)
     gyc = next(c for c in ("y_centroid", "y", "center_y") if c in g.columns)
@@ -202,11 +202,11 @@ def evaluate(ds, args):
     gpy = g[gyc].to_numpy(float) / ps
     inroi = (gpx >= 0) & (gpx < rw) & (gpy >= 0) & (gpy < rh)
     g = g.loc[inroi].reset_index(drop=True)
-    log(f"  GT 细胞（ROI 内）{len(g):,}")
+    log(f"  GT cells (in ROI) {len(g):,}")
     if len(g) == 0:
-        raise SystemExit("✗ ROI 内 GT 为 0，坐标口径不对")
+        raise SystemExit("✗ GT in ROI is 0, coordinate mode is wrong")
 
-    # ---------- 3. 匹配 ----------
+    # ---------- 3. Match ----------
     r = args.match_radius if args.match_radius > 0 \
         else float(np.nanmedian(pred.diameter_um)) * 0.8
     pairs, dists = greedy_match(pred[["x_um", "y_um"]].to_numpy(),
@@ -215,12 +215,12 @@ def evaluate(ds, args):
     prec = matched / max(len(pred), 1)
     rec = matched / max(len(g), 1)
     f1 = 2 * prec * rec / max(prec + rec, 1e-12)
-    log(f"  匹配半径 {r:.2f} um   matched {matched:,}   "
+    log(f"  match radius {r:.2f} um   matched {matched:,}   "
         f"P {prec:.4f}  R {rec:.4f}  F1 {f1:.4f}")
-    log(f"  质心距离 mean {dists.mean():.3f}  median "
+    log(f"  centroid distance mean {dists.mean():.3f}  median "
         f"{np.median(dists):.3f}  p95 {np.percentile(dists,95):.3f} um")
 
-    # ---------- 4. 转录本 ----------
+    # ---------- 4. Transcripts ----------
     import pyarrow.dataset as pds
     d = pds.dataset(meta["tx"], format="parquet")
     names = list(d.schema.names)
@@ -245,26 +245,26 @@ def evaluate(ds, args):
             t[gc] = t[gc].str.decode("utf-8")
         t[gc] = t[gc].astype(str)
         t = t[~t[gc].str.startswith(CTRL_PREFIX)].reset_index(drop=True)
-    log(f"  转录本 {len(t):,}   基因 {t[gc].nunique():,}")
+    log(f"  transcripts {len(t):,}   genes {t[gc].nunique():,}")
 
     px = np.floor(t[xc].to_numpy(float) / ps).astype(np.int64) - x0
     py = np.floor(t[yc].to_numpy(float) / ps).astype(np.int64) - y0
     ok = (px >= 0) & (px < rw) & (py >= 0) & (py < rh)
     t, px, py = t.loc[ok].reset_index(drop=True), px[ok], py[ok]
 
-    # pred 归属：mask 取值 -> pred 行号
+    # pred assignment: mask value -> pred row index
     lab2row = np.full(int(mask.max()) + 1, -1, np.int64)
     lab2row[pred.label.to_numpy()] = np.arange(len(pred))
     pred_cell = lab2row[mask[py, px]]
     assign_rate = float((pred_cell >= 0).mean())
-    log(f"  pred 归属率 {assign_rate:.4f}")
+    log(f"  pred assign rate {assign_rate:.4f}")
 
-    # GT 归属：
+    # GT assignment:
     # benchmark ROI cell_id was regenerated, so first recover the corresponding
     # full-section official cell_id by spatially matching centroids.
     full_cells = Path(meta["tx"]).parent / "cells.parquet"
     if idc is None or not full_cells.exists():
-        log("  ⚠ 无 transcript cell_id 或 full cells.parquet，GT表达指标跳过")
+        log("  ⚠ no transcript cell_id or full cells.parquet, skip GT expression metrics")
         gt_cell = np.full(len(t), -1, np.int64)
     else:
         fg = pd.read_parquet(full_cells)
@@ -282,11 +282,11 @@ def evaluate(ds, args):
         dd, ii = tree.query(tgt, k=1)
         good = dd <= 3.0
         frac = float(good.mean()) if len(good) else 0.0
-        log(f"  GT local->global cell 映射 {good.sum():,}/{len(g):,} "
+        log(f"  GT local->global cell mapping {good.sum():,}/{len(g):,} "
             f"({frac:.4f}), median_dist={np.median(dd):.3f} um")
 
         if frac < 0.80:
-            raise SystemExit("✗ benchmark GT 无法可靠映射到 full cells.parquet")
+            raise SystemExit("✗ benchmark GT cannot be reliably mapped to full cells.parquet")
 
         official_to_gt = {
             str(fg.iloc[j][fidc]): i
@@ -303,12 +303,12 @@ def evaluate(ds, args):
             lambda v: -1 if v in UNASSIGNED else official_to_gt.get(v, -1)
         ).to_numpy(np.int64)
 
-        log(f"  GT 归属率 {float((gt_cell>=0).mean()):.4f}")
+        log(f"  GT assign rate {float((gt_cell>=0).mean()):.4f}")
 
     gene_idx, gene_names = pd.factorize(t[gc])
     ng = len(gene_names)
 
-    # ---------- 5. 计数 / 向量 / 分配 ----------
+    # ---------- 5. Count / vector / assignment ----------
     res = dict(count_pearson=np.nan, count_spearman=np.nan, count_mae=np.nan,
                count_rmse=np.nan, vec_cosine=np.nan, vec_js_dist=np.nan,
                vec_pearson=np.nan, assign_accuracy=np.nan,
@@ -330,7 +330,7 @@ def evaluate(ds, args):
         res["vec_cosine"], res["vec_js_dist"], res["vec_pearson"] = \
             vector_metrics(Ap, Ag)
 
-        # 分配准确率：GT 细胞 -> 其匹配到的 pred 细胞
+        # assignment accuracy: GT cell -> its matched pred cell
         g2p = np.full(len(g), -1, np.int64)
         g2p[gi] = pi
         both = (pred_cell >= 0) & (gt_cell >= 0)
@@ -343,7 +343,7 @@ def evaluate(ds, args):
             f"assign_acc {res['assign_accuracy']:.4f}   "
             f"overall {res['overall_correct']:.4f}")
 
-    # ---------- 6. 落盘 ----------
+    # ---------- 6. Write to disk ----------
     row = dict(
         method="GeneSegNet", dataset=ds, gt_cells=len(g), pred_cells=len(pred),
         cell_ratio=len(pred) / max(len(g), 1), matched=matched,
@@ -355,7 +355,7 @@ def evaluate(ds, args):
         median_diameter_um=float(pred.diameter_um.median()),
         uses_platform_prior="FALSE", assignment_independent="TRUE",
         vector_independent="TRUE",
-        note=(f"Xenium pancreas 自训练权重, held-out 推理; "
+        note=(f"Xenium pancreas self-trained weights, held-out inference; "
               f"heat={meta.get('heatmap_mode')} sigma={meta.get('heatmap_sigma')}; "
               f"dapi={meta.get('dapi_strategy')}; "
               f"ROI {rh}x{rw}px @({y0},{x0}); match_radius={r:.2f}um"),
@@ -380,29 +380,29 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", default=None)
     p.add_argument("--all", action="store_true")
-    p.add_argument("--out-root", default="/data/qiuyijia")
+    p.add_argument("--out-root", default="yourpath")
     p.add_argument("--match-radius", type=float, default=0.0,
-                   help="um；0 = 用 pred 直径中位数的 0.8 倍")
+                   help="um; 0 = 0.8x median pred diameter")
     p.add_argument("--min-area-um2", type=float, default=0.0,
-                   help=">0 时按面积滤掉碎片")
+                   help="if >0, filter out fragments by area")
     p.add_argument("--qv-min", type=float, default=20.0)
     p.add_argument("--summary",
-                   default="/data/qiuyijia/genesegnet_eval_summary.csv")
+                   default="yourpath/genesegnet_eval_summary.csv")
     a = p.parse_args()
 
     dss = (["xenium_2", "xenium_3", "xenium_5", "xenium_6"] if a.all
            else [a.dataset])
     if not dss or dss == [None]:
-        raise SystemExit("需要 --dataset 或 --all")
+        raise SystemExit("need --dataset or --all")
 
     rows = []
     for ds in dss:
         try:
             rows.append(evaluate(ds, a))
         except SystemExit as e:
-            log(f"[{ds}] 跳过: {e}")
+            log(f"[{ds}] skip: {e}")
         except Exception as e:
-            log(f"[{ds}] 失败: {type(e).__name__}: {e}")
+            log(f"[{ds}] failed: {type(e).__name__}: {e}")
     if rows:
         df = pd.DataFrame(rows)[COLS]
         df.to_csv(a.summary, index=False)
@@ -410,7 +410,7 @@ def main():
         print(df[["dataset", "gt_cells", "pred_cells", "cell_ratio", "f1",
                   "loc_median_um", "count_pearson", "vec_cosine",
                   "assign_rate", "median_diameter_um"]].to_string(index=False))
-        log(f"\n汇总 -> {a.summary}")
+        log(f"\nsummary -> {a.summary}")
 
 
 if __name__ == "__main__":

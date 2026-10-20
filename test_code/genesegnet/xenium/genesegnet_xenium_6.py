@@ -1,42 +1,43 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-genesegnet_xenium.py — GeneSegNet 推理 @ xenium_2 / 3 / 5 / 6
+genesegnet_xenium.py -- GeneSegNet inference @ xenium_2 / 3 / 5 / 6
 
-权重：自训练的 Xenium pancreas_cancer 模型（residual_on / style_off /
-concatenation_off）。四个目标数据集都不含 pancreas，全部 held-out。
+Weights: self-trained Xenium pancreas_cancer model (residual_on / style_off /
+concatenation_off). None of the four target datasets contains pancreas, so all are held-out.
 
-本版相对上一版的两处关键修正：
-  FIX-A  DAPI 全零 = tifffile 的 OME 多文件拼装失败。
-         Xenium 的 morphology_focus_000N.ome.tif 是四个物理文件各存一个通道，
-         靠 OME-XML 的 UUID 拼成 4 通道 series，而每个文件自己是金字塔。
-         tifffile 报 "OME series cannot read multi-file pyramids" 之后
-         **不抛错，返回形状正确但内容全零的 series**（levels 也退成 1）。
-         改为：策略链 is_ome=False -> OME series -> pages[0] 直读，
-         每种都先采样校验非零，第一个能读出数据的才用；
-         并把"选通道"改成"选文件"（0000=DAPI, 0001=boundary, ...）。
-  FIX-B  σ 反解换成精确解。原来用连通域 25 分位面积反解，在实际密度下
-         那个连通域已是两个 spot 粘连，导致八块 tile 恒定给出 3.25。
-         新解法：热图里 ==255 的像素恰好就是 spot 中心（h>=254.5/255 要求
-         d=0，任意 sigma>=1 都成立），把它们抠出来按候选 sigma 重建、
-         逐像素比 MAE，真值处 MAE 严格为 0。
+Two key fixes in this version vs the previous one:
+  FIX-A  all-zero DAPI = tifffile OME multi-file assembly failure.
+         Xenium's morphology_focus_000N.ome.tif is four physical files each holding one channel,
+         assembled into a 4-channel series through the OME-XML UUID, while each file is itself a pyramid.
+         After tifffile reports "OME series cannot read multi-file pyramids" it
+         **does not raise, returning a series with the right shape but all-zero content** (levels also drop to 1).
+         Fix: strategy chain is_ome=False -> OME series -> read pages[0] directly,
+         each first samples and validates non-zero, and only the first one that reads data is used;
+         and "choose channel" becomes "choose file" (0000=DAPI, 0001=boundary, ...).
+  FIX-B  sigma inversion replaced by an exact solution. Previously solved from the 25th-percentile area
+         of a connected component, which at real density is already two touching spots,
+         so all eight tiles returned a constant 3.25.
+         New method: pixels equal to 255 in the heatmap are exactly spot centers (h>=254.5/255 requires
+         d=0, true for any sigma>=1); extract them, rebuild for each candidate sigma,
+         compare per-pixel MAE; at the true value MAE is exactly 0.
 
-其余修正沿用上一版：
-  FIX-1  z-stack 被当多通道（ZYX 误判为 CYX，取到几乎全黑的 z0）
-  FIX-2  金字塔走 series.levels[0]
-  FIX-3  zarr 2.x/3.x 双路 + 无 zarr 回退
-  FIX-4  OME Channel Name 认 DAPI
-  FIX-5  ROI 夹边界 + 支持非方形
-  FIX-6  热图与训练一致（max-of-Gaussians，峰值 255）
-  FIX-7  DAPI 全局百分位归一化（不再逐 tile）
-  FIX-8  pyarrow 下推过滤，不整表读 parquet
-  FIX-9  剔除对照探针
-  FIX-10 --audit 逐 channel/z 统计
-  FIX-11 prep 报 ROI 内 GT 细胞数并与期望比对
+Other fixes carried over from the previous version:
+  FIX-1  z-stack mistaken for multichannel (ZYX misread as CYX, picked an almost black z0)
+  FIX-2  pyramids go through series.levels[0]
+  FIX-3  zarr 2.x/3.x dual path + no-zarr fallback
+  FIX-4  OME Channel Name recognizes DAPI
+  FIX-5  ROI edge clamping + non-square support
+  FIX-6  heatmap consistent with training (max-of-Gaussians, peak 255)
+  FIX-7  global percentile normalization for DAPI (no longer per tile)
+  FIX-8  pyarrow pushdown filtering, no full-table parquet read
+  FIX-9  drop control probes
+  FIX-10 --audit per channel/z stats
+  FIX-11 prep reports GT cell count in ROI and compares it with the expectation
 
-用法
-  python genesegnet_xenium.py --calib-heatmap              # 先定 sigma
-  python genesegnet_xenium.py --dataset xenium_5 --audit   # 再看 DAPI
+Usage
+  python genesegnet_xenium.py --calib-heatmap              # determine sigma first
+  python genesegnet_xenium.py --dataset xenium_5 --audit   # then inspect DAPI
   python genesegnet_xenium.py --dataset xenium_5 --stage prep --save-preview
   python genesegnet_xenium.py --dataset xenium_5 --stage infer --dry
   python genesegnet_xenium.py --dataset xenium_5 --stage infer --resume
@@ -54,23 +55,23 @@ import numpy as np
 import pandas as pd
 import tifffile
 
-REPO = Path("/data/qiuyijia/GeneSegNet")
+REPO = Path("yourpath/GeneSegNet")
 GS_REPO = REPO / "GeneSegNet"
 HELPER = REPO / "genesegnet_cosmx_2.py"
-DS = Path("/data/qiuyijia/dataset")
+DS = Path("yourpath/dataset")
 
 DEFAULT_MODEL = (
-    "/data/qiuyijia/genesegnet_xenium/"
+    "yourpath/genesegnet_xenium/"
     "pancreas_cancer_cell/model/models/"
     "GeneSegNet_residual_on_style_off_concatenation_off_model_"
     "2026_08_19_16_55_17.947661"
 )
-CALIB_GLOB = "/data/qiuyijia/genesegnet_xenium/pancreas_cancer_cell/**/*gaumap_all*"
+CALIB_GLOB = "yourpath/genesegnet_xenium/pancreas_cancer_cell/**/*gaumap_all*"
 
 TILE = 1024
 OVERLAP = 128
-TRUNC = 4.6052                      # 与 gen_single_gaussian_map 一致
-TRUNC_R = float(np.sqrt(2 * TRUNC))  # = 3.0348，截断半径 / sigma
+TRUNC = 4.6052                      # consistent with gen_single_gaussian_map
+TRUNC_R = float(np.sqrt(2 * TRUNC))  # = 3.0348, truncation radius / sigma
 
 CTRL_PREFIX = (
     "NegControlProbe", "NegControlCodeword", "NegPrb", "BLANK", "Blank",
@@ -158,7 +159,7 @@ def resolve_gt(root):
 
 
 def sibling_channel_file(path, c):
-    """FIX-A 通道 = 选文件。morphology_focus_0000 -> _000{c}。"""
+    """FIX-A channel = choose file. morphology_focus_0000 -> _000{c}."""
     p = Path(path)
     m = re.match(r"^(.*?)(\d{4})(\.ome\.tif+)$", p.name)
     if not m:
@@ -168,7 +169,7 @@ def sibling_channel_file(path, c):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  DAPI 读取
+#  DAPI reading
 # ══════════════════════════════════════════════════════════════════════════
 def _open_zarr(store):
     try:
@@ -205,7 +206,7 @@ def ome_channel_names(path):
 
 
 class DapiReader:
-    """FIX-A 策略链 + 读后校验；FIX-1..5 轴向、金字塔、z 投影、边界。"""
+    """FIX-A strategy chain + post-read validation; FIX-1..5 axes, pyramid, z projection, bounds."""
 
     STRATEGIES = ("no_ome", "ome", "page0")
 
@@ -217,13 +218,13 @@ class DapiReader:
         self.z_mode, self.z_index = z_mode, z_index
         self.verbose = verbose
 
-        # 通道 -> 文件（若同目录有兄弟文件且请求的不是 0）
+        # channel -> file (if a sibling file exists in the same directory and the requested channel is not 0)
         want = self._name_channel() if dapi_channel < 0 else dapi_channel
         if want > 0:
             alt = sibling_channel_file(self.path, want)
             if alt:
                 if verbose:
-                    print(f"  通道 {want} -> 换文件 {Path(alt).name}")
+                    print(f"  channel {want} -> switch file {Path(alt).name}")
                 self.path = alt
                 want = 0
 
@@ -236,18 +237,18 @@ class DapiReader:
                 if probe is not None and float(np.abs(probe).max()) > 0:
                     self.strategy = st
                     break
-                tried.append((st, "读出来全零"))
+                tried.append((st, "read as all zero"))
             except Exception as e:
                 tried.append((st, f"{type(e).__name__}: {e}"))
         else:
             msg = "\n".join(f"    {s}: {r}" for s, r in tried)
-            raise RuntimeError(f"所有读取策略都拿不到 DAPI 数据:\n{msg}")
+            raise RuntimeError(f"no read strategy could get DAPI data:\n{msg}")
 
         self.channel = min(want, self.nc - 1)
         if verbose:
             print(f"DAPI file    = {self.path}")
             print(f"  strategy = {self.strategy}"
-                  + ("".join(f"  ({s} 失败: {r})" for s, r in tried)
+                  + ("".join(f"  ({s} failed: {r})" for s, r in tried)
                      if tried else ""))
             print(f"  axes = {self.axes}  shape = {self.shape}  "
                   f"levels = {self.nlevels}  backend = {self.mode}")
@@ -310,7 +311,7 @@ class DapiReader:
                 self._z = None
 
     def _probe(self, n=256):
-        """读中心一小块做非零校验。"""
+        """Read a small central patch for a non-zero check."""
         H, W = self.hw
         y0, x0 = max(0, H // 2 - n // 2), max(0, W // 2 - n // 2)
         y1, x1 = min(H, y0 + n), min(W, x0 + n)
@@ -381,28 +382,28 @@ class DapiReader:
         H, W = self.hw
         y0, x0 = max(0, H // 2 - n // 2), max(0, W // 2 - n // 2)
         y1, x1 = min(H, y0 + n), min(W, x0 + n)
-        print(f"\n中心 {y1-y0}x{x1-x0} 采样  (全图 {H} x {W})")
+        print(f"\ncenter {y1-y0}x{x1-x0} sample  (full image {H} x {W})")
         print(f"{'c':>3} {'z':>3} {'min':>8} {'mean':>10} {'p99':>10} "
-              f"{'max':>8}  判断")
+              f"{'max':>8}  verdict")
         best = None
         for c in range(self.nc):
             for z in range(self.nz):
                 p = np.squeeze(self._plane(c, z, y0, y1, x0, x1)
                                ).astype(np.float64)
                 p99 = float(np.percentile(p, 99))
-                flag = "空" if p.max() == 0 else ("近乎空" if p99 <= 1 else "")
+                flag = "empty" if p.max() == 0 else ("near empty" if p99 <= 1 else "")
                 print(f"{c:>3} {z:>3} {p.min():>8.0f} {p.mean():>10.2f} "
                       f"{p99:>10.1f} {p.max():>8.0f}  {flag}")
                 s = float(p.std())
                 if best is None or s > best[0]:
                     best = (s, c, z)
         if best:
-            print(f"\n对比度最高: channel {best[1]} / z {best[2]}  "
+            print(f"\nhighest contrast: channel {best[1]} / z {best[2]}  "
                   f"(std={best[0]:.1f})")
-        # 同目录兄弟文件也扫一眼
+        # also scan sibling files in the same directory
         sibs = sorted(Path(self.path).parent.glob("*.ome.tif"))
         if len(sibs) > 1:
-            print("\n同目录其他文件（中心 256 采样 max）:")
+            print("\nother files in the same directory (center 256 sample max):")
             for s in sibs:
                 try:
                     with tifffile.TiffFile(str(s), is_ome=False) as tf:
@@ -412,12 +413,12 @@ class DapiReader:
                     print(f"  {s.name:<45} shape={a.shape} "
                           f"max={int(blk.max())}")
                 except Exception as e:
-                    print(f"  {s.name:<45} 读取失败 {e}")
+                    print(f"  {s.name:<45} read failed {e}")
         return best
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  热图 + 精确标定（FIX-6 / FIX-B）
+#  Heatmap + exact calibration (FIX-6 / FIX-B)
 # ══════════════════════════════════════════════════════════════════════════
 def gaussian_kernel(sigma):
     r = int(np.ceil(sigma * TRUNC_R))
@@ -429,7 +430,7 @@ def gaussian_kernel(sigma):
 
 
 def stamp(pts_yx, size_y, size_x, sigma):
-    """pts_yx: [N,2] int (y,x)。返回 uint8，与训练侧逐位等价。"""
+    """pts_yx: [N,2] int (y,x). Returns uint8, bitwise equivalent to the training side."""
     h = np.zeros((size_y, size_x), np.float32)
     if len(pts_yx) == 0:
         return h.astype(np.uint8)
@@ -475,7 +476,7 @@ def heat_fingerprint(h):
 
 
 def solve_sigma(h):
-    """FIX-B 从 ==255 抠出 spot 中心，按候选 sigma 重建比 MAE。"""
+    """FIX-B extract spot centers from ==255, rebuild for each candidate sigma and compare MAE."""
     h = np.squeeze(np.asarray(h)).astype(np.int32)
     pts = np.argwhere(h == 255)
     if len(pts) < 20:
@@ -497,9 +498,9 @@ def calib_heatmap(pattern, k=6):
     fs = [f for f in sorted(glob.glob(pattern, recursive=True))
           if f.lower().endswith((".tif", ".tiff", ".jpg", ".png"))][:k]
     if not fs:
-        raise SystemExit(f"没找到训练热图: {pattern}")
-    banner("热图口径标定（精确解）")
-    print(f"{'file':<48} {'非零':>7} {'==255':>9} {'p99':>6} "
+        raise SystemExit(f"training heatmap not found: {pattern}")
+    banner("Heatmap calibration (exact solution)")
+    print(f"{'file':<48} {'nonzero':>7} {'==255':>9} {'p99':>6} "
           f"{'spot':>7} {'σ':>6} {'MAE':>8}")
     sigmas, eqs = [], []
     for f in fs:
@@ -515,21 +516,21 @@ def calib_heatmap(pattern, k=6):
               + (f"{s:6.2f} {mae:8.4f}" if s else f"{'--':>6} {'--':>8}"))
     eq = float(np.median(eqs))
     mode = "gaussian_peak" if eq > 1e-5 else "density"
-    print(f"\nmode = {mode}   (==255 中位占比 {eq:.6f}；"
-          f"peak 每个 spot 峰值都是 255，density 只有 argmax 一点)")
+    print(f"\nmode = {mode}   (median ==255 ratio {eq:.6f}; "
+          f"peak means every spot peak is 255, density has only the argmax)")
     if mode == "gaussian_peak" and sigmas:
         sg = float(np.median(sigmas))
         sd = float(np.std(sigmas))
-        print(f"sigma = {sg:.2f}  (各 tile 标准差 {sd:.3f}"
-              + ("，一致 ✓" if sd < 0.1 else "，不一致 ⚠ 手动核对") + ")")
-        print(f"\n把这两个参数加到后面所有命令里：")
+        print(f"sigma = {sg:.2f}  (per-tile std {sd:.3f}"
+              + (", consistent ✓" if sd < 0.1 else ", inconsistent ⚠ check manually") + ")")
+        print(f"\nadd these two parameters to all later commands:")
         print(f"  --heatmap-mode {mode} --heatmap-sigma {sg:.2f}")
-        print("MAE 应接近 0；若明显 >1，说明训练热图不是这个核生成的。")
+        print("MAE should be close to 0; if clearly >1, the training heatmap was not generated with this kernel.")
     return mode, (float(np.median(sigmas)) if sigmas else None)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  切片 / 归一化 / 转录本 / GT
+#  Tiling / normalization / transcripts / GT
 # ══════════════════════════════════════════════════════════════════════════
 def starts(n, tile=TILE, overlap=OVERLAP):
     stride = tile - overlap
@@ -579,7 +580,7 @@ def load_tx(args, x0, y0, size_y, size_x):
         q[gc] = q[gc].astype(str)
         if not args.keep_controls:
             m = ~q[gc].str.startswith(CTRL_PREFIX)
-            print(f"  剔除对照探针 {int((~m).sum()):,}")
+            print(f"  removed control probes {int((~m).sum()):,}")
             q = q.loc[m]
         q = q.rename(columns={gc: "gene"})
     q = q.reset_index(drop=True)
@@ -648,14 +649,14 @@ def prep(args):
           " mean=", round(float(roi.mean()), 2),
           " p99=", round(float(np.percentile(roi, 99)), 1))
     if roi.max() == 0:
-        raise RuntimeError("DAPI ROI 全零，跑 --audit 定位。")
+        raise RuntimeError("DAPI ROI is all zero; run --audit to locate the problem.")
 
     flat = roi.reshape(-1)
     if flat.size > 4_000_000:
         flat = flat[np.random.default_rng(0).choice(flat.size, 4_000_000,
                                                     replace=False)]
     lo, hi = np.percentile(flat.astype(np.float32), [args.pmin, args.pmax])
-    print(f"全局归一化窗口: p{args.pmin}={lo:.1f}  p{args.pmax}={hi:.1f}")
+    print(f"global normalization window: p{args.pmin}={lo:.1f}  p{args.pmax}={hi:.1f}")
 
     if args.save_preview:
         import cv2
@@ -682,21 +683,21 @@ def prep(args):
 
     tx = load_tx(args, tx_x0, tx_y0, sh, sw)
     print(f"ROI transcripts = {len(tx):,}"
-          + (f"  基因 {tx.gene.nunique():,}" if "gene" in tx.columns else ""))
+          + (f"  genes {tx.gene.nunique():,}" if "gene" in tx.columns else ""))
     if len(tx) == 0:
-        raise RuntimeError("ROI 内没有转录本，检查 --coord-mode / --pixel-size。")
+        raise RuntimeError("no transcripts in ROI; check --coord-mode / --pixel-size.")
 
     gt_n = None
     if args.gt:
         gt_n, bad = count_gt(args.gt, args, x0, y0, sh, sw)
         if gt_n is None:
-            print(f"  GT 没有质心列: {bad}")
+            print(f"  GT has no centroid column: {bad}")
         else:
-            msg = f"  ROI 内 GT 细胞 = {gt_n:,}"
+            msg = f"  GT cells in ROI = {gt_n:,}"
             if args.gt_expected:
                 dev = abs(gt_n - args.gt_expected) / args.gt_expected
-                msg += (f"  期望 {args.gt_expected:,}  偏差 {dev:.1%}"
-                        + ("  ✓" if dev <= 0.02 else "  ⚠ 口径不一致"))
+                msg += (f"  expected {args.gt_expected:,}  deviation {dev:.1%}"
+                        + ("  ✓" if dev <= 0.02 else "  ⚠ definition mismatch"))
             print(msg)
             print(f"  tx_per_cell = {len(tx)/max(gt_n,1):.1f}")
 
@@ -727,11 +728,11 @@ def prep(args):
 
     man = pd.DataFrame(rows)
     man.to_csv(prep_root / "tile_manifest.tsv", sep="\t", index=False)
-    print(f"\ntile {len(man)} 个   spots 中位 {man.n_spots.median():.0f}   "
-          f"空 tile {int((man.n_spots==0).sum())}")
-    print(f"热图指纹（中位）: 非零 {man.hm_nonzero.median():.3f}   "
+    print(f"\ntiles {len(man)}   median spots {man.n_spots.median():.0f}   "
+          f"empty tiles {int((man.n_spots==0).sum())}")
+    print(f"heatmap fingerprint (median): nonzero {man.hm_nonzero.median():.3f}   "
           f"p99 {man.hm_p99.median():.0f}   ==255 {man.hm_eq255.median():.5f}")
-    print("  训练集参考: 非零 0.040-0.347   p99 99-241   ==255 2e-4~3e-3")
+    print("  training set reference: nonzero 0.040-0.347   p99 99-241   ==255 2e-4~3e-3")
 
     (prep_root / "prep_meta.json").write_text(json.dumps(dict(
         dataset=args.dataset, root=str(args.root), dapi=rd.path,
@@ -818,9 +819,9 @@ def infer(args):
     print("  ch1 heat mean/p99 =", round(float(s[..., 1].mean()), 2),
           round(float(np.percentile(s[..., 1], 99)), 1))
     if s[..., 0].max() == 0:
-        print("WARNING: 当前 audit tile 的 DAPI 为零；可能只是空边缘 tile，继续处理全部 tiles")
+        print("WARNING: DAPI is zero for the current audit tile; may just be an empty edge tile, continuing with all tiles")
     if s[..., 1].max() == 0:
-        print("  ⚠ 热图通道全零，模型会退化成纯图像分割")
+        print("  ⚠ heatmap channel is all zero, the model will degrade to pure image segmentation")
     if args.dry:
         banner("DRY RUN OK")
         return
@@ -889,7 +890,7 @@ def main():
     p.add_argument("--dapi", default=None)
     p.add_argument("--dapi-strategy",
                    choices=["no_ome", "ome", "page0"], default=None,
-                   help="默认按 no_ome -> ome -> page0 依次试并校验非零")
+                   help="default tries no_ome -> ome -> page0 in order and validates non-zero")
     p.add_argument("--tx", default=None)
     p.add_argument("--gt", default=None)
     p.add_argument("--gt-expected", type=int, default=None)
@@ -909,7 +910,7 @@ def main():
     p.add_argument("--heatmap-mode", choices=["gaussian_peak", "density"],
                    default="gaussian_peak")
     p.add_argument("--heatmap-sigma", type=float, default=2.5,
-                   help="用 --calib-heatmap 解出来的值覆盖")
+                   help="override with the value solved by --calib-heatmap")
     p.add_argument("--pmin", type=float, default=1.0)
     p.add_argument("--pmax", type=float, default=99.8)
     p.add_argument("--save-preview", action="store_true")
@@ -935,11 +936,11 @@ def main():
         calib_heatmap(a.calib_glob)
         return
     if not a.dataset:
-        raise SystemExit("需要 --dataset（或 --calib-heatmap）")
+        raise SystemExit("need --dataset (or --calib-heatmap)")
 
     cfg = DATASETS[a.dataset]
     a.root = a.root or str(cfg["root"])
-    a.out = a.out or f"/data/qiuyijia/genesegnet_{a.dataset}"
+    a.out = a.out or f"yourpath/genesegnet_{a.dataset}"
     a._roi_spec = cfg["roi"]
     if a.gt_expected is None:
         a.gt_expected = cfg["gt_expected"]

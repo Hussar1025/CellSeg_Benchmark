@@ -2,7 +2,7 @@
 """Cellpose 3 cyto3 on three CosMx datasets, evaluated against CellLabels.
 
 The dataset result uses the micro aggregation defined in
-/data/qiuyijia/cellpose/cosmx_lymph.py. One FOV is one independent image;
+yourpath/cellpose/cosmx_lymph.py. One FOV is one independent image;
 Pancreas "full slide" means all 18 exported FOVs (51..68), not a crop.
 """
 
@@ -28,7 +28,7 @@ import torch
 from PIL import Image
 
 
-ROOT = Path("/data/qiuyijia")
+ROOT = Path("yourpath")
 OUT_ROOT = ROOT / "cellpose3" / "cosmx_outputs"
 CORE_PATH = ROOT / "cellpose" / "cosmx_lymph.py"
 EVAL_DIR = ROOT / "eval"

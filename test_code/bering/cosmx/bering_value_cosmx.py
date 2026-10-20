@@ -1,18 +1,18 @@
 """
 eval_bering_cosmx.py — Bering vs CosMx GT
 ==========================================
-参考代码: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
+Reference code: 2026-06-08-genesegnet-label-image-eval-input-layer-v1
 
-Bering 输出与 GeneSegNet/UCS 的关键差异：
-  1. pred 来自 sliceB_cells.csv（cx,cy,n_transcripts,cell_type），无需 label 图像查询
-  2. n_transcripts 直接可用（不需要转录本分配补全）
-  3. transcript_id 是真实 ID（不是合成行号），可直接计算 overlap
-  4. cell_type 已有（可计算类型指标）
-  5. 坐标系：Bering cx/cy 为 µm，但 y 轴可能与 GT 方向相反，需自动对齐
+Key differences between Bering output and GeneSegNet/UCS:
+  1. pred comes from sliceB_cells.csv (cx,cy,n_transcripts,cell_type); no label-image lookup
+  2. n_transcripts is directly available (no transcript-assignment completion needed)
+  3. transcript_id is a real ID (not a synthetic row number), so overlap is direct
+  4. cell_type already present (type metrics can be computed)
+  5. Coordinates: Bering cx/cy are µm, but the y axis may be flipped vs GT, needs auto-alignment
 
-运行:
+Run:
   conda activate genesegnet_env
-  python eval_bering_cosmx.py --output-dir /data/qiuyijia/eval_results/bering
+  python eval_bering_cosmx.py --output-dir yourpath/eval_results/bering
 """
 from __future__ import annotations
 
@@ -35,11 +35,11 @@ from sklearn.neighbors import NearestNeighbors
 EPS = 1e-12
 SCRIPT_VERSION = "2026-06-08-genesegnet-label-image-eval-input-layer-v1"
 
-DATA_DIR         = "/data/qiuyijia/dataset/Pancreas-CosMx-WTx-FlatFiles"
+DATA_DIR         = "yourpath/dataset/Pancreas-CosMx-WTx-FlatFiles"
 GT_METADATA_PATH = os.path.join(DATA_DIR, "Pancreas_metadata_file.csv")
 TX_FILE          = os.path.join(DATA_DIR, "Pancreas_tx_file.csv")
 
-BERING_DIR         = "/data/qiuyijia/bering/bering_cosmx_output"
+BERING_DIR         = "yourpath/bering/bering_cosmx_output"
 BERING_CELLS       = os.path.join(BERING_DIR, "sliceB_cells.csv")
 BERING_TRANSCRIPTS = os.path.join(BERING_DIR, "sliceB_transcript_assignments.csv")
 BERING_SUMMARY     = os.path.join(BERING_DIR, "run_summary.json")
@@ -58,7 +58,7 @@ class EvaluationConfig:
     bering_tx_path:       str  = BERING_TRANSCRIPTS
     bering_summary_path:  str  = BERING_SUMMARY
     pixel_size_um:        float = PIXEL_SIZE_UM
-    output_dir:           str  = "/data/qiuyijia/eval_results/bering"
+    output_dir:           str  = "yourpath/eval_results/bering"
     method_name:          str  = "Bering"
     cell_id_col:          str  = "cell_id"
     gt_cell_id_col:       str  = "cell_id"
@@ -83,10 +83,10 @@ class EvaluationConfig:
 
 
 # =============================================================================
-# GT 加载
+# GT loading
 # =============================================================================
 def load_gt_cosmx(cfg: EvaluationConfig) -> pd.DataFrame:
-    print(f"[GT] 加载: {cfg.gt_path}")
+    print(f"[GT] Loading: {cfg.gt_path}")
     df = pd.read_csv(cfg.gt_path, usecols=[
         "cell_id","CenterX_global_px","CenterY_global_px",
         "nCount_RNA","Area","fov"
@@ -96,29 +96,29 @@ def load_gt_cosmx(cfg: EvaluationConfig) -> pd.DataFrame:
     df["total_counts"]= df["nCount_RNA"]
     df["area_um2"]    = df["Area"] * (cfg.pixel_size_um ** 2)
     df["cell_id"]     = df["cell_id"].astype(str)
-    print(f"[GT] 细胞数: {len(df):,}  "
+    print(f"[GT] cells: {len(df):,}  "
           f"x=[{df['x'].min():.1f},{df['x'].max():.1f}]µm  "
           f"y=[{df['y'].min():.1f},{df['y'].max():.1f}]µm")
     return df
 
 
 # =============================================================================
-# Bering pred 加载（直接从 sliceB_cells.csv）
+# Bering pred loading (directly from sliceB_cells.csv)
 # =============================================================================
 def load_bering_cells(cfg: EvaluationConfig) -> pd.DataFrame:
-    print(f"[Pred] 加载 Bering cells: {cfg.bering_cells_path}")
+    print(f"[Pred] Loading Bering cells: {cfg.bering_cells_path}")
     df = pd.read_csv(cfg.bering_cells_path)
     df = df.rename(columns={"cx": "x_raw", "cy": "y_raw"})
     df["cell_id"] = df["cell_id"].astype(str)
-    print(f"[Pred] Bering 细胞数: {len(df):,}")
-    print(f"[Pred] 原始坐标 x=[{df['x_raw'].min():.1f},{df['x_raw'].max():.1f}]µm  "
+    print(f"[Pred] Bering cells: {len(df):,}")
+    print(f"[Pred] raw coords x=[{df['x_raw'].min():.1f},{df['x_raw'].max():.1f}]µm  "
           f"y=[{df['y_raw'].min():.1f},{df['y_raw'].max():.1f}]µm")
     return df
 
 
 # =============================================================================
-# 坐标系自动对齐
-# 策略：尝试 (1)直接平移 (2)Y 轴翻转+平移，选距离更小的
+# coordinate system auto-alignment
+# Strategy: try (1) direct shift (2) Y-flip + shift; pick the smaller distance
 # =============================================================================
 def auto_align_coordinates(
     pred_df: pd.DataFrame,
@@ -126,10 +126,10 @@ def auto_align_coordinates(
     cfg:     EvaluationConfig,
 ) -> Tuple[pd.DataFrame, dict]:
     """
-    返回 (对齐后的 pred_df, align_params)。
+    Return (aligned pred_df, align_params).
     align_params = {"y_flip": bool, "shift_x": float, "shift_y": float}
-    这些参数可用于将 Bering transcript 坐标对齐到 GT 坐标系，
-    从而计算 transcript_assignment_accuracy。
+    These params align Bering transcript coordinates to the GT coordinate system,
+    so transcript_assignment_accuracy can be computed.
     """
     pred_xy = pred_df[["x_raw","y_raw"]].to_numpy(dtype=float)
     gt_xy   = gt_df[[cfg.x_col, cfg.y_col]].to_numpy(dtype=float)
@@ -137,17 +137,17 @@ def auto_align_coordinates(
     pred_center = pred_xy.mean(axis=0)
     gt_center   = gt_xy.mean(axis=0)
 
-    # 方案 A：直接平移
+    # Option A: direct shift
     shift_A    = gt_center - pred_center
     pred_A     = pred_xy + shift_A
 
-    # 方案 B：Y 轴翻转 + 平移
+    # Option B: Y-axis flip + shift
     pred_flipped = pred_xy.copy()
     pred_flipped[:, 1] = -pred_xy[:, 1]
     shift_B    = gt_center - pred_flipped.mean(axis=0)
     pred_B     = pred_flipped + shift_B
 
-    # 用小样本比较哪种方案 NN 距离更小
+    # compare which option has smaller NN distance on a sample
     tree    = cKDTree(gt_xy)
     n_samp  = min(500, len(pred_xy))
     idx     = np.random.default_rng(0).choice(len(pred_xy), n_samp, replace=False)
@@ -155,36 +155,37 @@ def auto_align_coordinates(
     dB, _   = tree.query(pred_B[idx],  k=1)
 
     if dA.mean() <= dB.mean():
-        print(f"[Align] 方案 A（直接平移）: "
+        print(f"[Align] option A (direct shift): "
               f"Δx={shift_A[0]:+.2f} Δy={shift_A[1]:+.2f} µm  "
-              f"样本 NN 均值={dA.mean():.2f} µm")
+              f"sample NN mean={dA.mean():.2f} µm")
         pred_df = pred_df.copy()
         pred_df["x"] = pred_xy[:, 0] + shift_A[0]
         pred_df["y"] = pred_xy[:, 1] + shift_A[1]
         pred_df["_align"] = "direct_shift"
         align_params = {"y_flip": False, "shift_x": float(shift_A[0]), "shift_y": float(shift_A[1])}
     else:
-        print(f"[Align] 方案 B（Y 翻转+平移）: "
+        print(f"[Align] option B (Y flip + shift): "
               f"Δx={shift_B[0]:+.2f} Δy={shift_B[1]:+.2f} µm  "
-              f"样本 NN 均值={dB.mean():.2f} µm")
+              f"sample NN mean={dB.mean():.2f} µm")
         pred_df = pred_df.copy()
         pred_df["x"] = pred_flipped[:, 0] + shift_B[0]
         pred_df["y"] = pred_flipped[:, 1] + shift_B[1]
         pred_df["_align"] = "y_flip_shift"
         align_params = {"y_flip": True, "shift_x": float(shift_B[0]), "shift_y": float(shift_B[1])}
 
-    print(f"[Align] 对齐后 x=[{pred_df['x'].min():.1f},{pred_df['x'].max():.1f}]µm  "
+    print(f"[Align] after alignment x=[{pred_df['x'].min():.1f},{pred_df['x'].max():.1f}]µm  "
           f"y=[{pred_df['y'].min():.1f},{pred_df['y'].max():.1f}]µm")
     return pred_df, align_params
 
 
 # =============================================================================
-# transcript_assignment_accuracy 计算（坐标匹配法）
+# transcript_assignment_accuracy computation (coordinate matching)
 #
-# 原理：
-#   Bering transcript (x,y) 应用对齐变换后，与 GT (x_global_px×px_size, y_global_px×px_size)
-#   对应同一物理位置。用坐标做精确匹配，找到每条 Bering 转录本对应的 GT 细胞分配，
-#   判断是否与 matched pair 一致。
+# Principle:
+#   After applying the alignment transform, Bering transcript (x,y) and GT
+#   (x_global_px×px_size, y_global_px×px_size) refer to the same physical point.
+#   Match by exact coordinates to find each Bering transcript's GT cell
+#   assignment and check whether it agrees with the matched pair.
 # =============================================================================
 def compute_transcript_accuracy(
     bering_tx_path:   str,
@@ -196,21 +197,24 @@ def compute_transcript_accuracy(
     verbose:          bool = True,
 ) -> Tuple[float, int, int]:
     """
-    与 GeneSegNet/UCS 完全相同的方法：
-      以 GT 转录本坐标为基准，反向变换到 Bering 坐标系，查询 Bering 的分配结果。
+    Same method as GeneSegNet/UCS:
+      anchor on GT transcript coordinates, inverse-transform into the Bering
+      coordinate system, and look up Bering's assignment.
 
-    为什么要反向：
-      GeneSegNet/UCS 以 GT 坐标查 label 图像（不需要坐标变换）。
-      Bering 的等价做法：以 GT 坐标（反变换到 Bering 空间）查 Bering 分配表。
+    Why invert:
+      GeneSegNet/UCS look up the label image by GT coordinate (no transform).
+      Bering's equivalent: look up the Bering assignment table by GT coordinate
+      (inverse-transformed into Bering space).
 
-    精度：使用 1 µm bin（round 到整数）。
-      GT 坐标 = integer_px × 0.1203 µm/px，有 ~0.06 µm 舍入误差。
-      Bering 坐标是连续值。两者之差可达 ~0.1 µm，在 0.1 µm 精度下大量 miss。
-      改为 1 µm 精度后，误差远小于 bin 宽度，匹配率大幅提升。
+    Precision: use a 1 µm bin (rounded to integer).
+      GT coords = integer_px × 0.1203 µm/px, with ~0.06 µm rounding error.
+      Bering coords are continuous. The gap can reach ~0.1 µm, causing many
+      misses at 0.1 µm precision. At 1 µm precision the error is far smaller
+      than the bin width, so the match rate rises substantially.
     """
     if matches.empty: return np.nan, 0, 0
 
-    # matched pair 映射
+    # matched pair mapping
     pred_to_gt: Dict[str,str] = {}
     gt_to_pred: Dict[str,str] = {}
     for _, row in matches[["pred_cell_id","gt_cell_id"]].iterrows():
@@ -228,9 +232,9 @@ def compute_transcript_accuracy(
     shift_y = align_params["shift_y"]
     y_flip  = align_params["y_flip"]
 
-    # Step 1: 构建 Bering 原始坐标 → bering_cell 映射（1 µm 精度）
-    # 只存 matched pred cells 的转录本
-    print("[ACC] 构建 Bering 坐标映射（matched pred cells，1 µm 精度）...")
+    # Step 1: build Bering raw coordinate -> bering_cell mapping (1 µm precision)
+    # only store transcripts of matched pred cells
+    print("[ACC] Building Bering coordinate mapping (matched pred cells, 1 µm precision)...")
     bering_coord: Dict[Tuple[int,int], str] = {}  # {(int_x, int_y): bering_cell_id}
     bering_read = 0
     for chunk in pd.read_csv(bering_tx_path,
@@ -239,19 +243,19 @@ def compute_transcript_accuracy(
         bering_read += len(chunk)
         m = chunk[chunk["cell_id"].astype(str).isin(matched_pred_set)]
         if m.empty: continue
-        # 使用 Bering 原始坐标（before alignment）→ 1 µm bin
+        # use Bering raw coordinates (before alignment) -> 1 µm bin
         x_int = m["x"].values.round().astype(int)
         y_int = m["y"].values.round().astype(int)
         cells = m["cell_id"].astype(str).values
         for x, y, cell in zip(x_int.tolist(), y_int.tolist(), cells.tolist()):
             bering_coord[(x, y)] = cell
-        if verbose: print(f"  Bering 已读 {bering_read:,}  coord entries={len(bering_coord):,}")
+        if verbose: print(f"  Bering read {bering_read:,}  coord entries={len(bering_coord):,}")
 
-    print(f"[ACC] Bering 坐标映射: {len(bering_coord):,} 个 bin")
+    print(f"[ACC] Bering coordinate mapping: {len(bering_coord):,} bins")
 
-    # Step 2: 扫描 tx_file，以 GT 坐标为基准（与 GeneSegNet/UCS 相同）
-    # 将 GT µm 坐标反变换到 Bering 原始坐标系
-    print("[ACC] 扫描 tx_file（GT 坐标 → 反变换 → 查 Bering 分配）...")
+    # Step 2: scan tx_file, anchored on GT coordinates (same as GeneSegNet/UCS)
+    # inverse-transform GT µm coordinates into the Bering raw coordinate system
+    print("[ACC] Scanning tx_file (GT coords -> inverse transform -> look up Bering assignment)...")
     in_matched = 0; correct = 0; gt_read = 0
     for chunk in pd.read_csv(tx_file,
                               usecols=["fov","cell_ID","x_global_px","y_global_px"],
@@ -260,46 +264,46 @@ def compute_transcript_accuracy(
         x_gt = chunk["x_global_px"].values * pixel_size_um   # GT µm
         y_gt = chunk["y_global_px"].values * pixel_size_um
 
-        # 反变换到 Bering 原始坐标系（inverse of alignment）
-        # 正变换：x_al = x_bering + shift_x → 反变换：x_bering = x_al - shift_x = x_gt - shift_x
-        # 正变换（y_flip）：y_al = -y_bering + shift_y → 反变换：y_bering = -(y_al - shift_y) = -y_gt + shift_y
+        # inverse-transform into the Bering raw coordinate system (inverse of alignment)
+        # forward: x_al = x_bering + shift_x -> inverse: x_bering = x_al - shift_x = x_gt - shift_x
+        # forward (y_flip): y_al = -y_bering + shift_y -> inverse: y_bering = -(y_al - shift_y) = -y_gt + shift_y
         x_bering_space = (x_gt - shift_x).round().astype(int)
         if y_flip:
             y_bering_space = (-y_gt + shift_y).round().astype(int)
         else:
             y_bering_space = (y_gt - shift_y).round().astype(int)
 
-        # 向量化查询 Bering 分配
+        # vectorized lookup of Bering assignment
         coord_keys   = list(zip(x_bering_space.tolist(), y_bering_space.tolist()))
         bering_cells = pd.Series(coord_keys).map(bering_coord).fillna("").values
         has_bering   = bering_cells != ""
 
         if not has_bering.any(): continue
 
-        # 对有 Bering 分配的转录本，检查 GT cell 是否与 matched pair 一致
+        # for transcripts with a Bering assignment, check the GT cell matches the matched pair
         chunk_m      = chunk.iloc[np.where(has_bering)[0]]
         bering_m     = bering_cells[has_bering]
 
         gt_keys  = chunk_m["fov"].astype(str) + "_" + chunk_m["cell_ID"].astype(str)
         gt_cells = gt_keys.map(fov_cell_to_str).fillna("").values
 
-        # Bering cell 的预期 GT cell
+        # the expected GT cell for each Bering cell
         expected_gt = pd.Series(bering_m).map(pred_to_gt).fillna("").values
 
         in_matched += int(has_bering.sum())
         correct    += int(np.sum(gt_cells == expected_gt))
 
         if verbose:
-            print(f"  GT 已读 {gt_read:,}  in_matched={in_matched:,}  correct={correct:,}")
+            print(f"  GT read {gt_read:,}  in_matched={in_matched:,}  correct={correct:,}")
 
     accuracy = float(correct / max(in_matched, 1))
-    print(f"[ACC] 完成: in_matched={in_matched:,}  correct={correct:,}  accuracy={accuracy:.4f}")
+    print(f"[ACC] done: in_matched={in_matched:,}  correct={correct:,}  accuracy={accuracy:.4f}")
     return accuracy, in_matched, correct
 
 
 # =============================================================================
-# 全量转录本指标计算（Bering 专属：直接使用 transcript_assignments.csv）
-# 不需要 label 图像查询，比 GeneSegNet/UCS 脚本更直接
+# full transcript-metric computation (Bering-specific: uses transcript_assignments.csv directly)
+# no label-image lookup, more direct than the GeneSegNet/UCS script
 # =============================================================================
 def compute_bering_transcript_metrics(
     bering_tx_path:   str,
@@ -312,18 +316,18 @@ def compute_bering_transcript_metrics(
     verbose:          bool = True,
 ) -> dict:
     """
-    Bering 有真实 transcript_id 和 cell_id，比 label 图像方法更直接：
-      pred gene expression: 直接从 sliceB_transcript_assignments.csv 聚合
-      GT   gene expression: 从 tx_file 按 (fov,cell_ID)→cell_id_str 聚合
+    Bering has real transcript_id and cell_id, more direct than label-image methods:
+      pred gene expression: aggregated directly from sliceB_transcript_assignments.csv
+      GT   gene expression: aggregated from tx_file by (fov,cell_ID)->cell_id_str
 
     transcript_id_overlap_n:
-      Bering 分配了 53.3M 条转录本。
-      GT 按 (fov, cell_ID) 也有分配。
-      overlap = 同时被 Bering 和 GT 分配的转录本数（基于空间坐标匹配）。
-      简化实现：直接用 run_summary 的 n_transcripts_assigned 和
-      估算的 GT assignment rate 计算。
+      Bering assigned 53.3M transcripts.
+      GT also has assignments by (fov, cell_ID).
+      overlap = transcripts assigned by both Bering and GT (via spatial coord matching).
+      Simplified impl: use run_summary's n_transcripts_assigned and an
+      estimated GT assignment rate.
     """
-    # ── 构建 matched pair 映射 ─────────────────────────────────────────────
+    # ── build matched pair mapping ────────────────────────────────────────────
     pred_to_gt: Dict[str,str] = {}; gt_to_pred: Dict[str,str] = {}
     if not matches.empty and "pred_cell_id" in matches.columns:
         for _, row in matches[["pred_cell_id","gt_cell_id"]].iterrows():
@@ -333,15 +337,15 @@ def compute_bering_transcript_metrics(
     matched_gt_set   = set(gt_to_pred.keys())
     print(f"[BT] Matched pred={len(matched_pred_set):,}  GT={len(matched_gt_set):,}")
 
-    # ── 构建 GT cell_ID 映射 (fov, cell_ID) → cell_id_str ─────────────────
-    print(f"[BT] 加载 GT cell_ID 映射 ...")
+    # ── build GT cell_ID mapping (fov, cell_ID) -> cell_id_str ────────────────
+    print(f"[BT] Loading GT cell_ID mapping ...")
     meta_map = pd.read_csv(gt_metadata_path, usecols=["cell_id","cell_ID","fov"])
     meta_map["_key"] = meta_map["fov"].astype(str) + "_" + meta_map["cell_ID"].astype(str)
     fov_cell_to_str = dict(zip(meta_map["_key"], meta_map["cell_id"].astype(str)))
-    print(f"[BT] 映射条目数: {len(fov_cell_to_str):,}")
+    print(f"[BT] mapping entries: {len(fov_cell_to_str):,}")
 
-    # ── Pred 基因向量（从 transcript_assignments.csv）──────────────────────
-    print(f"[BT] 流式读取 Bering transcript_assignments.csv ...")
+    # ── Pred gene vectors (from transcript_assignments.csv) ───────────────────
+    print(f"[BT] Streaming Bering transcript_assignments.csv ...")
     pred_gene_counts: Dict[str,Dict[str,int]] = {}
     pred_total = 0
 
@@ -349,17 +353,17 @@ def compute_bering_transcript_metrics(
                               usecols=["transcript_id","cell_id","gene"],
                               chunksize=2_000_000):
         pred_total += len(chunk)
-        # 只对 matched pred cells 聚合基因
+        # aggregate genes only for matched pred cells
         m = chunk[chunk["cell_id"].astype(str).isin(matched_pred_set)]
         if not m.empty:
             for (cid, gene), cnt in m.groupby(["cell_id","gene"]).size().items():
                 cid = str(cid)
                 if cid not in pred_gene_counts: pred_gene_counts[cid] = {}
                 pred_gene_counts[cid][gene] = pred_gene_counts[cid].get(gene,0) + int(cnt)
-        if verbose: print(f"  已读 {pred_total:,}  pred_gene_cells={len(pred_gene_counts):,}")
+        if verbose: print(f"  read {pred_total:,}  pred_gene_cells={len(pred_gene_counts):,}")
 
-    # ── GT 基因向量（从 tx_file）──────────────────────────────────────────
-    print(f"[BT] 流式读取 tx_file ...")
+    # ── GT gene vectors (from tx_file) ────────────────────────────────────────
+    print(f"[BT] Streaming tx_file ...")
     gt_gene_counts: Dict[str,Dict[str,int]] = {}
     gt_total = 0; gt_assigned = 0
 
@@ -381,10 +385,10 @@ def compute_bering_transcript_metrics(
             for (cid, gene), cnt in df_m.groupby(["gt","gene"]).size().items():
                 if cid not in gt_gene_counts: gt_gene_counts[cid] = {}
                 gt_gene_counts[cid][gene] = gt_gene_counts[cid].get(gene,0) + int(cnt)
-        if verbose: print(f"  已读 {gt_total:,}  gt_gene_cells={len(gt_gene_counts):,}")
+        if verbose: print(f"  read {gt_total:,}  gt_gene_cells={len(gt_gene_counts):,}")
 
-    # ── 基因向量相似度 ─────────────────────────────────────────────────────
-    print("[BT] 计算基因向量相似度 ...")
+    # ── gene vector similarity ────────────────────────────────────────────────
+    print("[BT] Computing gene vector similarity ...")
     cosine_sims, js_dists, pearsons = [], [], []
     valid_pairs = 0
     for pred_str, gt_str in pred_to_gt.items():
@@ -402,15 +406,15 @@ def compute_bering_transcript_metrics(
             pearsons.append(float(pearsonr(pv, gv)[0]))
         valid_pairs += 1
 
-    # ── transcript_id_overlap 估算 ─────────────────────────────────────────
+    # ── transcript_id_overlap estimate ────────────────────────────────────────
     n_pred_assigned = bering_summary.get("n_transcripts_assigned", pred_total)
     pred_rate       = bering_summary.get("fraction_assigned", pred_total / max(gt_total, 1))
     gt_rate         = gt_assigned / max(gt_total, 1)
-    # overlap ≈ 两者都分配的转录本数（简化估算：P(both) ≈ pred_rate × gt_rate × total）
+    # overlap ≈ transcripts assigned by both (simplified estimate: P(both) ≈ pred_rate × gt_rate × total)
     overlap_estimate = int(pred_rate * gt_rate * gt_total)
 
-    # ── transcript_assignment_accuracy（坐标匹配法）─────────────────────────
-    print("[BT] 计算 transcript_assignment_accuracy ...")
+    # ── transcript_assignment_accuracy (coordinate matching) ──────────────────
+    print("[BT] Computing transcript_assignment_accuracy ...")
     accuracy, in_matched, correct_tx = compute_transcript_accuracy(
         bering_tx_path   = bering_tx_path,
         tx_file          = gt_tx_path,
@@ -421,7 +425,7 @@ def compute_bering_transcript_metrics(
         verbose          = verbose,
     )
 
-    print(f"[BT] 完成: valid_pairs={valid_pairs:,}  "
+    print(f"[BT] done: valid_pairs={valid_pairs:,}  "
           f"pred_rate={pred_rate:.3f}  gt_rate={gt_rate:.3f}  accuracy={accuracy:.4f}")
 
     return {
@@ -445,7 +449,7 @@ def compute_bering_transcript_metrics(
 
 
 # =============================================================================
-# 以下函数与参考代码完全一致（复用自 eval_genesegnet_cosmx.py）
+# The functions below match the reference code exactly (reused from eval_genesegnet_cosmx.py)
 # =============================================================================
 def expand_path(path):
     if path is None: return None
@@ -470,7 +474,7 @@ def normalize_columns(df, cfg, table_name):
     out = df.rename(columns=rename).copy()
     required = [cfg.cell_id_col, cfg.x_col, cfg.y_col]
     missing  = [c for c in required if c not in out.columns]
-    if missing: raise ValueError(f"{table_name} 缺少必需列 {missing}. 可用列: {list(out.columns)[:30]}")
+    if missing: raise ValueError(f"{table_name} missing required columns {missing}. Available: {list(out.columns)[:30]}")
     return out
 
 def _mode_with_confidence(values):
@@ -490,8 +494,8 @@ def collapse_to_cell_level(df, cfg, table_name):
     df=normalize_columns(df,cfg,table_name=table_name)
     for col in [cfg.x_col,cfg.y_col]: df[col]=pd.to_numeric(df[col],errors="coerce")
     bad=df[[cfg.x_col,cfg.y_col]].isna().any(axis=1)
-    if bad.any(): warnings.warn(f"{table_name}: 丢弃 {int(bad.sum())} 行（坐标缺失）"); df=df.loc[~bad].copy()
-    if df.empty: raise ValueError(f"{table_name}: 坐标清洗后无有效行")
+    if bad.any(): warnings.warn(f"{table_name}: dropping {int(bad.sum())} rows (missing coords)"); df=df.loc[~bad].copy()
+    if df.empty: raise ValueError(f"{table_name}: no valid rows after coordinate cleaning")
     df[cfg.x_col]*=cfg.coordinate_scale_x; df[cfg.y_col]*=cfg.coordinate_scale_y
     grouped=df.groupby(cfg.cell_id_col,sort=False,observed=True)
     base=grouped[[cfg.x_col,cfg.y_col]].mean().reset_index()
@@ -517,7 +521,7 @@ def collapse_to_cell_level(df, cfg, table_name):
         else: numeric_to_agg.extend([g for _,g in cfg.numeric_pairs])
     seen=set(); numeric_to_agg=[c for c in numeric_to_agg if not (c in seen or seen.add(c))]
     for col in numeric_to_agg:
-        if col not in df.columns: warnings.warn(f"{table_name}: 数值列 '{col}' 缺失"); continue
+        if col not in df.columns: warnings.warn(f"{table_name}: numeric column '{col}' missing"); continue
         numeric=pd.to_numeric(df[col],errors="coerce")
         tmp=pd.DataFrame({cfg.cell_id_col:df[cfg.cell_id_col].values,col:numeric.values})
         agg=tmp.groupby(cfg.cell_id_col,sort=False,observed=True)[col].mean().reset_index()
@@ -530,10 +534,10 @@ def collapse_to_cell_level(df, cfg, table_name):
 
 def infer_match_radius(gt_cells,cfg):
     xy=gt_cells[[cfg.x_col,cfg.y_col]].to_numpy(dtype=float)
-    if xy.shape[0]<2: raise ValueError("GT 细胞数 < 2")
+    if xy.shape[0]<2: raise ValueError("GT cell count < 2")
     nbrs=NearestNeighbors(n_neighbors=2,algorithm="auto").fit(xy); dists,_=nbrs.kneighbors(xy)
     radius=float(np.nanquantile(dists[:,1],cfg.radius_quantile)*cfg.radius_multiplier)
-    if not np.isfinite(radius) or radius<=0: raise ValueError(f"无效匹配半径: {radius}")
+    if not np.isfinite(radius) or radius<=0: raise ValueError(f"invalid match radius: {radius}")
     return radius
 
 def build_candidate_edges(pred_cells,gt_cells,cfg,radius):
@@ -706,7 +710,7 @@ def numeric_pair_metrics(matches,cfg):
         base={f"matched_pair_{label}_valid_n":0,f"matched_pair_{label}_pearson":np.nan,
               f"matched_pair_{label}_spearman":np.nan,f"matched_pair_{label}_mae":np.nan,f"matched_pair_{label}_rmse":np.nan}
         if matches.empty or pred_col not in matches.columns or gt_col not in matches.columns:
-            warnings.warn(f"numeric pair '{pred_col_raw}:{gt_col_raw}' 无法评估"); res.update(base); continue
+            warnings.warn(f"numeric pair '{pred_col_raw}:{gt_col_raw}' cannot be evaluated"); res.update(base); continue
         x=pd.to_numeric(matches[pred_col],errors="coerce"); y=pd.to_numeric(matches[gt_col],errors="coerce")
         valid=x.notna()&y.notna(); xv,yv=x[valid].to_numpy(dtype=float),y[valid].to_numpy(dtype=float)
         pear=spear=np.nan
@@ -764,7 +768,7 @@ def _json_default(obj):
 
 
 # =============================================================================
-# 主评估流程
+# main evaluation flow
 # =============================================================================
 def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     if cfg.numeric_pairs is None: cfg.numeric_pairs=[("n_transcripts","total_counts")]
@@ -775,7 +779,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         print(f"[INFO] Bering cells: {cfg.bering_cells_path}")
         print(f"[INFO] Bering tx:    {cfg.bering_tx_path}")
 
-    # 加载 run_summary
+    # load run_summary
     bering_summary = {}
     if os.path.exists(cfg.bering_summary_path):
         with open(cfg.bering_summary_path) as f:
@@ -789,8 +793,8 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     # Bering pred
     pred_raw = load_bering_cells(cfg)
 
-    # 坐标对齐
-    print("\n[Align] 自动坐标对齐 ...")
+    # coordinate alignment
+    print("\n[Align] auto coordinate alignment ...")
     pred_raw, align_params = auto_align_coordinates(pred_raw, gt_raw, cfg)
 
     # collapse
@@ -799,13 +803,13 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
 
     radius = cfg.match_radius if cfg.match_radius is not None else infer_match_radius(gt_cells,cfg)
     if cfg.verbose:
-        print(f"[INFO] 匹配半径: {radius:.4f} µm")
+        print(f"[INFO] match radius: {radius:.4f} µm")
         print(f"[INFO] GT={len(gt_cells):,}  Pred={len(pred_cells):,}")
 
     matches, match_qc = match_sparse_hungarian(pred_cells, gt_cells, cfg, radius=radius)
 
-    # 转录本指标（从 Bering transcript_assignments.csv + tx_file）
-    print(f"\n[INFO] 计算转录本指标（约 10-15 分钟）...")
+    # transcript metrics (from Bering transcript_assignments.csv + tx_file)
+    print(f"\n[INFO] Computing transcript metrics (~10-15 min)...")
     tx_metrics = compute_bering_transcript_metrics(
         bering_tx_path   = cfg.bering_tx_path,
         bering_summary   = bering_summary,
@@ -817,7 +821,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
         verbose          = cfg.verbose,
     )
 
-    # 汇总
+    # aggregate
     metrics: Dict[str,Any] = {
         "method"              : cfg.method_name,
         "script_version"      : SCRIPT_VERSION,
@@ -832,7 +836,7 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
     metrics.update(numeric_spatial_metrics(pred_cells, gt_cells, matches, cfg))
     metrics.update(numeric_pair_metrics(matches, cfg))
 
-    # 转录本指标合并
+    # merge transcript metrics
     metrics["transcript_matched_cell_pairs_n"] = int(matches.shape[0])
     metrics["matched_cell_transcript_count_pearson"]  = metrics.get("matched_pair_n_transcripts_vs_total_counts_pearson", np.nan)
     metrics["matched_cell_transcript_count_spearman"] = metrics.get("matched_pair_n_transcripts_vs_total_counts_spearman", np.nan)
@@ -869,14 +873,14 @@ def evaluate(cfg: EvaluationConfig) -> pd.DataFrame:
 
 
 def parse_args():
-    p=argparse.ArgumentParser(description="评估 Bering 分割结果（CosMx 数据集）")
+    p=argparse.ArgumentParser(description="Evaluate Bering segmentation results (CosMx dataset)")
     p.add_argument("--gt-path",            default=GT_METADATA_PATH)
     p.add_argument("--gt-transcripts-path",default=TX_FILE)
     p.add_argument("--bering-cells",       default=BERING_CELLS)
     p.add_argument("--bering-transcripts", default=BERING_TRANSCRIPTS)
     p.add_argument("--bering-summary",     default=BERING_SUMMARY)
     p.add_argument("--pixel-size-um",      type=float, default=PIXEL_SIZE_UM)
-    p.add_argument("--output-dir",         default="/data/qiuyijia/eval_results/bering")
+    p.add_argument("--output-dir",         default="yourpath/eval_results/bering")
     p.add_argument("--method-name",        default="Bering")
     p.add_argument("--match-radius",       type=float, default=None)
     p.add_argument("--no-save-matched-table",      action="store_true")

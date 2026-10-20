@@ -4,7 +4,7 @@
 cellist_xenium.py
 =======================================================================
 Cellist on centered Xenium ROIs (liver / mouse brain), built on the same
-pattern as your CosMx scripts: Python API for the nucleus step, output
+pattern as the CosMx scripts: Python API for the nucleus step, output
 validation, incremental summary TSV, DONE/FAILED flags, logging.
 
 Stages
@@ -12,7 +12,6 @@ Stages
   prep    ROI DAPI tif + transcripts gem (tsv.gz) in ONE pixel space,
           plus the platform cell count in the ROI as a GT reference
   grid    sweep diameter / cellprob / flow, scored against that GT count
-          (the analogue of your param_test script)
   seg     Cellpose nucleus step -> cellist seg -> raster -> counts -> QC
   all     prep + seg
   report  QC only
@@ -26,18 +25,15 @@ Usage
 
 Sizes are given in MICRONS
 --------------------------
-diameter / cell radius / expansion are specified in um and converted to
-gem units internally, then logged both ways. A diameter tuned on CosMx
-pixels does not transfer to Xenium (0.2125 um/px), so carrying
-`diameter=20` across platforms silently changes what is being asked for.
+diameter / cell radius / expansion are in um and converted to gem units
+internally, then logged both ways. A diameter tuned on CosMx pixels does
+not transfer to Xenium (0.2125 um/px).
 
 Coordinate space
 ----------------
-The DAPI image and the gem must share one coordinate system. Both are
-built on a grid of --gem-bin native pixels (default 2 -> 0.425 um), which
-keeps subcellular resolution while cutting the spot count ~4x versus
-native. --gem-bin must divide --bin-factor so the final raster
-downsamples cleanly onto the UCS / Proseg comparison grid.
+DAPI and gem share one coordinate system, on a grid of --gem-bin native
+pixels (default 2 -> 0.425 um). --gem-bin must divide --bin-factor so the
+final raster downsamples cleanly onto the UCS / Proseg comparison grid.
 """
 
 import os
@@ -61,11 +57,11 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 DATASETS = {
-    "liver": {"root": "/data/qiuyijia/dataset/xenium_liver", "tag": "liver"},
-    "mouse_brain": {"root": "/data/qiuyijia/dataset/xenium_mouse_brain",
+    "liver": {"root": "yourpath", "tag": "liver"},
+    "mouse_brain": {"root": "yourpath",
                     "tag": "mouse_brain"},
 }
-OUT_TEMPLATE = "/data/qiuyijia/cellist_xenium_{tag}_roi{roi}"
+OUT_TEMPLATE = "yourpath"
 
 CONTROL_PREFIXES = (
     "NegControlProbe", "NegControlCodeword", "negcontrol",
@@ -121,9 +117,7 @@ def banner(msg):
     logging.info("=" * 90)
 
 
-# ----------------------------------------------------------------------
-# file resolution / ROI  (identical to ucs_xenium.py and proseg_xenium.py)
-# ----------------------------------------------------------------------
+# file resolution / ROI (identical to ucs_xenium.py and proseg_xenium.py)
 def resolve_first(root, candidates, what, required=True):
     for c in candidates:
         p = root / c
@@ -242,9 +236,7 @@ def compute_roi(img_h, img_w, roi_size, origin=None):
     return y0, x0, sy, sx
 
 
-# ----------------------------------------------------------------------
 # GT reference: platform nuclei whose centroid lies in the ROI
-# ----------------------------------------------------------------------
 def platform_cell_count(nb_path, meta):
     ps = meta["pixel_size"]
     y0, x0, sy, sx = meta["y0"], meta["x0"], meta["size_y"], meta["size_x"]
@@ -269,9 +261,7 @@ def platform_cell_count(nb_path, meta):
     return int(inside.sum())
 
 
-# ----------------------------------------------------------------------
 # stage: prep
-# ----------------------------------------------------------------------
 def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     """Write the ROI DAPI tif and the gem, both on the gem-bin grid."""
     import pyarrow.parquet as pq
@@ -298,7 +288,7 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     logging.info(f"gem/image grid = {Hb} x {Wb}   "
                  f"1 unit = {gb} native px = {unit_um:.4f} um")
 
-    # ---- DAPI ---------------------------------------------------------
+    # DAPI
     dapi = read_dapi_crop(morph, args.dapi_channel, y0, x0, Hb * gb, Wb * gb)
     dapi = np.asarray(dapi)[:Hb * gb, :Wb * gb]
     logging.info(f"DAPI crop {dapi.shape} dtype={dapi.dtype} "
@@ -320,7 +310,7 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     del dapi
     gc.collect()
 
-    # ---- gem ----------------------------------------------------------
+    # gem
     ymin, ymax = y0 * ps, (y0 + Hb * gb) * ps
     xmin, xmax = x0 * ps, (x0 + Wb * gb) * ps
     pf = pq.ParquetFile(str(tx_path))
@@ -410,9 +400,7 @@ def prep_inputs(tx_path, morph, nb_path, input_dir, meta, args):
     return tif_p, gem_p, out
 
 
-# ----------------------------------------------------------------------
-# Cellpose nucleus step (Python API, as in the CosMx scripts)
-# ----------------------------------------------------------------------
+# Cellpose nucleus step (Python API)
 def make_tag(p):
     cp = str(p["cellprob_threshold"]).replace("-", "m").replace(".", "p")
     fl = str(p["flow_threshold"]).replace(".", "p")
@@ -610,9 +598,7 @@ def stage_grid(gem_p, tif_p, out_root, prep, args):
     logging.info("param grid finished")
 
 
-# ----------------------------------------------------------------------
 # cellist seg + downstream
-# ----------------------------------------------------------------------
 def find_one(directory, pattern, what):
     """Newest match, not the alphabetically first.
 
@@ -979,9 +965,7 @@ def qc_report(out_root, prep, compare_to=None):
         print(f"  foreground Dice  {dice:.3f}")
 
 
-# ----------------------------------------------------------------------
 # main
-# ----------------------------------------------------------------------
 def get_args():
     p = argparse.ArgumentParser(
         description="Cellist on a centered Xenium ROI (Cellist Python API).",
@@ -1153,7 +1137,7 @@ def main():
                          .to_string(index=False))
         return
 
-    # ---- single run ---------------------------------------------------
+    # single run
     torch = gpu_report()
     nuc_dir = out_root / "cellpose"
     nuc_dir.mkdir(parents=True, exist_ok=True)

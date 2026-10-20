@@ -60,7 +60,7 @@ your raw dataset
 
 <h3 id="output-1">Output</h3>
 
-After preprocessing, you will output a dataset without splitting into training, validation and testing, as follows：
+After preprocessing, you will output a dataset without splitting into training, validation and testing, as follows:
 ```
 your preprocessed dataset
  |-sample 1

@@ -1,42 +1,47 @@
 # -*- coding: utf-8 -*-
 """
-方法 × 指标 秩气泡矩阵（两套指标体系）
-=====================================
+Method x metric rank bubble matrix (two metric systems)
+=======================================================
 
-图 1  RNA 类方法   <- benchmark_result_omics.xlsx / sheet '汇总'
-图 2  图像分割方法 <- benchmark_result_image.xlsx / sheet '图像分割方法汇总'
+Figure 1  RNA methods   <- benchmark_result_omics.xlsx / sheet 'Summary'
+Figure 2  image segmentation methods <- benchmark_result_image.xlsx / sheet 'Image Segmentation Summary'
 
-图像分割方法（Cellpose-SAM / Cellpose-3 / StarDist / CellSAM / Mesmer / CelloType / UNSEG）
-在「图像分割方法汇总」这个 sheet 里，图 2 读的是它。
+Image segmentation methods (Cellpose-SAM / Cellpose-3 / StarDist / CellSAM / Mesmer / CelloType / UNSEG)
+live in the "Image Segmentation Summary" sheet, which Figure 2 reads.
 
-两套指标体系不同（RNA 方法没有像素掩膜，算不了 Dice/IoU/PQ），但都是 17 个指标、
-四个大类、每类数量都是 4/4/5/4，两张图可以上下拼在一起对齐。
+The two metric systems differ (RNA methods have no pixel masks, so Dice/IoU/PQ cannot be
+computed), but both have 17 metrics in four categories with 4/4/5/4 per category, so the
+two figures stack and align vertically.
 
-【适配最新 excel】
-  · 同一数据集在表里有多种写法（xenium7 / xenium_7、merfish_liver1 / merfish_2、
-    MERFISH_Lung_cancer / merfish_lung_cancer 等），用 DATASET_ALIAS 统一，
-    否则同一数据集会被拆开，Cellpose-3 / UNSEG 在很多数据集上会因"只有一个方法"被跳过；
-    平台名同时转小写（MERFISH -> merfish）
-  · xenium_liver 下 GT = 10,654 的行实为 CosMx 人脑数据，归到 cosmx_3
-    （本地数据已改的话这条规则不会命中任何行）
-  · 新增 DISSECT / Cellpose-3 / UNSEG 的显示名；Cellpose 显示为 Cellpose-SAM
+[Adapt to latest Excel]
+  . The same dataset is spelled several ways in the sheet (xenium7 / xenium_7,
+    merfish_liver1 / merfish_2, MERFISH_Lung_cancer / merfish_lung_cancer, etc.);
+    DATASET_ALIAS unifies them, otherwise one dataset is split and Cellpose-3 / UNSEG get
+    skipped on many datasets because only one method remains; platform names are lowercased
+    too (MERFISH -> merfish).
+  . Rows under xenium_liver with GT = 10,654 are actually CosMx human brain data and are
+    reassigned to cosmx_3 (matches nothing if the local data is already fixed).
+  . Added display names for DISSECT / Cellpose-3 / UNSEG; Cellpose is shown as Cellpose-SAM.
 
-每格数值的计算链路：
-  1. 同一平台内，逐个数据集对各方法在该指标上求秩（按指标方向校正，秩 1 = 最好）
-  2. 秩归一化到 0~1，消除各数据集参评方法数不等带来的偏差
-  3. 平台内按各数据集 GT 细胞数的对数加权平均
-  4. 各平台等权平均
+Computation chain for each cell value:
+  1. Within a platform, rank the methods per dataset on that metric (corrected by metric
+     direction, rank 1 = best)
+  2. Normalize ranks to 0~1 to remove bias from unequal method counts per dataset
+  3. Log-weighted average within the platform, weighted by each dataset's GT cell count
+  4. Equal-weight average across platforms
 
-排版：指标名倾斜排在大类名上方，用短斜线指回对应列；
-      格子边长按数据里实际最大的图形推算，缝隙只留描边不相碰的物理下限；
-      四个大类之间横向空出半个格子；图例各档单独用更松的行距；
-      四种色相 = 四个大类；每列各自归一化取色，该列最差的格子直接用色号原色、最好的接近白
-      （COLOR_SCOPE="global" 可切回绝对分数着色）；
-      方圆变化走高次幂，只有最接近满分的一小段才呈方形，其余都是圆；
-      行底色灰白交替；每个图形描黑边；最右侧单独一列图例。
-      全部文字统一 Arial 12 号。
+Layout: metric names are slanted above the category names, with short leader lines back to
+      their columns; cell size is derived from the largest shape actually present in the
+      data, leaving only the physical minimum gap so edges never touch; a half-cell gap
+      separates the four categories; legend rows use looser spacing; four hues = four
+      categories; each column is color-normalized independently, the worst cell taking the
+      raw color and the best approaching white (COLOR_SCOPE="global" switches back to
+      absolute-score coloring); the round/square exponent is a high power so only the top
+      slice near full score looks square, the rest stay round; rows alternate gray/white
+      background; every shape has a black outline; a separate legend column on the right.
+      All text uses Arial 12.
 
-直接 python 运行即可，路径已写死。
+Run directly with python; set the yourpath placeholders below first.
 """
 
 import os
@@ -52,128 +57,133 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Polygon, Rectangle
 
-# 全图用 Arial。Liberation Sans 与 Arial 度量完全一致，作为 Linux/无 Arial 环境的兜底，
-# 排版结果不会有差别。
+# Use Arial throughout. Liberation Sans is metrically identical to Arial as a fallback for
+# Linux / no-Arial environments; the layout is identical either way.
 plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["font.sans-serif"] = ["Arial", "Liberation Sans", "Helvetica", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
-plt.rcParams["pdf.fonttype"] = 42       # 字体按 TrueType 嵌入，便于 Illustrator 编辑
+plt.rcParams["pdf.fonttype"] = 42       # embed fonts as TrueType so Illustrator can edit them
 plt.rcParams["ps.fonttype"] = 42
 
 
 # ==========================================================================
-# 路径（已写死）
+# Paths (yourpath placeholders)
 # ==========================================================================
-PATH_OMICS = r"C:\Users\阿飞\Desktop\benchmark_result_omics.xlsx"
-PATH_IMAGE = r"C:\Users\阿飞\Desktop\benchmark_result_image.xlsx"
-OUT_DIR = r"C:\Users\阿飞\Desktop\supplement"
+PATH_OMICS = "yourpath/benchmark_result_omics.xlsx"
+PATH_IMAGE = "yourpath/benchmark_result_image.xlsx"
+OUT_DIR = "yourpath/supplement"
 
 FILE_FORMAT = "pdf"     # "pdf" / "png" / "svg"
 
 
 # ==========================================================================
-# 关键方法学开关
+# Key methodology switches
 # ==========================================================================
-# 各数据集参评方法数不等（RNA 表里 cosmx_1 有 8 个方法，有的数据集只有 2 个）。
-# 直接平均原始秩会出问题：2 个方法里排第 2（垫底）和 8 个方法里排第 2（接近最好）
-# 都是数字 2，结论完全反过来。所以默认把秩归一化到 0~1 再平均。
-#   "percentile" : 归一化秩 = (n - rank + 0.5) / n   —— 推荐，默认
-#   "raw"        : 原始秩线性反转，严格按字面的"求秩"
+# Datasets have unequal numbers of methods (cosmx_1 has 8 methods in the RNA sheet, some
+# datasets only 2). Averaging raw ranks is wrong: rank 2 of 2 (last) and rank 2 of 8 (near
+# best) are both the number 2, reversing the conclusion. So ranks are normalized to 0~1
+# before averaging by default.
+#   "percentile" : normalized rank = (n - rank + 0.5) / n   -- recommended, default
+#   "raw"        : raw rank linearly reversed, strictly "rank" as written
 RANK_MODE = "percentile"
 
-# 平台内按 GT 细胞数加权。xenium_1 有 190,965 个细胞，是 xenium_3(2,442) 的 78 倍，
-# 线性加权下它一家占 xenium 平台 73% 权重；取对数后降到约 21%（等权是 16.7%）。
+# Weight within a platform by GT cell count. xenium_1 has 190,965 cells, 78x xenium_3
+# (2,442); linear weighting gives it 73% of the xenium platform, while the log scale drops
+# it to ~21% (equal weight is 16.7%).
 #   "log" / "linear" / "sqrt" / "equal"
 WEIGHT_MODE = "log"
 
-SORT_ROWS_BY_SCORE = True   # 方法按总分从高到低排；False 则按字典序
-SHOW_VALUES = False         # 在图形中央标数值
+SORT_ROWS_BY_SCORE = True   # sort methods by total score descending; False = alphabetical
+SHOW_VALUES = False         # print the value in the center of each shape
 
-# 两个表的四个大类要不要强行用同一组名字。
-# 两张图现在是按【每类的指标数量和配色位置】对齐的，不是按语义——
-# 第一位 RNA 是 Detection accuracy 而图像是 Boundary quality，两者并不对应，
-# 所以这个开关必须保持 False，否则会张冠李戴。
+# Whether to force the four categories of both sheets to share one name set. The two
+# figures are aligned by the metric count and color position of each category, not by
+# semantics -- the first RNA category is Detection accuracy while the image one is
+# Boundary quality, so they do not correspond. This switch must stay False.
 UNIFIED_CATEGORY_NAMES = False
 UNIFIED_NAMES = ["Detection", "Spatial agreement", "Per-cell fidelity", "Overall quality"]
 
 
 # ==========================================================================
-# 外观
+# Appearance
 # ==========================================================================
-# 四个大类的色相。注意原始需求里第二个写的是 (237,12,549)，549 超出 RGB 范围，
-# 按配套的 Office 橙 (237,125,49) 处理。
+# Hues for the four categories. The original spec's second value (237,12,549) had 549 out
+# of RGB range, so it is treated as the matching Office orange (237,125,49).
 CAT_COLORS = ["#4490A9", "#ED7D31", "#5B9BD5", "#FFC000"]
-ROW_BG_A, ROW_BG_B = "#EDEDED", "#FFFFFF"                   # 行底色灰白交替
-SHAPE_EDGE_COLOR = "#1A1A1A"    # 图形描边
+ROW_BG_A, ROW_BG_B = "#EDEDED", "#FFFFFF"                   # alternating gray/white row background
+SHAPE_EDGE_COLOR = "#1A1A1A"    # shape outline
 SHAPE_EDGE_WIDTH = 1.4
 
-# 颜色按数值渐变：CAT_COLORS 里的四个色号【就是最深的那一端】，直接用原色不做压暗；
-# 配合 COLOR_SCOPE="column"，每列最差的格子拿到的正是该大类指定的色号，
-# 分数升高则向白色过渡。
+# Color gradient by value: the four CAT_COLORS are the darkest end, used raw (no darkening);
+# with COLOR_SCOPE="column", the worst cell in each column takes the category's color, and
+# higher scores transition toward white.
 GRADIENT = True
-# 颜色的取值范围：
-#   "column" 每个指标列各自归一化——该列最差的格子取色号原色，最好的取最浅色。
-#            对比度拉满，但颜色变成【列内相对】，跨列不可比：
-#            某列分数挤在 0.4~0.6，另一列跨 0.1~0.9，两列最深的格子看上去一样深。
-#            大小和方圆仍是绝对值，所以跨列可能出现"颜色更深但图形更大"。
-#   "global" 用绝对分数 0~1，跨列可比，但数据里最低分若是 0.14，
-#            最深的那一档就永远用不上，颜色跨度被浪费。
+# Color value range:
+#   "column" normalizes each metric column independently -- the worst cell takes the raw
+#            color, the best takes the lightest. Maximum contrast, but colors become
+#            relative within a column and are not comparable across columns: one column
+#            spanning 0.4~0.6 and another 0.1~0.9 both show the same darkest shade. Size
+#            and shape are still absolute, so a "darker but bigger" cell can occur.
+#   "global" uses absolute scores 0~1, comparable across columns, but if the lowest score is
+#            0.14 the darkest level is never used and the color span is wasted.
 COLOR_SCOPE = "column"
-# LIGHT_MAX：最高分时向白色靠拢的程度。1.0 = 纯白；0.90 表示仍留约 10% 的色，
-# 也就是"非常接近白色但带一点点很浅的颜色"。
+# LIGHT_MAX: how close to white the top score gets. 1.0 = pure white; 0.90 keeps about 10%
+# of the color, i.e. "very near white with a hint of a pale color".
 LIGHT_MAX = 0.90
-# LIGHT_GAMMA：渐变曲线。1.0 线性；小于 1 让中段更快变浅，
-# 使高分区集中在接近白色的一小段，低分之间的差别相对更醒目。
+# LIGHT_GAMMA: gradient curve. 1.0 linear; below 1 the mid-range lightens faster, so high
+# scores cluster in a narrow near-white band and low-score differences stand out more.
 LIGHT_GAMMA = 0.80
 
-# 图形半径范围（英寸）。注意：整体等比缩放不会让视觉变紧——缝隙和图形会一起缩。
-# 真正决定疏密的是【缝隙 / 图形直径】这个比值，而缝隙的下限被描边宽度卡死，
-# 所以把图形调大、描边不变，相对缝隙就变小，看起来才更紧凑。
+# Shape radius range (inches). Uniform scaling does not make it look tighter -- gaps and
+# shapes shrink together. Density is set by the gap / shape-diameter ratio, and the gap
+# floor is fixed by the outline width, so enlarging shapes while keeping the outline
+# constant shrinks the relative gap and looks more compact.
 HALF_MIN_IN, HALF_MAX_IN = 0.077, 0.300
 
-# 间距压到物理下限：描边以路径为中线绘制，向外还要占半个线宽，
-# 两个相邻图形之间至少要留 "半个线宽 × 2" 才不会碰上。
-GAP_EPS_IN = 0.0                                    # 余量，0 = 描边正好相切
-EDGE_HALF_IN = SHAPE_EDGE_WIDTH / 72.0 / 2.0        # 描边向外扩出的一半
+# Gap at the physical floor: the outline is drawn centered on the path and extends half a
+# line width outward, so two adjacent shapes need at least "half line width x 2" to not touch.
+GAP_EPS_IN = 0.0                                    # extra margin, 0 = outlines just touch
+EDGE_HALF_IN = SHAPE_EDGE_WIDTH / 72.0 / 2.0        # half the outline's outward extent
 MIN_INDENT_IN = EDGE_HALF_IN + GAP_EPS_IN
 
-# 格子边长按【数据里实际出现的最大值】推算，而不是按理论满分。
-# 满分格子很少见，按 1.0 留空等于白白浪费一圈空白。
+# Cell size is derived from the largest value actually present in the data, not the
+# theoretical maximum. Full-score cells are rare; reserving for 1.0 wastes a ring of space.
 FIT_TO_DATA = True
-CELL_IN = 2 * (HALF_MAX_IN + MIN_INDENT_IN)    # 回退值，FIT_TO_DATA=False 时用
+CELL_IN = 2 * (HALF_MAX_IN + MIN_INDENT_IN)    # fallback used when FIT_TO_DATA=False
 ROW_H_IN = CELL_IN
 
-# 超椭圆指数：2 = 正圆，越大越接近正方形。
-# SQUARE_POWER 越大，方形只出现在最接近满分的那一小段，其余都是圆。
+# Superellipse exponent: 2 = circle, larger = closer to a square. A higher SQUARE_POWER
+# makes squares appear only in the small band near full score; the rest stay round.
 SQUARE_RANGE = (2.0, 8.0)
 SQUARE_POWER = 6.0
 
-# 四个大类之间空出的横向间距，单位是格子边长的倍数
+# Horizontal gap between the four categories, in units of cell size
 CAT_GAP_FRAC = 0.5
 
-# 指标名倾斜排在大类名上方，用短斜线指到对应列，这样列间距可以压到最小
-LABEL_ROT = 45                  # 指标名倾斜角度
-LEADER_IN = 0.13                # 指引斜线长度
+# Metric names slanted above the category names, short leader lines pointing to each column,
+# so column spacing can be minimal
+LABEL_ROT = 45                  # metric label slant angle
+LEADER_IN = 0.13                # leader line length
 LEADER_COLOR, LEADER_WIDTH = "#6B7280", 0.7
 
-# 全图统一 Arial 12 号
+# Arial 12 throughout the figure
 FS = 12
 LABEL_FS = ROW_FS = CAT_FS = TITLE_FS = LEG_FS = FS
 
 RIGHT_IN, BOTTOM_IN = 0.30, 0.35
-LEGEND_GAP_IN = 0.34            # 指标区与图例列之间的留白
+LEGEND_GAP_IN = 0.34            # whitespace between the metric area and the legend column
 LEGEND_TITLE = "Rank"
-LEGEND_TICKS = [1.00, 0.75, 0.50, 0.25, 0.00]   # 图例里展示的参考分值
-LEGEND_SPACING = 1.5            # 图例各档之间的行距，单位是格子边长的倍数
-LEGEND_COLOR = "#595959"   # 图例用中性深灰，同样向白色渐变
+LEGEND_TICKS = [1.00, 0.75, 0.50, 0.25, 0.00]   # reference values shown in the legend
+LEGEND_SPACING = 1.5            # spacing between legend rows, in units of cell size
+LEGEND_COLOR = "#595959"   # neutral dark gray for the legend, also fading to white
 
 
 # ==========================================================================
-# 指标体系
+# Metric systems
 # ==========================================================================
-# (列名, 图上显示的缩写, 大类, 方向, 是否派生)
-# direction: high=越大越好, low=越小越好, target1=越接近 1 越好
-# 派生指标在图上缩写后带 *
+# (column name, display abbreviation, category, direction, derived?)
+# direction: high=higher is better, low=lower is better, target1=closer to 1 is better
+# derived metrics get a * after their abbreviation on the plot
 
 METRICS_RNA = [
     ("cell_ratio",       "Ratio",     "Detection accuracy", "target1", False),
@@ -198,13 +208,13 @@ METRICS_RNA = [
     ("assign_accuracy",  "Assign",    "Expression & assignment", "high", False),
 ]
 
-# 顺序：把 Boundary quality 提到第一类、Instance detection 挪到第三类，
-# 于是每类数量变成 4/4/5/4，与 RNA 表完全一致，两张图可以上下拼在一起对齐。
-# 大类颜色是按出现顺序取 CAT_COLORS 的，所以位置一换颜色自然跟着换，
-# 第 1~4 位的配色与 RNA 表逐位对应。
-# 注意：对齐的是【每类的指标数量和配色位置】，不是语义——
-# 第一位 RNA 是 Detection accuracy 而图像是 Boundary quality，两者并不对应，
-# 所以 UNIFIED_CATEGORY_NAMES 必须保持 False，否则会张冠李戴。
+# Order: Boundary quality is moved first and Instance detection third, so each category has
+# 4/4/5/4 metrics, exactly matching the RNA sheet and letting the two figures stack/align.
+# Category colors are taken from CAT_COLORS in order of appearance, so moving positions moves
+# colors too, and positions 1~4 match the RNA sheet's colors.
+# Note: alignment is by metric count and color position per category, not semantics -- the
+# first RNA category is Detection accuracy while the image one is Boundary quality, so
+# UNIFIED_CATEGORY_NAMES must stay False or they get mismatched.
 METRICS_IMG = [
     ("Boundary F1",        "B.F1",    "Boundary quality", "high", False),
     ("Boundary Precision", "B.Prec",  "Boundary quality", "high", False),
@@ -230,26 +240,27 @@ METRICS_IMG = [
 
 
 # ==========================================================================
-# 数据源
+# Data sources
 # ==========================================================================
 SOURCES = [
     dict(
         label="RNA-based methods",
         path=PATH_OMICS,
-        sheet=None,                 # None = 第一个 sheet
+        sheet=None,                 # None = first sheet
         gt_col="gt_cells",
         metrics=METRICS_RNA,
         out="bubble_full_omics",
-        # 精确 0 视为缺失：0 µm 的定位误差物理上不可能（ComSeg 在 xenium_3 上
-        # loc_mean/median/p95 全是 0），不清洗它会被排成定位最准的方法
+        # Treat exact 0 as missing: 0 um localization error is physically impossible
+        # (ComSeg on xenium_3 has loc_mean/median/p95 all 0); without cleaning it gets
+        # ranked as the most accurate localization method
         zero_is_missing=["loc_mean_um", "loc_median_um", "loc_p95_um"],
         check_f1=True,
     ),
     dict(
         label="Image-based segmentation methods",
         path=PATH_IMAGE,
-        sheet="图像分割方法汇总",
-        gt_col="GT细胞数",
+        sheet="Image Segmentation Summary",
+        gt_col="GT cells",
         metrics=METRICS_IMG,
         out="bubble_result_image",
         zero_is_missing=[],
@@ -257,19 +268,20 @@ SOURCES = [
     ),
 ]
 
-# 方法名统一：大小写不敏感去重 + 规范显示名。
-# 图像表里 'Cellpose' 和 'cellpose' 是同一个方法各存了一份，不合并会变成两行；
-# RNA 表里 'ProSeg(supervised)' 和 'ProSeg' 同理。
+# Unify method names: case-insensitive dedup + canonical display names. In the image sheet
+# 'Cellpose' and 'cellpose' are the same method stored twice and would become two rows if
+# not merged; likewise 'ProSeg(supervised)' and 'ProSeg' in the RNA sheet.
 DISPLAY_NAMES = {
     "proseg": "ProSeg", "ucs": "UCS", "boms": "BOMS", "baysor": "Baysor",
     "bering": "Bering", "cellist": "Cellist", "comseg": "ComSeg",
-    "genesegnet": "GeneSegNet", "dissect": "DISSECT",            # 【适配】新增 DISSECT
-    "cellpose": "Cellpose-SAM", "stardist": "StarDist", "cellsam": "CellSAM",   # 【适配】与正文统一
+    "genesegnet": "GeneSegNet", "dissect": "DISSECT",            # Adapt: added DISSECT
+    "cellpose": "Cellpose-SAM", "stardist": "StarDist", "cellsam": "CellSAM",   # Adapt: match the paper text
     "mesmer": "Mesmer", "cellotype": "CelloType",
-    "cellpose3": "Cellpose-3", "unseg": "UNSEG",                  # 【适配】新增两个图像方法
+    "cellpose3": "Cellpose-3", "unseg": "UNSEG",                  # Adapt: added two image methods
 }
 
-# 【适配】同一数据集的不同写法 -> 统一名（键为小写；统一成组学表的命名，三张图口径一致）
+# Adapt: map different spellings of the same dataset to one name (keys lowercase; unified to
+# the omics sheet naming so all three figures share the same scope)
 DATASET_ALIAS = {
     "cosmx_2_lymph_node":             "cosmx_2",
     "cosmx_lymph_node":               "cosmx_2",
@@ -291,18 +303,18 @@ DATASET_ALIAS = {
     "xenium_mouse_brain":             "xenium_5",
     "xenium_colon":                   "xenium_6",
 }
-# 【适配】xenium_liver 下 GT≈10,654 的行实为 CosMx 人脑数据
+# Adapt: rows under xenium_liver with GT~10,654 are actually CosMx human brain data
 LIVER_FIX_GT, LIVER_FIX_TOL, LIVER_FIX_TO = 10654, 50, "cosmx_human_brain"
 
 
 # ==========================================================================
-# 文字宽度测量（表头排版的基础）
+# Text width measurement (basis of the header layout)
 # ==========================================================================
 _SCRATCH = None
 
 
 def text_width_in(text, fs):
-    """用真实渲染器量出这段文字有多宽（英寸）。"""
+    """Measure the rendered width of this text in inches."""
     global _SCRATCH
     if _SCRATCH is None:
         _SCRATCH = plt.figure(figsize=(1, 1), dpi=100)
@@ -314,28 +326,28 @@ def text_width_in(text, fs):
 
 
 # ==========================================================================
-# 数据准备
+# Data preparation
 # ==========================================================================
 def normalize_method(name):
-    """去掉 (supervised) 之类的括号后缀，再按小写查规范显示名。"""
-    base = re.sub(r"\s*[（(].*?[)）]\s*$", "", str(name)).strip()
+    """Strip bracketed suffixes like (supervised), then look up the canonical name by lowercase."""
+    base = re.sub(r"\s*[(].*?[)]\s*$", "", str(name)).strip()
     return DISPLAY_NAMES.get(base.lower(), base)
 
 
 def normalize_dataset(name):
-    """【适配】去中文前缀、取空格前的部分、转小写，再查别名表。"""
-    s = re.sub(r"^(新|原)[_\-]?", "", str(name).strip())
+    """Adapt: strip the new/original prefix, take the part before the space, lowercase, then look up the alias table."""
+    s = re.sub(r"^(new|original)[_\-]?", "", str(name).strip())
     s = s.split()[0].lower()
     return DATASET_ALIAS.get(s, s)
 
 
 def fix_liver(df, gt_col):
-    """【适配】xenium_liver 下 GT≈10,654 的行归到 CosMx 人脑。"""
+    """Adapt: reassign xenium_liver rows with GT~10,654 to the CosMx human brain."""
     raw = df["dataset"].astype(str).str.strip().str.split().str[0].str.lower()
     gtv = pd.to_numeric(df[gt_col], errors="coerce")
     m = (raw == "xenium_liver") & ((gtv - LIVER_FIX_GT).abs() <= LIVER_FIX_TOL)
     if m.any():
-        print(f"  [修正] xenium_liver 中 GT≈{LIVER_FIX_GT:,} 的 {int(m.sum())} 行 -> {LIVER_FIX_TO}")
+        print(f"  [Fixed] xenium_liver rows with GT~{LIVER_FIX_GT:,}: {int(m.sum())} -> {LIVER_FIX_TO}")
         df.loc[m, "dataset"] = LIVER_FIX_TO
     return df
 
@@ -347,13 +359,13 @@ def load_source(src):
 
     metrics = src["metrics"]
     native = [m[0] for m in metrics if not m[4] and m[0] in df.columns]
-    # 图像表有大量占位空行，要求至少有一个原生指标有值
+    # the image sheet has many placeholder empty rows; require at least one native metric value
     df = df[df["method"].notna() & df["dataset"].notna()].copy()
     if native:
         df = df[df[native].notna().any(axis=1)]
 
     df["method"] = df["method"].map(normalize_method)
-    # 【适配】统一数据集名与平台名
+    # Adapt: unify dataset and platform names
     df = fix_liver(df, src["gt_col"])
     df["ds"] = df["dataset"].map(normalize_dataset)
     df["platform"] = df["ds"].str.split("_").str[0]
@@ -363,22 +375,22 @@ def load_source(src):
             n = int((df[col] == 0).sum())
             if n:
                 who = df.loc[df[col] == 0, "method"].value_counts().to_dict()
-                print(f"  [清洗] {col}: {n} 个 0 视为缺失 -> {who}")
+                print(f"  [Clean] {col}: {n} zeros treated as missing -> {who}")
                 df.loc[df[col] == 0, col] = np.nan
 
-    # f1=0 但 precision/recall 都 >0 在算术上不可能，是没填而不是真的 0
+    # f1=0 while precision/recall are both >0 is arithmetically impossible: blank, not truly 0
     if src["check_f1"] and {"f1", "precision", "recall"} <= set(df.columns):
         bad = (df["f1"] == 0) & (df["precision"] > 0) & (df["recall"] > 0)
         if bad.any():
-            print(f"  [清洗] f1: {int(bad.sum())} 个与 precision/recall 矛盾的 0 视为缺失")
+            print(f"  [Clean] f1: {int(bad.sum())} zeros inconsistent with precision/recall treated as missing")
             df.loc[bad, "f1"] = np.nan
 
-    # 派生指标要用到的辅助列
-    extra = [c for c in ["预测细胞数", "TP", "FP", "FN", "loc_p95_um", "loc_median_um",
+    # auxiliary columns needed for derived metrics
+    extra = [c for c in ["predicted cells", "TP", "FP", "FN", "loc_p95_um", "loc_median_um",
                          "count_rmse", "count_mae"] if c in df.columns]
     keep = sorted(set(native + extra + [src["gt_col"]]))
     for c in keep:
-        df[c] = pd.to_numeric(df[c], errors="coerce")   # 'SQ' 等列是 object 类型
+        df[c] = pd.to_numeric(df[c], errors="coerce")   # columns like 'SQ' come in as object dtype
 
     agg = df.groupby(["platform", "ds", "method"], as_index=False)[keep].mean()
     agg = derive_metrics(agg, src)
@@ -390,21 +402,22 @@ def load_source(src):
 
 
 def derive_metrics(agg, src):
-    """按需现算派生指标，只依赖表里已有的列。"""
+    """Compute derived metrics on demand, using only columns already present."""
     gt = src["gt_col"]
     cols = set(agg.columns)
 
-    # RNA：尾部稳健性
+    # RNA: tail robustness
     if {"loc_p95_um", "loc_median_um"} <= cols:
         agg["loc_tail_ratio"] = agg["loc_p95_um"] / agg["loc_median_um"].replace(0, np.nan)
     if {"count_rmse", "count_mae"} <= cols:
         agg["count_tail_ratio"] = agg["count_rmse"] / agg["count_mae"].replace(0, np.nan)
 
-    # 图像：预测/GT 细胞数比，以及过分割、欠分割率
-    # 表里原有的「过分割(FP)」「欠分割(FN)」两列基本是 FP/FN 的原始计数，跨数据集
-    # 量级差几个数量级，这里用干净的 TP/FP/FN 整数列换算成率，含义明确。
-    if {"预测细胞数", gt} <= cols:
-        agg["cell_ratio"] = agg["预测细胞数"] / agg[gt].replace(0, np.nan)
+    # Image: predicted/GT cell ratio, plus over- and under-segmentation rates. The sheet's
+    # "over-segmentation (FP)" / "under-segmentation (FN)" columns are raw FP/FN counts that
+    # span orders of magnitude across datasets; use the clean TP/FP/FN integer columns to
+    # compute rates with a clear meaning.
+    if {"predicted cells", gt} <= cols:
+        agg["cell_ratio"] = agg["predicted cells"] / agg[gt].replace(0, np.nan)
     if {"FP", gt} <= cols:
         agg["over_seg_rate"] = agg["FP"] / agg[gt].replace(0, np.nan)
     if {"FN", gt} <= cols:
@@ -414,23 +427,23 @@ def derive_metrics(agg, src):
 
 
 def to_score(series, direction):
-    """转成"越大越好"的可比量，供求秩使用。"""
+    """Convert to a higher-is-better comparable quantity for ranking."""
     if direction == "high":
         return series
     if direction == "low":
         return -series
-    if direction == "target1":       # cell_ratio 越接近 1 越好
+    if direction == "target1":       # cell_ratio: closer to 1 is better
         return -(series - 1.0).abs()
     raise ValueError(direction)
 
 
 def dataset_weight(gt):
-    """按 WEIGHT_MODE 把 GT 细胞数换算成权重，非法值返回 None。"""
+    """Convert GT cell count to a weight per WEIGHT_MODE; return None for invalid values."""
     gt = float(gt) if gt is not None else np.nan
     if not np.isfinite(gt) or gt <= 0:
         return None
     if WEIGHT_MODE == "log":
-        return float(np.log10(max(gt, 10.0)))   # 下限 10 防止 log 出负数
+        return float(np.log10(max(gt, 10.0)))   # floor of 10 avoids a negative log
     if WEIGHT_MODE == "sqrt":
         return float(np.sqrt(gt))
     if WEIGHT_MODE == "equal":
@@ -439,8 +452,8 @@ def dataset_weight(gt):
 
 
 def report_weights(agg, gt_cells):
-    """打印各数据集在其平台内占多少权重，确认没有一家独大。"""
-    print(f"\n  权重分配（WEIGHT_MODE={WEIGHT_MODE}）：")
+    """Print each dataset's weight within its platform to confirm none dominates."""
+    print(f"\n  Weight distribution (WEIGHT_MODE={WEIGHT_MODE}):")
     for platform, pdf in agg.groupby("platform"):
         items = []
         for ds in sorted(pdf["ds"].unique()):
@@ -455,7 +468,7 @@ def report_weights(agg, gt_cells):
 
 
 def rank_matrix(agg, gt_cells, metrics):
-    """平台内加权 -> 平台间等权，得到 method × metric 矩阵。"""
+    """Weight within platform, then equal-weight across platforms, giving the method x metric matrix."""
     methods = sorted(agg["method"].unique())
     out = pd.DataFrame(index=methods, columns=[m[0] for m in metrics], dtype=float)
 
@@ -469,9 +482,9 @@ def rank_matrix(agg, gt_cells, metrics):
             for ds, ddf in pdf.groupby("ds"):
                 vals = to_score(ddf.set_index("method")[col], direction).dropna()
                 n = len(vals)
-                if n < 2:            # 只有一个方法，无从比较
+                if n < 2:            # only one method, nothing to compare
                     continue
-                rank = vals.rank(ascending=False, method="average")   # 秩 1 = 最好
+                rank = vals.rank(ascending=False, method="average")   # rank 1 = best
                 if RANK_MODE == "percentile":
                     norm = (n - rank + 0.5) / n
                 else:
@@ -493,10 +506,10 @@ def rank_matrix(agg, gt_cells, metrics):
 
 
 # ==========================================================================
-# 作图
+# Plotting
 # ==========================================================================
 def superellipse(cx, cy, half, n_exp, k=180):
-    """n_exp=2 是正圆，越大越接近正方形。"""
+    """n_exp=2 is a circle; larger values approach a square."""
     t = np.linspace(0, 2 * np.pi, k)
     ct, st = np.cos(t), np.sin(t)
     x = np.sign(ct) * np.abs(ct) ** (2.0 / n_exp)
@@ -505,9 +518,8 @@ def superellipse(cx, cy, half, n_exp, k=180):
 
 
 def shade(base_hex, v):
-    """v=0 直接就是 CAT_COLORS 里的色号本身（不再额外压暗），
-    v=1 渐变到接近白色。配合 COLOR_SCOPE="column"，
-    每列最差的格子拿到的就是你指定的那个色号原色。"""
+    """v=0 gives the CAT_COLORS hex itself (no extra darkening); v=1 fades toward white.
+    With COLOR_SCOPE="column", the worst cell in each column takes exactly the color you set."""
     from matplotlib.colors import to_rgb
     rgb = np.asarray(to_rgb(base_hex), dtype=float)
     if not GRADIENT:
@@ -517,7 +529,7 @@ def shade(base_hex, v):
 
 
 def shape_of(v):
-    """分数 -> (半径英寸, 超椭圆指数)。高次幂让方形只出现在接近满分的一小段。"""
+    """Score -> (radius in inches, superellipse exponent). The high power makes squares appear only near full score."""
     v = float(np.clip(v, 0, 1))
     s_lo, s_hi = SQUARE_RANGE
     return (HALF_MIN_IN + v * (HALF_MAX_IN - HALF_MIN_IN),
@@ -525,13 +537,13 @@ def shape_of(v):
 
 
 def draw(matrix, metrics, title, out_path):
-    """坐标系以英寸为单位（aspect=equal），表头也画在同一坐标系里，便于精确定位。"""
+    """Axes are in inches (aspect=equal); the header is drawn in the same coordinates for precise placement."""
     cats = list(dict.fromkeys(m[2] for m in metrics))
     cat_color = {c: CAT_COLORS[i % len(CAT_COLORS)] for i, c in enumerate(cats)}
     rows = list(matrix.index)
     n_col, n_row = len(metrics), len(rows)
 
-    # --- 格子边长：按数据里实际最大的图形来定，缝隙只留描边的物理下限 ---
+    # --- cell size: set by the largest shape actually in the data; gap only the outline's physical floor ---
     if FIT_TO_DATA:
         vmax = float(np.nanmax(matrix.to_numpy(dtype=float))) if matrix.notna().any().any() else 1.0
         vmax = float(np.clip(vmax, 0.0, 1.0))
@@ -541,7 +553,7 @@ def draw(matrix, metrics, title, out_path):
         cell = CELL_IN
     col_w = row_h = cell
 
-    # 逐列算左边界，大类切换处插入 CAT_GAP_FRAC 个格子的空隙
+    # compute each column's left edge; insert CAT_GAP_FRAC cells at category boundaries
     col_x, x_cur, prev_cat = [], 0.0, None
     for m in metrics:
         if prev_cat is not None and m[2] != prev_cat:
@@ -551,25 +563,25 @@ def draw(matrix, metrics, title, out_path):
         prev_cat = m[2]
     grid_w = x_cur
     grid_h = n_row * row_h
-    print(f"  格子 {cell:.4f} 英寸 | 最大图形直径 {2*(cell/2-MIN_INDENT_IN):.4f} "
-          f"| 相对缝隙 {2*MIN_INDENT_IN/(cell-2*MIN_INDENT_IN):.1%}")
+    print(f"  cell {cell:.4f} in | max shape diameter {2*(cell/2-MIN_INDENT_IN):.4f} "
+          f"| relative gap {2*MIN_INDENT_IN/(cell-2*MIN_INDENT_IN):.1%}")
 
-    # --- 表头各层的高度（自下而上：色条 -> 大类名 -> 指引线 -> 倾斜的指标名）---
+    # --- header layer heights (bottom-up: color bar -> category name -> leader -> slanted metric name) ---
     rot = np.deg2rad(LABEL_ROT)
     bar_gap, bar_h = 0.06, 0.14
     cat_h = CAT_FS * 1.35 / 72.0
     y_bar0 = grid_h + bar_gap
-    y_cat = y_bar0 + bar_h + 0.05                     # 大类名基线
-    y_lead0 = y_cat + cat_h + 0.06                    # 指引线起点
+    y_cat = y_bar0 + bar_h + 0.05                     # category name baseline
+    y_lead0 = y_cat + cat_h + 0.06                    # leader line origin
     lab_len = max(text_width_in(m[1] + (" *" if m[4] else ""), LABEL_FS)
                   for m in metrics)
     head_h = (y_lead0 + LEADER_IN * np.sin(rot)
               + lab_len * np.sin(rot) + 0.10) - grid_h
 
-    # --- 图例列 ---
+    # --- legend column ---
     leg_num_w = max(text_width_in(f"{t:.2f}", LEG_FS) for t in LEGEND_TICKS)
     leg_w = 2 * HALF_MAX_IN + 0.10 + leg_num_w + 0.06
-    # 最右侧指标名倾斜后会向右伸出，图例要让开这段距离
+    # the rightmost slanted metric label extends right; the legend must clear that
     leg_x0 = grid_w + max(LEGEND_GAP_IN, lab_len * np.cos(rot) * 0.55)
 
     left_in = max(text_width_in(m, ROW_FS) for m in rows) + 0.22
@@ -583,18 +595,18 @@ def draw(matrix, metrics, title, out_path):
                        plot_w / fig_w, (grid_h + head_h) / fig_h])
     ax.set_xlim(0, plot_w)
     ax.set_ylim(0, grid_h + head_h)
-    ax.set_aspect("equal")          # 1 数据单位 = 1 英寸，图形不会被拉扁
+    ax.set_aspect("equal")          # 1 data unit = 1 inch, so shapes are not stretched
     ax.set_xticks([]); ax.set_yticks([])
     for sp in ax.spines.values():
         sp.set_visible(False)
 
-    # --- 着色用的取值范围：按列归一化时，先记下每列的最小/最大 ---
+    # --- color value range: record each column's min/max when normalizing per column ---
     if COLOR_SCOPE == "column":
         cmin = matrix.min(axis=0, skipna=True)
         cmax = matrix.max(axis=0, skipna=True)
 
     def color_v(col, v):
-        """返回用于取色的 0~1 值。0 -> 色号原色，1 -> 接近白。"""
+        """Return the 0~1 value used for coloring. 0 -> raw color, 1 -> near white."""
         if COLOR_SCOPE != "column" or col not in matrix.columns:
             return v
         lo, hi = float(cmin[col]), float(cmax[col])
@@ -605,13 +617,13 @@ def draw(matrix, metrics, title, out_path):
     def row_y(i):
         return (n_row - 1 - i) * row_h + row_h / 2
 
-    # --- 行底色灰白交替，只铺指标区 ---
+    # --- alternating gray/white row background, only over the metric area ---
     for i in range(n_row):
         ax.add_patch(Rectangle((0, (n_row - 1 - i) * row_h), grid_w, row_h,
                                zorder=0, edgecolor="none",
                                facecolor=ROW_BG_A if i % 2 == 0 else ROW_BG_B))
 
-    # --- 每格图形，列内居中；最大的图形正好撑满格子只留描边的物理下限 ---
+    # --- each cell's shape, centered in its column; the largest fills the cell, leaving only the outline floor ---
     for i, method in enumerate(rows):
         y = row_y(i)
         for j, (col, _disp, cat, _d, _der) in enumerate(metrics):
@@ -621,7 +633,7 @@ def draw(matrix, metrics, title, out_path):
                 ax.plot([x - 0.07, x + 0.07], [y, y], color="#9E9E9E",
                         linewidth=1.1, zorder=2)
                 continue
-            half, n_exp = shape_of(v)          # 大小与方圆始终用绝对分数
+            half, n_exp = shape_of(v)          # size and roundness always use the absolute score
             ax.add_patch(Polygon(superellipse(x, y, half, n_exp), closed=True,
                                  facecolor=shade(cat_color[cat], color_v(col, v)),
                                  edgecolor=SHAPE_EDGE_COLOR,
@@ -630,12 +642,12 @@ def draw(matrix, metrics, title, out_path):
                 ax.text(x, y, f"{v:.2f}", ha="center", va="center",
                         fontsize=6.2, color="#333333", zorder=3)
 
-    # --- 方法名 ---
+    # --- method names ---
     for i, method in enumerate(rows):
         ax.text(-0.10, row_y(i), method, ha="right", va="center",
                 fontsize=ROW_FS, color="#1A1A1A")
 
-    # --- 大类色条 + 大类名，紧贴网格上方 ---
+    # --- category color bars + names, just above the grid ---
     j = 0
     while j < n_col:
         cat = metrics[j][2]
@@ -649,7 +661,7 @@ def draw(matrix, metrics, title, out_path):
                 fontsize=CAT_FS, color="#1A1A1A")
         j = k + 1
 
-    # --- 指标名：倾斜排在大类名上方，短斜线指回各自的列 ---
+    # --- metric names: slanted above the category names, short leader lines back to each column ---
     for j, (_c, disp, _cat, _d, derived) in enumerate(metrics):
         xc = col_x[j] + col_w / 2
         x_end = xc + LEADER_IN * np.cos(rot)
@@ -661,12 +673,12 @@ def draw(matrix, metrics, title, out_path):
                 rotation_mode="anchor", ha="left", va="center",
                 fontsize=LABEL_FS, color="#1A1A1A")
 
-    # --- 图例列 ---
+    # --- legend column ---
     ax.text(leg_x0 + leg_w / 2, y_bar0, LEGEND_TITLE, ha="center", va="bottom",
             fontsize=LABEL_FS, color="#1A1A1A")
-    # 图例各档单独用更松的行距，并整体在网格高度内垂直居中
+    # legend rows use looser spacing and are vertically centered within the grid height
     n_leg = len(LEGEND_TICKS)
-    room = (grid_h - row_h) / max(n_leg - 1, 1)      # 保证首尾不越出网格
+    room = (grid_h - row_h) / max(n_leg - 1, 1)      # keep first/last inside the grid
     leg_h = min(row_h * LEGEND_SPACING, room)
     y_leg_top = grid_h / 2 + (n_leg - 1) * leg_h / 2
     for k2, tv in enumerate(LEGEND_TICKS):
@@ -683,12 +695,12 @@ def draw(matrix, metrics, title, out_path):
              ha="left", va="top", fontsize=TITLE_FS, color="#1A1A1A")
     fig.savefig(out_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-    print(f"已保存：{out_path}")
+    print(f"Saved: {out_path}")
 
 
 # ==========================================================================
 def apply_unified_names(metrics):
-    """把各表自己的大类名按出现顺序替换成 UNIFIED_NAMES。"""
+    """Replace each sheet's category names with UNIFIED_NAMES in order of appearance."""
     if not UNIFIED_CATEGORY_NAMES:
         return metrics
     order = list(dict.fromkeys(m[2] for m in metrics))
@@ -699,9 +711,9 @@ def apply_unified_names(metrics):
 def run(src, outdir):
     print(f"\n===== {src['label']} =====")
     agg, gt, sheet = load_source(src)
-    print(f"  sheet: {sheet} | 方法 {agg['method'].nunique()} 个 | "
-          f"数据集 {agg['ds'].nunique()} 个 | 平台 {sorted(agg['platform'].unique())}")
-    print(f"  方法列表: {sorted(agg['method'].unique())}")
+    print(f"  sheet: {sheet} | {agg['method'].nunique()} methods | "
+          f"{agg['ds'].nunique()} datasets | platforms {sorted(agg['platform'].unique())}")
+    print(f"  Methods: {sorted(agg['method'].unique())}")
 
     metrics = apply_unified_names(src["metrics"])
     report_weights(agg, gt)
@@ -711,17 +723,17 @@ def run(src, outdir):
     else:
         mat = mat.loc[sorted(mat.index, key=str.lower)]
 
-    print("\n  秩矩阵（0~1，越大越好）：")
+    print("\n  Rank matrix (0~1, higher is better):")
     print(mat.round(3).to_string())
     n_na = int(mat.isna().sum().sum())
     if n_na:
-        print(f"  缺失格 {n_na} 个，图上画成灰色短横线")
+        print(f"  {n_na} missing cells, drawn as short gray dashes")
 
     cov = agg.groupby("method")["ds"].nunique()
-    print("  各方法覆盖的数据集数：", cov.to_dict())
+    print("  Datasets covered per method:", cov.to_dict())
 
     draw(mat, metrics,
-         f"{src['label']}  —  composite rank across platforms"
+         f"{src['label']}  -  composite rank across platforms"
          f"   (larger & squarer = better rank)",
          os.path.join(outdir, f"{src['out']}.{FILE_FORMAT}"))
     return mat
@@ -729,7 +741,7 @@ def run(src, outdir):
 
 def main():
     outdir = OUT_DIR
-    if len(sys.argv) == 4:      # 仅用于换路径调试，正常直接跑不用带参数
+    if len(sys.argv) == 4:      # only for overriding paths when debugging; normally run without args
         SOURCES[0]["path"], SOURCES[1]["path"], outdir = sys.argv[1:4]
     os.makedirs(outdir, exist_ok=True)
     for src in SOURCES:

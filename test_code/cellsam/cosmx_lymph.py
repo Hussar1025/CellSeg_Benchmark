@@ -3,38 +3,41 @@
 """
 cosmx_lymph.py  (CellSAM)
 =========================
-在 CosMx 人淋巴结数据集（/data/qiuyijia/dataset/cosmx_lymph_node）上跑 CellSAM
-（通用基础模型，零样本，不训练）做整细胞分割，以数据集自带的 CosMx CellLabels 为 GT
-做 benchmark。数据读取 / FOV 选择 / 指标 / 聚合全部走
-/data/qiuyijia/eval/cosmx_lymph_common.py，与 cellpose / cellotype / mesmer /
-stardist 四个版本逐行同源 —— 方法之间唯一差别就是推理这一步。
+Run CellSAM (generalist foundation model, zero-shot, no training) for whole-cell segmentation
+on the CosMx human lymph node dataset (yourpath/dataset/cosmx_lymph_node), benchmarked against
+the dataset's own CosMx CellLabels as GT. Data loading / FOV selection / metrics / aggregation
+all go through yourpath/eval/cosmx_lymph_common.py, line-for-line shared with the cellpose /
+cellotype / mesmer / stardist versions -- the only per-method difference is the inference step.
 
-数据集事实（已实测）
---------------------
-* 数据集**自带 FOV 划分**：共 **400 个 FOV**，每个 4256x4256 @0.1203um/px。
-  napari OME-Zarr 是拼好的全片(93618x102128)，本脚本按 .zattrs 的 fov_offsets 裁回单 FOV。
-* metadata 共 1,852,946 个细胞，中位 **4897 cells/FOV** → **凑 1w 细胞只要 2 个 FOV**。
-* 默认 FOV = (48, 261)：密度最接近全片中位数、且分处切片前后两半，GT 4898+4896=9794。
+Dataset facts (measured)
+------------------------
+* The dataset **ships its own FOV grid**: **400 FOVs** in total, each 4256x4256 @0.1203um/px.
+  napari OME-Zarr holds the stitched whole slide (93618x102128); this script crops single FOVs
+  back out via fov_offsets in .zattrs.
+* metadata lists 1,852,946 cells, median **4897 cells/FOV** -> **2 FOVs already give ~10k cells**.
+* Default FOVs = (48, 261): density closest to the whole-slide median, one in each half of the
+  section, GT 4898+4896=9794.
 
-关于 CellSAM
-------------
-CellSAM = CellFinder(检测框) + SAM(mask decoder) 的通用基础模型，零样本即可跨模态分割，
-原生做整细胞分割 → 直接对整细胞 CellLabels 比，无需 StarDist 那种膨胀超参，
-与 Cellpose / CelloType / Mesmer 同口径可横向比。
+About CellSAM
+-------------
+CellSAM = CellFinder (detection boxes) + SAM (mask decoder), a generalist foundation model that
+segments across modalities zero-shot and natively does whole-cell segmentation -> it is compared
+directly against whole-cell CellLabels, with no StarDist-style dilation hyperparameter, and is
+horizontally comparable to Cellpose / CelloType / Mesmer under the same scope.
 
-两个必须写对的点
-----------------
-1) **动态范围**：zarr 存的是 uint16，而 CellSAM 权重是在 8-bit 图上训的。
-   直接喂 uint16 等于给了它没见过的量纲。所以按 1~99.5 百分位拉伸到 uint8
-   （--norm pct，默认）。这是"把数据放回方法期望的量纲"，不是调参。
-   --norm raw 可关掉做对照。
-2) **切块**：4256² 一次进不去，用官方 cellsam_pipeline(use_wsi=True) 的 whole-slide
-   切块模式（相当于 cellpose 的 n_tiles / cellotype 的 SAHI）。
+Two things that must be right
+-----------------------------
+1) **Dynamic range**: zarr stores uint16, but the CellSAM weights were trained on 8-bit images.
+   Feeding uint16 raw hands it a scale it has never seen, so stretch the 1~99.5 percentile to
+   uint8 (--norm pct, the default). This is "putting the data back on the scale the method
+   expects", not parameter tuning. --norm raw disables it for a control run.
+2) **Tiling**: 4256^2 does not fit in one pass, so use the whole-slide tiling mode of the
+   official cellsam_pipeline(use_wsi=True) (equivalent to cellpose n_tiles / cellotype SAHI).
 
-通道排布沿用本仓库 CosMx_cellsam.py 的默认 blank_nuc_mem = [0, 核, 膜]。
-核=DNA，膜=Membrane，与其它四个方法完全同源。
+The channel layout follows the default blank_nuc_mem = [0, nucleus, membrane] of this repo's
+CosMx_cellsam.py. nucleus=DNA, membrane=Membrane, fully identical to the other four methods.
 
-依赖：/data/qiuyijia/anaconda3/envs/cellsam（cellSAM，已带 zarr）
+Dependency: yourpath/anaconda3/envs/cellsam (cellSAM, already ships zarr)
 """
 
 import os
@@ -43,25 +46,25 @@ import argparse
 
 import numpy as np
 
-sys.path.insert(0, "/data/qiuyijia/eval")
+sys.path.insert(0, "yourpath/eval")
 import cosmx_lymph_common as C
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 # --------------------------------------------------------------------------- #
-# CellSAM 输入
+# CellSAM input
 # --------------------------------------------------------------------------- #
 def build_cellsam_input(chans, mem_channel, channel_order="blank_nuc_mem", norm="pct"):
     """
-    核 = DNA，膜 = Membrane（或 memmax）。
-    norm=pct  -> 1~99.5 百分位拉伸到 uint8（默认，匹配 CellSAM 预训练的 8-bit 量纲）
-    norm=raw  -> 原样 float32（对照用）
+    nucleus = DNA, membrane = Membrane (or memmax).
+    norm=pct  -> stretch 1~99.5 percentile to uint8 (default; matches CellSAM's 8-bit pretraining scale)
+    norm=raw  -> as-is float32 (for control runs)
     channel_order:
-      blank_nuc_mem -> (H,W,3) = [0, 核, 膜]   (默认，与本仓库 CosMx 版一致)
-      nuc_mem       -> (H,W,2) = [核, 膜]
-      mem_nuc       -> (H,W,2) = [膜, 核]
-      nuc_only      -> (H,W)   仅核（保守回退）
+      blank_nuc_mem -> (H,W,3) = [0, nucleus, membrane]  (default; same as this repo's CosMx version)
+      nuc_mem       -> (H,W,2) = [nucleus, membrane]
+      mem_nuc       -> (H,W,2) = [membrane, nucleus]
+      nuc_only      -> (H,W)   nucleus only (conservative fallback)
     """
     nuclear, membrane = C.nuc_mem(chans, mem_channel)
     if norm == "pct":
@@ -81,7 +84,7 @@ def build_cellsam_input(chans, mem_channel, channel_order="blank_nuc_mem", norm=
 
 
 # --------------------------------------------------------------------------- #
-# CellSAM 运行器（权重只加载一次）
+# CellSAM runner (weights loaded once)
 # --------------------------------------------------------------------------- #
 class CellSAMRunner:
     def __init__(self, device="cuda", use_wsi=True, low_contrast_enhancement=False,
@@ -104,7 +107,7 @@ class CellSAMRunner:
             except Exception:
                 from cellSAM import segment_cellular_image
                 self._seg_fn = segment_cellular_image
-                print("[cellsam] 旧版本：回退 segment_cellular_image（不切块，4256² 可能 OOM）")
+                print("[cellsam] old version: falling back to segment_cellular_image (no tiling; 4256^2 may OOM)")
 
     def segment(self, img):
         self._ensure_loaded()
@@ -117,7 +120,7 @@ class CellSAMRunner:
             try:
                 mask = self._pipeline(img, **kwargs)
             except TypeError:
-                # 某些版本参数名不同 / device 内部自动检测
+                # some versions use different arg names / auto-detect device internally
                 try:
                     mask = self._pipeline(img, use_wsi=self.use_wsi)
                 except TypeError:
@@ -136,24 +139,24 @@ class CellSAMRunner:
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser(
-        description="CosMx 淋巴结：CellSAM(零样本) + 对 CosMx CellLabels 的 benchmark",
+        description="CosMx lymph node: CellSAM (zero-shot) + benchmark against CosMx CellLabels",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     C.add_common_args(ap, out_dir_default=os.path.join(HERE, "cosmx_lymph_output"))
 
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--use-wsi", dest="use_wsi", action="store_true", default=True,
-                    help="whole-slide 切块模式（4256² 大 FOV 必开）")
+                    help="whole-slide tiling mode (required for large 4256^2 FOVs)")
     ap.add_argument("--no-use-wsi", dest="use_wsi", action="store_false")
     ap.add_argument("--block-size", type=int, default=None,
-                    help="use_wsi 的分块边长；不给用 CellSAM 默认")
+                    help="block side length for use_wsi; omit to use the CellSAM default")
     ap.add_argument("--low-contrast-enhancement", action="store_true")
     ap.add_argument("--gauge-cell-size", action="store_true")
     ap.add_argument("--channel-order", default="blank_nuc_mem",
                     choices=["blank_nuc_mem", "nuc_mem", "mem_nuc", "nuc_only"],
-                    help="核/膜通道排布（与本仓库 CosMx_cellsam.py 默认一致）")
+                    help="nucleus/membrane channel layout (same default as this repo's CosMx_cellsam.py)")
     ap.add_argument("--norm", default="pct", choices=["pct", "raw"],
-                    help="pct=1~99.5百分位拉到uint8(默认,匹配预训练8-bit量纲); raw=原始uint16")
+                    help="pct=stretch 1~99.5 percentile to uint8 (default; matches the 8-bit pretraining scale); raw=raw uint16")
     args = ap.parse_args()
 
     runner = None if args.reuse_pred else CellSAMRunner(
@@ -172,8 +175,8 @@ def main():
         channel_order=args.channel_order, norm=args.norm,
         low_contrast_enhancement=args.low_contrast_enhancement,
         gauge_cell_size=args.gauge_cell_size,
-        note_cellsam="CellSAM 原生整细胞、零样本；uint16 需按百分位拉到 8-bit "
-                     "以匹配预训练量纲；4256² 用 use_wsi 切块。")
+        note_cellsam="CellSAM is natively whole-cell and zero-shot; uint16 must be percentile-stretched to 8-bit "
+                     "to match the pretraining scale; 4256^2 uses use_wsi tiling.")
 
     C.run_benchmark(args, "CellSAM", segment_fn, meta_extra, "cellsam")
 
@@ -183,11 +186,11 @@ if __name__ == "__main__":
 
 
 '''
-# cellsam env 自带 zarr，可以直接跑
-CS=/data/qiuyijia/anaconda3/envs/cellsam/bin/python
+# the cellsam env ships zarr, so this can run directly
+CS=yourpath/anaconda3/envs/cellsam/bin/python
 
-nohup $CS /data/qiuyijia/CellSam/cosmx_lymph.py \
+nohup $CS yourpath/CellSam/cosmx_lymph.py \
     --use-default-fovs --use-wsi --overlay \
-    --out-dir /data/qiuyijia/CellSam/cosmx_lymph_output \
-    > /data/qiuyijia/CellSam/cosmx_lymph.log 2>&1 &
+    --out-dir yourpath/CellSam/cosmx_lymph_output \
+    > yourpath/CellSam/cosmx_lymph.log 2>&1 &
 '''

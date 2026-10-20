@@ -35,7 +35,7 @@ from skimage.color import rgb2hed
 from skimage.draw import polygon as draw_polygon
 
 
-ROOT = Path("/data/qiuyijia")
+ROOT = Path("yourpath")
 DATA_ROOT = ROOT / "dataset"
 DEFAULT_OUTPUT_ROOT = ROOT / "cellpose3" / "outputs"
 METRICS_PATH = ROOT / "eval" / "test.py"
@@ -722,7 +722,7 @@ def run_dataset(args: argparse.Namespace) -> dict:
         write_label_tiff(prediction_path, pred, "Cellpose 3 cyto3 instance labels")
         write_label_tiff(gt_path, gt, gt_coordinate_system)
 
-        print("  evaluating masks with /data/qiuyijia/eval/test.py ...")
+        print("  evaluating masks with yourpath/eval/test.py ...")
         result = evaluate_masks(gt, pred, spec.name)
         result.update({
             "cellpose_version": cp_version,

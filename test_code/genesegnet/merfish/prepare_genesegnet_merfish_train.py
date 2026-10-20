@@ -23,7 +23,7 @@ import pandas as pd
 import os
 import sys
 
-ROOT=Path("/data/qiuyijia/dataset/merfish_mouse_brain")
+ROOT=Path("yourpath/dataset/merfish_mouse_brain")
 TRANSCRIPTS=ROOT/"datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_detected_transcripts_S1R1.csv"
 METADATA=ROOT/"datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_cell_metadata_S1R1.csv"
 DAPI=ROOT/"images/datasets_mouse_brain_map_BrainReceptorShowcase_Slice1_Replicate1_images_mosaic_DAPI_z3.tif"
@@ -40,9 +40,9 @@ TEST_X0=(W-TEST_SIZE)//2
 TEST_Y1=TEST_Y0+TEST_SIZE
 TEST_X1=TEST_X0+TEST_SIZE
 
-OUT_DEFAULT=Path("/data/qiuyijia/genesegnet_merfish_1")
-BASE=Path("/data/qiuyijia/GeneSegNet/prepare_genesegnet_xenium_train.py")
-REPO_DEFAULT="/data/qiuyijia/GeneSegNet/GeneSegNet"
+OUT_DEFAULT=Path("yourpath/genesegnet_merfish_1")
+BASE=Path("yourpath/GeneSegNet/prepare_genesegnet_xenium_train.py")
+REPO_DEFAULT="yourpath/GeneSegNet/GeneSegNet"
 log=logging.getLogger("gsn_merfish1")
 
 def setup_log(out,stage):
