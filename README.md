@@ -2,8 +2,6 @@
 
 ## Overview
 
-# SpaSegBench
-
 Cell segmentation is the step at which spatial transcriptomics (ST) data become single-cell data, and its errors set an upper bound on the reliability of every downstream biological conclusion. Current methods range from image-only models to algorithms that use transcript positions, combine both modalities, or refine an existing segmentation, yet each has mostly been evaluated on its own data and metrics. SpaSegBench provides a unified and reproducible comparison of these methods to guide method selection and future method development.
 
 We benchmarked 16 cell segmentation methods on 31 public datasets from seven technology platforms, namely Xenium, Xenium Prime 5K, CosMx 6K, CosMx whole-transcriptome, MERFISH, Stereo-seq, and STARmap, completing 445 of the 466 applicable method–dataset combinations. The datasets cover human and mouse tissues, gene panels from a few hundred genes to the whole transcriptome, and tissues from sparse to dense. We classified the methods along two independent axes. By algorithm, they comprise image-based models, statistical point-cloud models, graph-based models, and image-guided multimodal methods, and by prior dependence, they differ in whether they require an existing segmentation as input. We evaluated segmentation accuracy at both the mask level and the transcript level, robustness across platforms and tissues, performance on whole-slide inputs, different gene panel sizes, and different cell densities, and computational cost in terms of runtime and peak memory. To trace how segmentation errors affect downstream analysis, we further measured transcript contamination between neighbouring cells against protein-defined cell identities obtained from CODEX imaging of the same tissue section.
@@ -35,6 +33,7 @@ In this work, we present a benchmark study encompassing 16 cell segmentation met
 - DISSECT: 《Integratingcytological images and spatialtranscriptomics for cell segmentation with DISSECT》
 
 ## Dataset
+
 In this work, We benchmark the 16 cell segmentation methods on 31 datasets, include Xenium (10x Genomics), Cosmx, Merfish and so on, which provide multimodal in situ spatial transcriptomics data—including high-resolution fluorescence images and spatially resolved gene expression profiles. The following datasets are as follows:
 - **Xenium**
   - [Pancreatic Cancer with Xenium Human Multi-Tissue and Cancer Panel](https://www.10xgenomics.com/datasets/pancreatic-cancer-with-xenium-human-multi-tissue-and-cancer-panel-1-standard)
