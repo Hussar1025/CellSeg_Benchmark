@@ -1,4 +1,4 @@
-# CellSeg_Benchmark
+# SpaSegBenchmark
 
 ## Overview
 
