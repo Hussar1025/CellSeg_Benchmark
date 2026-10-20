@@ -2,31 +2,37 @@
 
 ## Overview
 
-Cell segmentation is a fundamental step in many biological studies, enabling the precise delineation of individual cells from raw data. Traditional approaches primarily rely on image-based inputs (e.g., fluorescence or brightfield microscopy), but emerging technologies—such as spatial transcriptomics and proteomics—introduce omics-derived spatial features as additional or alternative inputs. To bridge these two paradigms, this benchmark systematically evaluates 16 cell segmentation methods that accept either image data, omics data (e.g., gene expression matrices with spatial coordinates), or both.
+# SpaSegBench
 
-Accurate cell segmentation unlocks a wide range of downstream biological applications: from quantifying cell morphology and phenotyping heterogeneous populations, to dissecting tissue microenvironments, tracking cell-cell interactions, and enabling spatially resolved single-cell analyses in diseased tissues. By providing a fair and reproducible comparison across diverse datasets (including synthetic and real-world benchmarks), this repository aims to guide method selection for researchers and highlight strengths and weaknesses of existing algorithms—ultimately accelerating discoveries in developmental biology, oncology, and neuroscience.
+Cell segmentation is the step at which spatial transcriptomics (ST) data become single-cell data, and its errors set an upper bound on the reliability of every downstream biological conclusion. Current methods range from image-only models to algorithms that use transcript positions, combine both modalities, or refine an existing segmentation, yet each has mostly been evaluated on its own data and metrics. SpaSegBench provides a unified and reproducible comparison of these methods to guide method selection and future method development.
 
-To address this gap, we systematically evaluated 16 cell segmentation methods (covering image‑driven, omics‑driven, and hybrid approaches) across 13 cross‑platform datasets and 20 cross‑tissue (Xenium & MERFISH) datasets, performing 300+ distinct segmentation tasks to quantify accuracy, efficiency, and robustness. Our results show that methods integrating omics information achieve superior boundary refinement but suffer from low processing throughput; image‑based methods deliver high morphological accuracy when staining is good, yet perform poorly in transcript assignment in weakly stained or crowded regions. Three additional challenging scenario tests (downsampling, using highly variable genes instead of the full transcriptome, and ultra‑large‑scale datasets) further revealed bottlenecks in accuracy and memory consumption. Based on these findings, we analyzed key influencing factors and provide method selection guidelines, an executable pipeline, and an interactive online platform to help users optimize segmentation strategies according to their specific data characteristics.
+We benchmarked 16 cell segmentation methods on 31 public datasets from seven technology platforms, namely Xenium, Xenium Prime 5K, CosMx 6K, CosMx whole-transcriptome, MERFISH, Stereo-seq, and STARmap, completing 445 of the 466 applicable method–dataset combinations. The datasets cover human and mouse tissues, gene panels from a few hundred genes to the whole transcriptome, and tissues from sparse to dense. We classified the methods along two independent axes. By algorithm, they comprise image-based models, statistical point-cloud models, graph-based models, and image-guided multimodal methods, and by prior dependence, they differ in whether they require an existing segmentation as input. We evaluated segmentation accuracy at both the mask level and the transcript level, robustness across platforms and tissues, performance on whole-slide inputs, different gene panel sizes, and different cell densities, and computational cost in terms of runtime and peak memory. To trace how segmentation errors affect downstream analysis, we further measured transcript contamination between neighbouring cells against protein-defined cell identities obtained from CODEX imaging of the same tissue section.
+
+We found that methods that refine a platform segmentation with transcripts, such as ProSeg and UCS, were the most accurate, and this advantage held on a manually annotated dataset, but they cannot be applied where no such segmentation exists. Image-based models were fast and widely deployable but delineated boundaries poorly, and accuracy depended more on the platform than on the tissue for most methods. For most transcript-based methods, computational cost grew with the number of transcripts, and segmentation errors caused contamination that increased with mask size and neighbour density. No method was therefore both highly accurate and broadly applicable, and the choice of a method should follow the characteristics of the data and the goal of the downstream analysis.
+
+To make these results useful in practice, we provide a step-by-step segmentation workflow, a compact set of recommended evaluation metrics, and an interactive [web platform](https://wood-321.github.io/SpaSegBench.github.io). The platform allows users to explore results across methods, datasets, platforms, and metrics, and its standardized pipeline allows new methods and datasets to be added to the benchmark. It also hosts SpaSegCompass, a recommendation tool that suggests suitable methods from the characteristics of the user's data, the available hardware, and the requirements of downstream analysis.
+
+If you use SpaSegBench or SpaSegCompass, please cite our paper (citation to be added).
 
 ## Method
 
 In this work, we present a benchmark study encompassing 16 cell segmentation methods across datasets with varying characteristics and technological platforms. The following methods were included:
-- Cellotype: "CelloType: a unified model for segmentation and classification of tissue images"
-- CellSAM: "CellSAM: a foundation model for cell segmentation"
-- Cellpose-3: "Cellpose3: one-click image restoration for improved cellular segmentation"
-- Cellpose-SAM: "Cellpose-SAM: superhuman generalization for cellular segmentation"
-- StarDist 2D: "Cell detection with star-convex poly-gons"
-- Mesmer: "Whole-cell segmentation of tissue images with human-level performance using large-scale data annotation and deep learning"
-- UNSEG: "UNSEG: unsupervised segmentation of cells and their nuclei in complex tissue samples"
-- UCS: "UCS: A Unified Approach to Cell Segmentation for Subcellular Spatial Transcriptomics"
-- BOMS: "From spots to cells: Cell segmentation in spatial transcriptomics with BOMS"
-- ComSeg: "A point cloud segmentation framework for image-based spatial transcriptomics	Communications Biology"
-- GeneSegNet: "GeneSegNet: a deep learning framework for cell segmentation by integrating gene expression and imaging"
-- Proseg: "Cell simulation as cell segmentation"
-- Baysor: "Cell segmentation in imaging-based spatial transcriptomics"
-- Bering: "Bering: joint cell segmentation and annotation for spatial transcriptomics with transferred graph embeddings"
-- Cellist: "Accurate, scalable and cross-platform cell identification for high-resolution spatial transcriptomics"
-- DISSECT: "Integratingcytological images and spatialtranscriptomics for cell segmentation with DISSECT"
+- Cellotype: 《CelloType: a unified model for segmentation and classification of tissue images》
+- CellSAM: 《CellSAM: a foundation model for cell segmentation》
+- Cellpose-3: 《Cellpose3: one-click image restoration for improved cellular segmentation》
+- Cellpose-SAM: 《Cellpose-SAM: superhuman generalization for cellular segmentation》
+- StarDist 2D: 《Cell detection with star-convex poly-gons》
+- Mesmer: 《Whole-cell segmentation of tissue images with human-level performance using large-scale data annotation and deep learning》
+- UNSEG: 《UNSEG: unsupervised segmentation of cells and their nuclei in complex tissue samples》
+- UCS: 《UCS: A Unified Approach to Cell Segmentation for Subcellular Spatial Transcriptomics》
+- BOMS: 《From spots to cells: Cell segmentation in spatial transcriptomics with BOMS》
+- ComSeg: 《A point cloud segmentation framework for image-based spatial transcriptomics	Communications Biology》
+- GeneSegNet: 《GeneSegNet: a deep learning framework for cell segmentation by integrating gene expression and imaging》
+- Proseg: 《Cell simulation as cell segmentation》
+- Baysor: 《Cell segmentation in imaging-based spatial transcriptomics》
+- Bering: 《Bering: joint cell segmentation and annotation for spatial transcriptomics with transferred graph embeddings》
+- Cellist: 《Accurate, scalable and cross-platform cell identification for high-resolution spatial transcriptomics》
+- DISSECT: 《Integratingcytological images and spatialtranscriptomics for cell segmentation with DISSECT》
 
 ## Dataset
 In this work, We benchmark the 16 cell segmentation methods on 31 datasets, include Xenium (10x Genomics), Cosmx, Merfish and so on, which provide multimodal in situ spatial transcriptomics data—including high-resolution fluorescence images and spatially resolved gene expression profiles. The following datasets are as follows:
@@ -41,6 +47,8 @@ In this work, We benchmark the 16 cell segmentation methods on 31 datasets, incl
   - [FFPE Human Cervical Cancer with 5K Human Pan Tissue and Pathways Panel plus 100 Custom Genes](https://www.10xgenomics.com/datasets/xenium-prime-ffpe-human-cervical-cancer)
   - [Preview Data: FFPE Human Skin Primary Dermal Melanoma with 5K Human Pan Tissue and Pathways Panel](https://www.10xgenomics.com/datasets/xenium-prime-ffpe-human-skin)
   - [Xenium In Situ Gene and Protein Expression data for Human FFPE Clear Cell Renal Cell Carcinoma (ccRCC)](https://www.10xgenomics.com/datasets/xenium-protein-ffpe-human-renal-ccrcc)
+  - [Preview Data: FFPE Human Skin Primary Dermal Melanoma with 5K Human Pan Tissue and Pathways Panel](https://www.10xgenomics.com/datasets/xenium-prime-ffpe-human-skin)
+  - [SPATCH: Xenium Prime 5K](https://spatch.pku-genomics.org/#/dataset/xenium)
 
 - **CosMx**
   - [Cosmx-FFPE-Pancreas-dataset-flat-files](https://brukerspatialbiology.com/resources/cosmx-ffpe-pancreas-dataset-flat-files/)
