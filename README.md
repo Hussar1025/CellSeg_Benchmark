@@ -1,8 +1,8 @@
-<p align="center">
-  <img src="assets/logo.png" width="220" alt="SpaSegBench logo">
-</p>
-
-<h1 align="center">SpaSegBenchmark</h1>
+<h1 align="center">
+  <img src="assets/logo.png" width="300" alt="SpaSegBench logo">
+  <br>
+  SpaSegBench
+</h1>
 
 <p align="center">
   <a href="https://wood-321.github.io/SpaSegBench.github.io"><img src="https://img.shields.io/badge/Website-SpaSegBench-317EC2.svg" alt="SpaSegBench website"></a>
