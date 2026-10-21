@@ -8,7 +8,7 @@
   <a href="https://wood-321.github.io/SpaSegBench.github.io"><img src="https://img.shields.io/badge/Website-SpaSegBench-317EC2.svg" alt="SpaSegBench website"></a>
   <!-- TODO: Replace the paper badge link with the bioRxiv URL and remove "(TBD)" once available. -->
   <a href="#citation"><img src="https://img.shields.io/badge/Paper-bioRxiv%20%28TBD%29-lightgrey.svg" alt="bioRxiv paper (link to be added)"></a>
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-FF9800.svg" alt="MIT License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-FF9800.svg" alt="MIT License"></a>
 </p>
 
 <p align="center">
